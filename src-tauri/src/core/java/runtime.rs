@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
@@ -144,6 +144,11 @@ pub async fn find_java_binary(major: u32) -> LauncherResult<PathBuf> {
     }
 
     Err(LauncherError::JavaNotFound(major))
+}
+
+pub fn is_usable_java_binary(path: &Path) -> bool {
+    let path_buf = path.to_path_buf();
+    probe_java(&path_buf).is_some()
 }
 
 fn probe_java(path: &PathBuf) -> Option<JavaInstallation> {

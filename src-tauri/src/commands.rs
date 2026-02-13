@@ -381,7 +381,7 @@ pub async fn create_instance(
         }
         JavaRuntimePreference::Embedded => {
             let embedded = state.embedded_java_path();
-            if embedded.exists() {
+            if crate::core::java::runtime::is_usable_java_binary(&embedded) {
                 instance.java_path = Some(embedded);
             }
         }
@@ -593,7 +593,8 @@ pub async fn initialize_launcher_installation(
             LauncherError::Other(format!("No se pudo completar la instalación inicial: {e}"))
         })?;
 
-    let embedded_available = state.embedded_java_path().exists();
+    let embedded_available =
+        crate::core::java::runtime::is_usable_java_binary(&state.embedded_java_path());
     let mut response =
         LauncherSettingsPayload::from_settings(&state.launcher_settings, embedded_available);
     response.data_dir = installed_dir.to_string_lossy().to_string();
@@ -610,7 +611,8 @@ pub async fn reinstall_launcher_completely(
         .reinstall_launcher(&app_handle)
         .map_err(|e| LauncherError::Other(format!("No se pudo reinstalar el launcher: {e}")))?;
 
-    let embedded_available = state.embedded_java_path().exists();
+    let embedded_available =
+        crate::core::java::runtime::is_usable_java_binary(&state.embedded_java_path());
     let mut response =
         LauncherSettingsPayload::from_settings(&state.launcher_settings, embedded_available);
     response.data_dir = state.data_dir.to_string_lossy().to_string();
@@ -622,7 +624,8 @@ pub async fn get_launcher_settings(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<LauncherSettingsPayload, LauncherError> {
     let state = state.lock().await;
-    let embedded_available = state.embedded_java_path().exists();
+    let embedded_available =
+        crate::core::java::runtime::is_usable_java_binary(&state.embedded_java_path());
     let mut payload =
         LauncherSettingsPayload::from_settings(&state.launcher_settings, embedded_available);
     payload.data_dir = state.data_dir.to_string_lossy().to_string();
@@ -646,7 +649,8 @@ pub async fn update_launcher_settings(
         LauncherError::Other(format!("No se pudo guardar launcher_settings.json: {e}"))
     })?;
 
-    let embedded_available = state.embedded_java_path().exists();
+    let embedded_available =
+        crate::core::java::runtime::is_usable_java_binary(&state.embedded_java_path());
     let mut payload =
         LauncherSettingsPayload::from_settings(&state.launcher_settings, embedded_available);
     payload.data_dir = state.data_dir.to_string_lossy().to_string();
@@ -664,7 +668,8 @@ pub async fn migrate_launcher_data_dir(
         .migrate_data_dir(target)
         .map_err(|e| LauncherError::Other(format!("No se pudo migrar el launcher: {e}")))?;
 
-    let embedded_available = state.embedded_java_path().exists();
+    let embedded_available =
+        crate::core::java::runtime::is_usable_java_binary(&state.embedded_java_path());
     let mut response =
         LauncherSettingsPayload::from_settings(&state.launcher_settings, embedded_available);
     response.data_dir = migrated_to.to_string_lossy().to_string();
