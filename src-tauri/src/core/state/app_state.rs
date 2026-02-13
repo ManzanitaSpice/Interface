@@ -268,7 +268,7 @@ fn create_desktop_shortcut(
 
     #[cfg(target_os = "windows")]
     {
-        let launcher_exe = app_handle.path().executable()?;
+        let launcher_exe = std::env::current_exe()?;
         let shortcut_path = desktop_dir.join("Interface Launcher.bat");
         let content = format!("@echo off\r\nstart \"\" \"{}\"\r\n", launcher_exe.display());
         std::fs::write(shortcut_path, content)?;
@@ -276,7 +276,7 @@ fn create_desktop_shortcut(
 
     #[cfg(target_os = "linux")]
     {
-        let launcher_exe = app_handle.path().executable()?;
+        let launcher_exe = std::env::current_exe()?;
         let shortcut_path = desktop_dir.join("interface-launcher.desktop");
         let content = format!(
             "[Desktop Entry]\nType=Application\nName=Interface Launcher\nExec={}\nPath={}\nTerminal=false\n",
@@ -288,7 +288,7 @@ fn create_desktop_shortcut(
 
     #[cfg(target_os = "macos")]
     {
-        let launcher_exe = app_handle.path().executable()?;
+        let launcher_exe = std::env::current_exe()?;
         let shortcut_path = desktop_dir.join("Interface Launcher.command");
         let content = format!("#!/bin/bash\n\"{}\"\n", launcher_exe.display());
         std::fs::write(&shortcut_path, content)?;
