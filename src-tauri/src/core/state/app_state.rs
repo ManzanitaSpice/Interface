@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 
 use crate::core::downloader::Downloader;
 use crate::core::instance::InstanceManager;

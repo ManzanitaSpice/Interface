@@ -184,10 +184,10 @@ fn extract_jre_zip(bytes: &[u8], runtime_root: &Path) -> LauncherResult<()> {
         let mut zipped = archive.by_index(index)?;
         let mut rel_path = PathBuf::new();
 
-        let mut components = zipped
+        let enclosed_name = zipped
             .enclosed_name()
-            .ok_or_else(|| LauncherError::Other("Invalid zip entry path".into()))?
-            .components();
+            .ok_or_else(|| LauncherError::Other("Invalid zip entry path".into()))?;
+        let mut components = enclosed_name.components();
         let _ = components.next();
         for component in components {
             if let Component::Normal(part) = component {
