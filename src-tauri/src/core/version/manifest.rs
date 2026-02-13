@@ -4,7 +4,7 @@
 use serde::Deserialize;
 use tracing::info;
 
-use crate::core::error::{LauncherError, LauncherResult};
+use crate::core::error::LauncherResult;
 
 const VERSION_MANIFEST_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
