@@ -7,4 +7,5 @@ pub mod quilt;
 pub mod vanilla;
 
 pub use context::InstallContext;
+#[allow(unused_imports)]
 pub use installer::{Installer, LoaderInstallResult, LoaderInstaller};

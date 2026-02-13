@@ -4,13 +4,37 @@ use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
 use serde::Deserialize;
 use tokio::fs;
-use tracing::{info, warn};
+use tracing::info;
 
 use super::context::InstallContext;
 use super::installer::{LoaderInstallResult, LoaderInstaller};
 use crate::core::downloader::Downloader;
 use crate::core::error::{LauncherError, LauncherResult};
 use crate::core::maven::{MavenArtifact, FABRIC_MAVEN};
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FabricProfile {
+    pub id: Option<String>,
+    pub main_class: String,
+    #[serde(default)]
+    pub libraries: Vec<FabricLibrary>,
+    pub arguments: Option<FabricArguments>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FabricLibrary {
+    pub name: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FabricArguments {
+    #[serde(default)]
+    pub jvm: Vec<String>,
+    #[serde(default)]
+    pub game: Vec<String>,
+}
 
 pub struct FabricInstaller {
     client: reqwest::Client,

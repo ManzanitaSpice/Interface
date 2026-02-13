@@ -3,6 +3,7 @@ mod pom;
 mod resolver;
 
 pub use artifact::MavenArtifact;
+#[allow(unused_imports)]
 pub use pom::{PomDependency, PomDocument};
 #[allow(unused_imports)]
 pub use resolver::MavenResolver;

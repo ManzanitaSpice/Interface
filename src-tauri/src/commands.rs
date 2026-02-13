@@ -54,7 +54,7 @@ pub async fn create_instance(
 ) -> Result<InstanceInfo, LauncherError> {
     let state = state.lock().await;
 
-    let java_major = if payload.minecraft_version.starts_with("1.20")
+    let _java_major = if payload.minecraft_version.starts_with("1.20")
         || payload.minecraft_version.starts_with("1.21")
     {
         17
