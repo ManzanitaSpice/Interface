@@ -8,6 +8,7 @@ type InstanceState = "created" | "installing" | "ready" | "running" | "error";
 interface InstanceInfo {
   id: string;
   name: string;
+  path: string;
   minecraft_version: string;
   loader_type: LoaderType;
   loader_version: string | null;
@@ -114,7 +115,7 @@ function CreateInstancePage({ minecraftVersions, onInstanceCreated }: CreateInst
       }
     };
 
-    load();
+    void load();
 
     return () => {
       isCancelled = true;
@@ -234,6 +235,7 @@ function App() {
   const [minecraftVersions, setMinecraftVersions] = useState<string[]>([]);
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
   const [instanceProgress, setInstanceProgress] = useState<Record<string, InstanceActionProgress>>({});
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -258,7 +260,7 @@ function App() {
       }
     };
 
-    loadData();
+    void loadData();
   }, []);
 
   const handleInstanceCreated = (instance: InstanceInfo) => {
@@ -334,99 +336,148 @@ function App() {
     }
   };
 
+  const handleOpenInstanceFolder = async (id: string) => {
+    try {
+      await invoke("open_instance_folder", { id });
+    } catch (e) {
+      setError(`No se pudo abrir la carpeta de la instancia: ${String(e)}`);
+    }
+  };
+
   if (isLoading) {
     return <LoadingScreen />;
   }
 
   return (
-    <div className="app-layout">
-      <aside className="sidebar">
-        <div className="sidebar-header">Launcher</div>
-        <nav>
+    <div className="app-root">
+      <header className="global-topbar">
+        <div className="brand-zone">
+          <div className="brand-logo-placeholder" aria-hidden="true" />
+          <span className="brand-title">INTERFACE</span>
+        </div>
+
+        <div className="profile-menu-container">
           <button
-            className={`sidebar-btn ${currentView === "home" ? "active" : ""}`}
-            onClick={() => setCurrentView("home")}
+            className="profile-btn"
+            onClick={() => setIsProfileMenuOpen((prev) => !prev)}
+            type="button"
           >
-            Home
+            Perfil ▾
           </button>
-          <button
-            className={`sidebar-btn ${currentView === "create-instance" ? "active" : ""}`}
-            onClick={() => setCurrentView("create-instance")}
-          >
-            Create Instance
-          </button>
-        </nav>
-      </aside>
-
-      <main className="content-area">
-        {error && <p className="error-message">{error}</p>}
-
-        {currentView === "home" && (
-          <div>
-            <h2>Instances</h2>
-            <p>Tus instancias creadas aparecen aquí con información real del backend.</p>
-            <div className="instance-grid">
-              {instances.map((instance) => (
-                <article key={instance.id} className="instance-card">
-                  <h3>{instance.name}</h3>
-                  <p>
-                    <strong>Minecraft:</strong> {instance.minecraft_version}
-                  </p>
-                  <p>
-                    <strong>Loader:</strong> {formatLoader(instance.loader_type)}
-                  </p>
-                  <p>
-                    <strong>Loader Version:</strong> {instance.loader_version ?? "N/A"}
-                  </p>
-                  <p>
-                    <strong>Status:</strong> {instance.state}
-                  </p>
-
-                  <button
-                    className="start-instance-btn"
-                    onClick={() => void handleStartInstance(instance.id)}
-                    disabled={
-                      (instanceProgress[instance.id] && instanceProgress[instance.id].progress < 100) ||
-                      instance.state === "running"
-                    }
-                  >
-                    {instance.state === "running" ? "En ejecución" : "Iniciar instancia"}
-                  </button>
-
-                  {instanceProgress[instance.id] && (
-                    <div className="instance-progress-wrap">
-                      <div className="instance-progress-meta">
-                        <span>{instanceProgress[instance.id].status}</span>
-                        <span>{instanceProgress[instance.id].progress}%</span>
-                      </div>
-                      <div className="instance-progress-track">
-                        <div
-                          className="instance-progress-fill"
-                          style={{ width: `${instanceProgress[instance.id].progress}%` }}
-                        />
-                      </div>
-                      <small>{instanceProgress[instance.id].details}</small>
-                    </div>
-                  )}
-                </article>
-              ))}
-
-              {instances.length === 0 && (
-                <div className="empty-state">
-                  Aún no hay instancias. Ve a <strong>Create Instance</strong> para crear una real.
-                </div>
-              )}
+          {isProfileMenuOpen && (
+            <div className="profile-dropdown">
+              <button type="button">Mi perfil (próximamente)</button>
+              <button type="button">Configuración (próximamente)</button>
+              <button type="button">Cerrar sesión (próximamente)</button>
             </div>
-          </div>
-        )}
+          )}
+        </div>
+      </header>
 
-        {currentView === "create-instance" && (
-          <CreateInstancePage
-            minecraftVersions={minecraftVersions}
-            onInstanceCreated={handleInstanceCreated}
-          />
-        )}
-      </main>
+      <div className="app-layout">
+        <aside className="sidebar">
+          <div className="sidebar-header">Launcher</div>
+          <nav>
+            <button
+              className={`sidebar-btn ${currentView === "home" ? "active" : ""}`}
+              onClick={() => setCurrentView("home")}
+            >
+              Home
+            </button>
+          </nav>
+        </aside>
+
+        <main className="content-area">
+          {error && <p className="error-message">{error}</p>}
+
+          {currentView === "home" && (
+            <div>
+              <div className="home-toolbar">
+                <div>
+                  <h2>Instances</h2>
+                  <p>Herramientas rápidas para tus instancias.</p>
+                </div>
+                <button className="generate-btn toolbar-btn" onClick={() => setCurrentView("create-instance")}>
+                  + Crear instancia
+                </button>
+              </div>
+
+              <div className="instance-grid">
+                {instances.map((instance) => (
+                  <article key={instance.id} className="instance-card">
+                    <h3>{instance.name}</h3>
+                    <p>
+                      <strong>Minecraft:</strong> {instance.minecraft_version}
+                    </p>
+                    <p>
+                      <strong>Loader:</strong> {formatLoader(instance.loader_type)}
+                    </p>
+                    <p>
+                      <strong>Loader Version:</strong> {instance.loader_version ?? "N/A"}
+                    </p>
+                    <p>
+                      <strong>Status:</strong> {instance.state}
+                    </p>
+                    <p className="instance-path" title={instance.path}>
+                      <strong>Ruta:</strong> {instance.path}
+                    </p>
+
+                    <div className="instance-actions">
+                      <button
+                        className="start-instance-btn"
+                        onClick={() => void handleStartInstance(instance.id)}
+                        disabled={
+                          (instanceProgress[instance.id] && instanceProgress[instance.id].progress < 100) ||
+                          instance.state === "running"
+                        }
+                      >
+                        {instance.state === "running" ? "En ejecución" : "Iniciar instancia"}
+                      </button>
+
+                      <button
+                        className="open-folder-btn"
+                        onClick={() => void handleOpenInstanceFolder(instance.id)}
+                        type="button"
+                      >
+                        Abrir carpeta
+                      </button>
+                    </div>
+
+                    {instanceProgress[instance.id] && (
+                      <div className="instance-progress-wrap">
+                        <div className="instance-progress-meta">
+                          <span>{instanceProgress[instance.id].status}</span>
+                          <span>{instanceProgress[instance.id].progress}%</span>
+                        </div>
+                        <div className="instance-progress-track">
+                          <div
+                            className="instance-progress-fill"
+                            style={{ width: `${instanceProgress[instance.id].progress}%` }}
+                          />
+                        </div>
+                        <small>{instanceProgress[instance.id].details}</small>
+                      </div>
+                    )}
+                  </article>
+                ))}
+
+                {instances.length === 0 && (
+                  <div className="empty-state">
+                    Aún no hay instancias. Usa <strong>Crear instancia</strong> en la barra superior de Home.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {currentView === "create-instance" && (
+            <CreateInstancePage
+              minecraftVersions={minecraftVersions}
+              onInstanceCreated={handleInstanceCreated}
+            />
+          )}
+        </main>
+      </div>
     </div>
   );
 }

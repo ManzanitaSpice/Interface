@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -28,6 +29,7 @@ pub struct CreateInstancePayload {
 pub struct InstanceInfo {
     pub id: String,
     pub name: String,
+    pub path: String,
     pub minecraft_version: String,
     pub loader_type: LoaderType,
     pub loader_version: Option<String>,
@@ -39,12 +41,58 @@ impl From<&Instance> for InstanceInfo {
         Self {
             id: inst.id.clone(),
             name: inst.name.clone(),
+            path: inst.path.to_string_lossy().to_string(),
             minecraft_version: inst.minecraft_version.clone(),
             loader_type: inst.loader.clone(),
             loader_version: inst.loader_version.clone(),
             state: inst.state.clone(),
         }
     }
+}
+
+#[tauri::command]
+pub async fn open_instance_folder(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    id: String,
+) -> Result<(), LauncherError> {
+    let state = state.lock().await;
+    let instance = state.instance_manager.load(&id).await?;
+    let folder = instance.path;
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut cmd = Command::new("explorer");
+        cmd.arg(&folder);
+        cmd
+    };
+
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut cmd = Command::new("open");
+        cmd.arg(&folder);
+        cmd
+    };
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut cmd = Command::new("xdg-open");
+        cmd.arg(&folder);
+        cmd
+    };
+
+    let status = command.status().map_err(|source| LauncherError::Io {
+        path: folder.clone(),
+        source,
+    })?;
+
+    if !status.success() {
+        return Err(LauncherError::Other(format!(
+            "No se pudo abrir el explorador para {:?}",
+            folder
+        )));
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
