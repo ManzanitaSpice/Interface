@@ -26,7 +26,9 @@ pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std:
         Some(p) if p.exists() => p.clone(),
         _ => {
             // Auto-detect based on version JSON requirements
-            let java_major = determine_java_major(&instance.minecraft_version);
+            let java_major = instance
+                .required_java_major
+                .unwrap_or_else(|| determine_java_major(&instance.minecraft_version));
             java::find_java_binary(java_major).await?
         }
     };

@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use crate::core::downloader::Downloader;
 use crate::core::instance::InstanceManager;
 
+const APP_DIR_NAME: &str = "InterfaceOficial";
+const BOOTSTRAP_FILE: &str = "launcher_bootstrap.json";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JavaRuntimePreference {
@@ -20,6 +23,11 @@ pub enum JavaRuntimePreference {
 pub struct LauncherSettings {
     pub java_runtime: JavaRuntimePreference,
     pub selected_java_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BootstrapConfig {
+    data_dir: PathBuf,
 }
 
 impl Default for LauncherSettings {
@@ -89,6 +97,38 @@ impl AppState {
         let json = serde_json::to_string_pretty(&self.launcher_settings)?;
         std::fs::write(settings_path, json)
     }
+
+    pub fn migrate_data_dir(&mut self, target_dir: PathBuf) -> std::io::Result<PathBuf> {
+        let destination = if target_dir
+            .file_name()
+            .map(|n| n.to_string_lossy() == APP_DIR_NAME)
+            .unwrap_or(false)
+        {
+            target_dir
+        } else {
+            target_dir.join(APP_DIR_NAME)
+        };
+
+        if destination == self.data_dir {
+            return Ok(destination);
+        }
+
+        std::fs::create_dir_all(&destination)?;
+        copy_dir_recursive(&self.data_dir, &destination)?;
+
+        let bootstrap = BootstrapConfig {
+            data_dir: destination.clone(),
+        };
+        let bootstrap_json = serde_json::to_string_pretty(&bootstrap)?;
+        std::fs::write(default_base_dir().join(BOOTSTRAP_FILE), bootstrap_json)?;
+
+        self.data_dir = destination.clone();
+        self.instance_manager = InstanceManager::new(self.instances_dir());
+        self.launcher_settings = load_settings_from_disk(&self.data_dir).unwrap_or_default();
+        self.save_settings()?;
+
+        Ok(destination)
+    }
 }
 
 fn load_settings_from_disk(data_dir: &PathBuf) -> Option<LauncherSettings> {
@@ -97,13 +137,52 @@ fn load_settings_from_disk(data_dir: &PathBuf) -> Option<LauncherSettings> {
     serde_json::from_str(&raw).ok()
 }
 
+fn default_base_dir() -> PathBuf {
+    dirs::data_dir().unwrap_or_else(|| PathBuf::from("."))
+}
+
 fn default_data_dir() -> PathBuf {
-    let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
-    let dir = base.join("InterfaceOficial");
+    let base = default_base_dir();
+    let bootstrap_path = base.join(BOOTSTRAP_FILE);
+
+    if let Ok(raw) = std::fs::read_to_string(&bootstrap_path) {
+        if let Ok(cfg) = serde_json::from_str::<BootstrapConfig>(&raw) {
+            if !cfg.data_dir.exists() {
+                let _ = std::fs::create_dir_all(&cfg.data_dir);
+            }
+            return cfg.data_dir;
+        }
+    }
+
+    let dir = base.join(APP_DIR_NAME);
 
     if !dir.exists() {
         let _ = std::fs::create_dir_all(&dir);
     }
 
     dir
+}
+
+fn copy_dir_recursive(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = destination.join(entry.file_name());
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            std::fs::create_dir_all(&dst_path)?;
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else if file_type.is_file() {
+            if dst_path.exists() {
+                std::fs::remove_file(&dst_path)?;
+            }
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+
+    Ok(())
 }

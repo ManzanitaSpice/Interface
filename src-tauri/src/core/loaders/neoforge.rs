@@ -79,15 +79,32 @@ impl LoaderInstaller for NeoForgeInstaller {
         // NeoForge 1.21+ uses `neoforge` as the artifact name
         // Coordinate: net.neoforged:neoforge:<ctx.loader_version>:installer
         let installer_name = format!("neoforge-{}-installer.jar", ctx.loader_version);
+        let installer_path = ctx.instance_dir.join(&installer_name);
         let installer_url = format!(
             "{}/net/neoforged/neoforge/{}/{}",
             NEOFORGE_MAVEN, ctx.loader_version, installer_name
         );
-        let installer_path = ctx.instance_dir.join(&installer_name);
 
-        ctx.downloader
+        if let Err(primary_err) = ctx
+            .downloader
             .download_file(&installer_url, &installer_path, None)
-            .await?;
+            .await
+        {
+            // Legacy NeoForge for MC 1.20.1 was published under net.neoforged:forge
+            let legacy_name = format!("forge-{}-installer.jar", ctx.loader_version);
+            let legacy_url = format!(
+                "{}/net/neoforged/forge/{}/{}",
+                NEOFORGE_MAVEN, ctx.loader_version, legacy_name
+            );
+            info!(
+                "Primary NeoForge route failed, trying legacy route: {}",
+                legacy_url
+            );
+            ctx.downloader
+                .download_file(&legacy_url, &installer_path, None)
+                .await
+                .map_err(|_| primary_err)?;
+        }
 
         // Extract install_profile.json and version.json
         let installer_bytes =

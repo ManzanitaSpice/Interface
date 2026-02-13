@@ -74,6 +74,8 @@ pub struct Instance {
     pub jvm_args: Vec<String>,
     /// Extra game arguments from loader.
     pub game_args: Vec<String>,
+    /// Java major version required/recommended for this instance.
+    pub required_java_major: Option<u32>,
 }
 
 impl Instance {
@@ -106,6 +108,7 @@ impl Instance {
             libraries: Vec::new(),
             jvm_args: Vec::new(),
             game_args: Vec::new(),
+            required_java_major: None,
         }
     }
 
