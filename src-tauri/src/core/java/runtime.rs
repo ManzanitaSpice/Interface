@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
@@ -131,7 +131,15 @@ pub async fn find_java_binary(major: u32) -> LauncherResult<PathBuf> {
     Err(LauncherError::JavaNotFound(major))
 }
 
+<<<<<<< HEAD
 /// Probe a `java` binary to determine its version.
+=======
+pub fn is_usable_java_binary(path: &Path) -> bool {
+    let path_buf = path.to_path_buf();
+    probe_java(&path_buf).is_some()
+}
+
+>>>>>>> 7a585b277ee6e6510bcf8ef120789f6bc6fb2c02
 fn probe_java(path: &PathBuf) -> Option<JavaInstallation> {
     let output = Command::new(path)
         .arg("-version")
