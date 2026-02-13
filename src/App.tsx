@@ -14,6 +14,12 @@ interface InstanceInfo {
   state: InstanceState;
 }
 
+interface InstanceActionProgress {
+  progress: number;
+  status: string;
+  details: string;
+}
+
 interface CreateInstancePayload {
   name: string;
   minecraft_version: string;
@@ -227,6 +233,7 @@ function App() {
   const [currentView, setCurrentView] = useState("home");
   const [minecraftVersions, setMinecraftVersions] = useState<string[]>([]);
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
+  const [instanceProgress, setInstanceProgress] = useState<Record<string, InstanceActionProgress>>({});
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -257,6 +264,74 @@ function App() {
   const handleInstanceCreated = (instance: InstanceInfo) => {
     setInstances((prev) => [instance, ...prev]);
     setCurrentView("home");
+  };
+
+  const handleStartInstance = async (id: string) => {
+    setError("");
+    setInstanceProgress((prev) => ({
+      ...prev,
+      [id]: {
+        progress: 5,
+        status: "Preparando inicio",
+        details: "Validando archivos de la instancia...",
+      },
+    }));
+
+    let progress = 5;
+    const phases = [
+      "Descargando/verificando librerías",
+      "Preparando assets",
+      "Inicializando loader",
+      "Lanzando Minecraft",
+    ];
+    let phaseIndex = 0;
+
+    const interval = setInterval(() => {
+      progress = Math.min(progress + 7, 90);
+      if (progress > 20 && phaseIndex < phases.length - 1) {
+        phaseIndex += 1;
+      }
+
+      setInstanceProgress((prev) => ({
+        ...prev,
+        [id]: {
+          progress,
+          status: phases[phaseIndex],
+          details: `Completado ${progress}%`,
+        },
+      }));
+    }, 450);
+
+    try {
+      await invoke("launch_instance", { id });
+      clearInterval(interval);
+
+      setInstanceProgress((prev) => ({
+        ...prev,
+        [id]: {
+          progress: 100,
+          status: "Instancia iniciada",
+          details: "Proceso de arranque completado.",
+        },
+      }));
+
+      setInstances((prev) =>
+        prev.map((instance) =>
+          instance.id === id ? { ...instance, state: "running" } : instance,
+        ),
+      );
+    } catch (e) {
+      clearInterval(interval);
+      setInstanceProgress((prev) => ({
+        ...prev,
+        [id]: {
+          progress: 100,
+          status: "Error al iniciar",
+          details: String(e),
+        },
+      }));
+      setError(`No se pudo iniciar la instancia: ${String(e)}`);
+    }
   };
 
   if (isLoading) {
@@ -306,6 +381,33 @@ function App() {
                   <p>
                     <strong>Status:</strong> {instance.state}
                   </p>
+
+                  <button
+                    className="start-instance-btn"
+                    onClick={() => void handleStartInstance(instance.id)}
+                    disabled={
+                      (instanceProgress[instance.id] && instanceProgress[instance.id].progress < 100) ||
+                      instance.state === "running"
+                    }
+                  >
+                    {instance.state === "running" ? "En ejecución" : "Iniciar instancia"}
+                  </button>
+
+                  {instanceProgress[instance.id] && (
+                    <div className="instance-progress-wrap">
+                      <div className="instance-progress-meta">
+                        <span>{instanceProgress[instance.id].status}</span>
+                        <span>{instanceProgress[instance.id].progress}%</span>
+                      </div>
+                      <div className="instance-progress-track">
+                        <div
+                          className="instance-progress-fill"
+                          style={{ width: `${instanceProgress[instance.id].progress}%` }}
+                        />
+                      </div>
+                      <small>{instanceProgress[instance.id].details}</small>
+                    </div>
+                  )}
                 </article>
               ))}
 

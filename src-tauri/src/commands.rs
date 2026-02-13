@@ -47,7 +47,6 @@ impl From<&Instance> for InstanceInfo {
     }
 }
 
-
 #[derive(Debug, Deserialize)]
 struct MavenMetadata {
     versioning: MavenVersioning,
@@ -72,9 +71,8 @@ pub async fn get_minecraft_versions(
     let manifest = VersionManifest::fetch(&state.http_client).await?;
 
     let versions = manifest
-        .releases()
-        .into_iter()
-        .take(50)
+        .versions
+        .iter()
         .map(|entry| entry.id.clone())
         .collect();
 
@@ -140,7 +138,10 @@ pub async fn get_loader_versions(
                 .versions
                 .version
                 .into_iter()
-                .filter_map(|v| v.strip_prefix(&format!("{}-", minecraft_version)).map(str::to_owned))
+                .filter_map(|v| {
+                    v.strip_prefix(&format!("{}-", minecraft_version))
+                        .map(str::to_owned)
+                })
                 .collect()
         }
         LoaderType::NeoForge => {
@@ -162,19 +163,42 @@ pub async fn get_loader_versions(
                 .collect::<Vec<_>>()
                 .join(".");
 
-            metadata
+            let mut resolved: Vec<String> = metadata
                 .versioning
                 .versions
                 .version
                 .into_iter()
                 .filter(|v| v.starts_with(&version_prefix))
-                .collect()
+                .collect();
+
+            // Legacy NeoForge builds for MC 1.20.1 were published as net.neoforged:forge.
+            if minecraft_version == "1.20.1" {
+                let legacy_xml = client
+                    .get("https://maven.neoforged.net/releases/net/neoforged/forge/maven-metadata.xml")
+                    .send()
+                    .await?
+                    .text()
+                    .await?;
+
+                let legacy_metadata: MavenMetadata =
+                    quick_xml::de::from_str(&legacy_xml).map_err(|e| {
+                        LauncherError::LoaderApi(format!(
+                            "Unable to parse legacy NeoForge metadata: {e}"
+                        ))
+                    })?;
+
+                resolved.extend(legacy_metadata.versioning.versions.version);
+            }
+
+            resolved
         }
     };
 
     versions.sort();
+    versions.dedup();
+    versions.sort();
     versions.reverse();
-    versions.truncate(50);
+    versions.truncate(200);
 
     Ok(versions)
 }
