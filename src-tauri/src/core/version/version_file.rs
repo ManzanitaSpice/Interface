@@ -52,8 +52,10 @@ pub struct DownloadArtifact {
 pub struct AssetIndexInfo {
     pub id: String,
     pub url: String,
+    #[allow(dead_code)]
     #[serde(default)]
     pub sha1: Option<String>,
+    #[allow(dead_code)]
     #[serde(default)]
     pub total_size: Option<u64>,
 }
@@ -90,6 +92,7 @@ pub struct LibraryDownloads {
 pub struct LibDownloadArtifact {
     pub path: String,
     pub sha1: String,
+    #[allow(dead_code)]
     pub size: u64,
     pub url: String,
 }
@@ -114,8 +117,10 @@ pub enum RuleAction {
 pub struct OsRule {
     #[serde(default)]
     pub name: Option<String>,
+    #[allow(dead_code)]
     #[serde(default)]
     pub arch: Option<String>,
+    #[allow(dead_code)]
     #[serde(default)]
     pub version: Option<String>,
 }

@@ -87,7 +87,7 @@ impl FabricInstaller {
         let tasks = stream::iter(profile.libraries.iter().cloned())
             .map(|lib| {
                 let libs_dir = libs_dir.to_path_buf();
-                let downloader = downloader.clone();
+                let downloader = downloader;
 
                 async move {
                     let repo = lib.url.as_deref().unwrap_or(FABRIC_MAVEN);
