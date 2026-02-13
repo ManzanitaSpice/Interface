@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::info;
 
+use crate::core::version::VersionManifest;
+
 use crate::core::error::LauncherError;
 use crate::core::instance::{Instance, InstanceState, LoaderType};
 use crate::core::java::{self, JavaInstallation};
@@ -43,6 +45,138 @@ impl From<&Instance> for InstanceInfo {
             state: inst.state.clone(),
         }
     }
+}
+
+
+#[derive(Debug, Deserialize)]
+struct MavenMetadata {
+    versioning: MavenVersioning,
+}
+
+#[derive(Debug, Deserialize)]
+struct MavenVersioning {
+    versions: MavenVersions,
+}
+
+#[derive(Debug, Deserialize)]
+struct MavenVersions {
+    #[serde(rename = "version", default)]
+    version: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn get_minecraft_versions(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<String>, LauncherError> {
+    let state = state.lock().await;
+    let manifest = VersionManifest::fetch(&state.http_client).await?;
+
+    let versions = manifest
+        .releases()
+        .into_iter()
+        .take(50)
+        .map(|entry| entry.id.clone())
+        .collect();
+
+    Ok(versions)
+}
+
+#[tauri::command]
+pub async fn get_loader_versions(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    loader_type: LoaderType,
+    minecraft_version: String,
+) -> Result<Vec<String>, LauncherError> {
+    let state = state.lock().await;
+    let client = state.http_client.clone();
+
+    let mut versions = match loader_type {
+        LoaderType::Vanilla => vec![],
+        LoaderType::Fabric => {
+            #[derive(Deserialize)]
+            struct FabricLoaderEntry {
+                loader: FabricLoaderVersion,
+            }
+            #[derive(Deserialize)]
+            struct FabricLoaderVersion {
+                version: String,
+            }
+
+            let url = format!(
+                "https://meta.fabricmc.net/v2/versions/loader/{}",
+                minecraft_version
+            );
+
+            let response = client.get(url).send().await?;
+            if !response.status().is_success() {
+                return Err(LauncherError::LoaderApi(format!(
+                    "Fabric API returned {}",
+                    response.status()
+                )));
+            }
+
+            response
+                .json::<Vec<FabricLoaderEntry>>()
+                .await?
+                .into_iter()
+                .map(|entry| entry.loader.version)
+                .collect()
+        }
+        LoaderType::Quilt => loaders::quilt::list_loader_versions(&minecraft_version).await?,
+        LoaderType::Forge => {
+            let xml = client
+                .get("https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml")
+                .send()
+                .await?
+                .text()
+                .await?;
+
+            let metadata: MavenMetadata = quick_xml::de::from_str(&xml).map_err(|e| {
+                LauncherError::LoaderApi(format!("Unable to parse Forge metadata: {e}"))
+            })?;
+
+            metadata
+                .versioning
+                .versions
+                .version
+                .into_iter()
+                .filter_map(|v| v.strip_prefix(&format!("{}-", minecraft_version)).map(str::to_owned))
+                .collect()
+        }
+        LoaderType::NeoForge => {
+            let xml = client
+                .get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
+                .send()
+                .await?
+                .text()
+                .await?;
+
+            let metadata: MavenMetadata = quick_xml::de::from_str(&xml).map_err(|e| {
+                LauncherError::LoaderApi(format!("Unable to parse NeoForge metadata: {e}"))
+            })?;
+
+            let version_prefix = minecraft_version
+                .trim_start_matches("1.")
+                .split('.')
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(".");
+
+            metadata
+                .versioning
+                .versions
+                .version
+                .into_iter()
+                .filter(|v| v.starts_with(&version_prefix))
+                .collect()
+        }
+    };
+
+    versions.sort();
+    versions.reverse();
+    versions.truncate(50);
+
+    Ok(versions)
 }
 
 // ── Tauri Commands ──────────────────────────────────────
