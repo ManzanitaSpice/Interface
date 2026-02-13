@@ -145,12 +145,10 @@ impl LibraryEntry {
         for rule in rules {
             let os_matches = match &rule.os {
                 None => true, // No OS constraint → rule applies universally
-                Some(os) => {
-                    match &os.name {
-                        None => true,
-                        Some(name) => name == current_os,
-                    }
-                }
+                Some(os) => match &os.name {
+                    None => true,
+                    Some(name) => name == current_os,
+                },
             };
 
             if os_matches {
@@ -165,19 +163,15 @@ impl LibraryEntry {
     pub fn native_classifier_for_current_os(&self) -> Option<String> {
         let natives = self.natives.as_ref()?;
         let os = current_os_name();
-        natives
-            .as_object()?
-            .get(os)?
-            .as_str()
-            .map(|s| {
-                // Replace ${arch} with actual architecture
-                let arch = if cfg!(target_arch = "x86_64") {
-                    "64"
-                } else {
-                    "32"
-                };
-                s.replace("${arch}", arch)
-            })
+        natives.as_object()?.get(os)?.as_str().map(|s| {
+            // Replace ${arch} with actual architecture
+            let arch = if cfg!(target_arch = "x86_64") {
+                "64"
+            } else {
+                "32"
+            };
+            s.replace("${arch}", arch)
+        })
     }
 }
 
@@ -209,10 +203,7 @@ impl VersionJson {
         let path = instance_dir.join(format!("{}.json", version_id));
         tokio::fs::write(&path, raw_json)
             .await
-            .map_err(|e| LauncherError::Io {
-                path,
-                source: e,
-            })?;
+            .map_err(|e| LauncherError::Io { path, source: e })?;
         Ok(())
     }
 
@@ -271,9 +262,7 @@ impl VersionJson {
                             ) {
                                 let dest = libs_dir.join(path);
                                 if !dest.exists() {
-                                    downloader
-                                        .download_file(url, &dest, Some(sha1))
-                                        .await?;
+                                    downloader.download_file(url, &dest, Some(sha1)).await?;
                                 }
                             }
                         }
@@ -284,7 +273,11 @@ impl VersionJson {
             lib_coords.push(lib.name.clone());
         }
 
-        info!("Processed {} libraries ({} allowed)", self.libraries.len(), lib_coords.len());
+        info!(
+            "Processed {} libraries ({} allowed)",
+            self.libraries.len(),
+            lib_coords.len()
+        );
         Ok(lib_coords)
     }
 

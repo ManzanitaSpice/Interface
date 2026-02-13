@@ -29,9 +29,7 @@ impl InstanceManager {
 
         // Check for collision (extremely unlikely with UUID, but defensive)
         if instance.path.exists() {
-            return Err(LauncherError::InstanceAlreadyExists(
-                instance.id.clone(),
-            ));
+            return Err(LauncherError::InstanceAlreadyExists(instance.id.clone()));
         }
 
         // Create directory structure: minecraft/, mods/, config/
@@ -58,12 +56,12 @@ impl InstanceManager {
         let config_path = instance.config_path();
 
         if let Some(parent) = config_path.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                LauncherError::Io {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| LauncherError::Io {
                     path: parent.to_path_buf(),
                     source: e,
-                }
-            })?;
+                })?;
         }
 
         tokio::fs::write(&config_path, json)
@@ -83,12 +81,13 @@ impl InstanceManager {
             return Err(LauncherError::InstanceNotFound(id.to_string()));
         }
 
-        let json = tokio::fs::read_to_string(&config_path)
-            .await
-            .map_err(|e| LauncherError::Io {
-                path: config_path.clone(),
-                source: e,
-            })?;
+        let json =
+            tokio::fs::read_to_string(&config_path)
+                .await
+                .map_err(|e| LauncherError::Io {
+                    path: config_path.clone(),
+                    source: e,
+                })?;
 
         let instance: Instance = serde_json::from_str(&json)?;
         Ok(instance)

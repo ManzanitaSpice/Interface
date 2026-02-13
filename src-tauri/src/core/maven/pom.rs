@@ -69,8 +69,7 @@ impl PomDocument {
     /// Parse a POM XML string into a `PomDocument`.
     pub fn parse(xml: &str) -> LauncherResult<Self> {
         // quick-xml's serde deserializer handles namespaces, etc.
-        let doc: PomDocument =
-            from_str(xml).map_err(|e| LauncherError::PomParse(e.to_string()))?;
+        let doc: PomDocument = from_str(xml).map_err(|e| LauncherError::PomParse(e.to_string()))?;
         Ok(doc)
     }
 
@@ -84,9 +83,7 @@ impl PomDocument {
         if let Some(dm) = &self.dependency_management {
             if let Some(deps) = &dm.dependencies {
                 for managed in &deps.items {
-                    if managed.group_id == dep.group_id
-                        && managed.artifact_id == dep.artifact_id
-                    {
+                    if managed.group_id == dep.group_id && managed.artifact_id == dep.artifact_id {
                         return managed.version.clone();
                     }
                 }

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use sha1::{Digest, Sha1};
-use tauri::{Emitter, AppHandle};
+use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info};
 
@@ -69,12 +69,12 @@ impl Downloader {
     ) -> LauncherResult<()> {
         // Ensure parent dir exists
         if let Some(parent) = dest.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                LauncherError::Io {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| LauncherError::Io {
                     path: parent.to_path_buf(),
                     source: e,
-                }
-            })?;
+                })?;
         }
 
         let response = self.client.get(url).send().await?;
@@ -106,15 +106,18 @@ impl Downloader {
 
         // Write to file inside a block to ensure the handle is dropped immediately
         {
-            let mut file =
-                tokio::fs::File::create(dest).await.map_err(|e| LauncherError::Io {
+            let mut file = tokio::fs::File::create(dest)
+                .await
+                .map_err(|e| LauncherError::Io {
                     path: dest.to_path_buf(),
                     source: e,
                 })?;
-            file.write_all(&bytes).await.map_err(|e| LauncherError::Io {
-                path: dest.to_path_buf(),
-                source: e,
-            })?;
+            file.write_all(&bytes)
+                .await
+                .map_err(|e| LauncherError::Io {
+                    path: dest.to_path_buf(),
+                    source: e,
+                })?;
             file.flush().await.map_err(|e| LauncherError::Io {
                 path: dest.to_path_buf(),
                 source: e,

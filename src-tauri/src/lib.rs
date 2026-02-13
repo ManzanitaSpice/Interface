@@ -38,6 +38,8 @@ pub fn run() {
             commands::force_close_instance,
             commands::open_instance_folder,
             commands::get_java_installations,
+            commands::get_launcher_settings,
+            commands::update_launcher_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

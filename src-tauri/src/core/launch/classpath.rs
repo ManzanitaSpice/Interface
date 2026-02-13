@@ -89,12 +89,12 @@ pub async fn extract_natives(
         }
 
         // Extract .dll/.so/.dylib from the JAR
-        let jar_bytes = tokio::fs::read(&jar_path).await.map_err(|e| {
-            LauncherError::Io {
+        let jar_bytes = tokio::fs::read(&jar_path)
+            .await
+            .map_err(|e| LauncherError::Io {
                 path: jar_path.clone(),
                 source: e,
-            }
-        })?;
+            })?;
         let cursor = std::io::Cursor::new(jar_bytes);
         let mut archive = match zip::ZipArchive::new(cursor) {
             Ok(a) => a,
@@ -115,11 +115,9 @@ pub async fn extract_natives(
 
             if is_native && !name.contains('/') {
                 let dest = natives_dir.join(&name);
-                let mut out = std::fs::File::create(&dest).map_err(|e| {
-                    LauncherError::Io {
-                        path: dest.clone(),
-                        source: e,
-                    }
+                let mut out = std::fs::File::create(&dest).map_err(|e| LauncherError::Io {
+                    path: dest.clone(),
+                    source: e,
                 })?;
                 std::io::copy(&mut file, &mut out).map_err(|e| LauncherError::Io {
                     path: dest.clone(),

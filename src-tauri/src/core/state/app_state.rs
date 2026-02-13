@@ -3,29 +3,46 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 
 use crate::core::downloader::Downloader;
 use crate::core::instance::InstanceManager;
 
-/// Global application state managed by Tauri.
-///
-/// Wrapped in `Arc<Mutex<...>>` for safe concurrent access from commands.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JavaRuntimePreference {
+    Auto,
+    Embedded,
+    System,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LauncherSettings {
+    pub java_runtime: JavaRuntimePreference,
+    pub selected_java_path: Option<PathBuf>,
+}
+
+impl Default for LauncherSettings {
+    fn default() -> Self {
+        Self {
+            java_runtime: JavaRuntimePreference::Auto,
+            selected_java_path: None,
+        }
+    }
+}
+
 pub struct AppState {
-    /// Root data directory for the launcher
-    /// (e.g. `%APPDATA%/InterfaceOficial` on Windows).
     pub data_dir: PathBuf,
     pub instance_manager: InstanceManager,
     pub downloader: Arc<Downloader>,
-    /// Shared HTTP client — reuse across all requests to leverage connection pooling.
     pub http_client: Client,
-    /// Runtime process registry for force-close actions.
     pub running_instances: HashMap<String, u32>,
+    pub launcher_settings: LauncherSettings,
 }
 
 impl AppState {
     pub fn new(app_handle: tauri::AppHandle) -> Self {
         let data_dir = default_data_dir();
-
         let instances_dir = data_dir.join("instances");
         let instance_manager = InstanceManager::new(instances_dir);
 
@@ -35,6 +52,7 @@ impl AppState {
             .expect("Failed to build HTTP client");
 
         let downloader = Arc::new(Downloader::new(Some(app_handle)));
+        let launcher_settings = load_settings_from_disk(&data_dir).unwrap_or_default();
 
         Self {
             data_dir,
@@ -42,31 +60,47 @@ impl AppState {
             downloader,
             http_client,
             running_instances: HashMap::new(),
+            launcher_settings,
         }
     }
 
-    /// Path to the shared libraries directory.
     pub fn libraries_dir(&self) -> PathBuf {
         self.data_dir.join("libraries")
     }
 
-    /// Path to the shared assets directory.
     pub fn assets_dir(&self) -> PathBuf {
         self.data_dir.join("assets")
     }
 
-    /// Path to the instances directory.
     pub fn instances_dir(&self) -> PathBuf {
         self.data_dir.join("instances")
     }
+
+    pub fn embedded_java_path(&self) -> PathBuf {
+        if cfg!(target_os = "windows") {
+            self.data_dir.join("runtime").join("bin").join("java.exe")
+        } else {
+            self.data_dir.join("runtime").join("bin").join("java")
+        }
+    }
+
+    pub fn save_settings(&self) -> std::io::Result<()> {
+        let settings_path = self.data_dir.join("launcher_settings.json");
+        let json = serde_json::to_string_pretty(&self.launcher_settings)?;
+        std::fs::write(settings_path, json)
+    }
 }
 
-/// Determine the default data directory per platform.
+fn load_settings_from_disk(data_dir: &PathBuf) -> Option<LauncherSettings> {
+    let path = data_dir.join("launcher_settings.json");
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
 fn default_data_dir() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     let dir = base.join("InterfaceOficial");
 
-    // Ensure the directory exists
     if !dir.exists() {
         let _ = std::fs::create_dir_all(&dir);
     }

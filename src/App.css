@@ -462,3 +462,40 @@ h2 {
 .empty-logs {
   color: #8f8f9d;
 }
+
+.settings-page {
+  max-width: 900px;
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.settings-tab {
+  padding: 8px 14px;
+  border: 1px solid #444;
+  background: #2b2b2b;
+  color: #ddd;
+  border-radius: 8px;
+}
+
+.settings-tab.active {
+  border-color: #646cff;
+  color: #646cff;
+}
+
+.settings-panel {
+  border: 1px solid #3a3a3a;
+  border-radius: 10px;
+  padding: 16px;
+  background: #272727;
+}
+
+.radio-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0;
+}

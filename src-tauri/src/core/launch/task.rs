@@ -15,10 +15,7 @@ use super::classpath::safe_path_str;
 ///
 /// Returns immediately after spawning. The caller is responsible for monitoring
 /// the child process and setting state back to `Ready` when it exits.
-pub async fn launch(
-    instance: &Instance,
-    classpath: &str,
-) -> LauncherResult<std::process::Child> {
+pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std::process::Child> {
     let main_class = instance
         .main_class
         .as_deref()
@@ -60,8 +57,7 @@ pub async fn launch(
     cmd.arg(main_class);
 
     // ── Game Arguments ──
-    cmd.arg("--gameDir")
-        .arg(safe_path_str(&game_dir));
+    cmd.arg("--gameDir").arg(safe_path_str(&game_dir));
     cmd.arg("--assetsDir")
         .arg(safe_path_str(&game_dir.join("assets")));
 
