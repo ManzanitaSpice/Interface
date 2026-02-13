@@ -29,7 +29,7 @@ pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std:
             let java_major = instance
                 .required_java_major
                 .unwrap_or_else(|| determine_java_major(&instance.minecraft_version));
-            java::find_java_binary(java_major).await?
+            java::resolve_java_binary(java_major).await?
         }
     };
 
