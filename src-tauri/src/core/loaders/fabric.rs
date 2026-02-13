@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
@@ -6,7 +6,8 @@ use serde::Deserialize;
 use tokio::fs;
 use tracing::{info, warn};
 
-use super::{LoaderInstallResult, LoaderInstaller};
+use super::context::InstallContext;
+use super::installer::{LoaderInstallResult, LoaderInstaller};
 use crate::core::downloader::Downloader;
 use crate::core::error::{LauncherError, LauncherResult};
 use crate::core::maven::{MavenArtifact, FABRIC_MAVEN};
@@ -95,30 +96,23 @@ const FABRIC_META_BASE: &str = "https://meta.fabricmc.net/v2";
 
 #[async_trait]
 impl LoaderInstaller for FabricInstaller {
-    async fn install(
-        &self,
-        minecraft_version: &str,
-        loader_version: &str,
-        instance_dir: &Path,
-        libs_dir: &Path,
-        downloader: &Downloader,
-    ) -> LauncherResult<LoaderInstallResult> {
+    async fn install(&self, ctx: InstallContext<'_>) -> LauncherResult<LoaderInstallResult> {
         info!(
             "Installing Fabric {} for Minecraft {}",
-            loader_version, minecraft_version
+            ctx.loader_version, ctx.minecraft_version
         );
 
         // 1️⃣ Fetch profile
         let profile = self
-            .fetch_profile(minecraft_version, loader_version)
+            .fetch_profile(ctx.minecraft_version, ctx.loader_version)
             .await?;
 
         // 2️⃣ Guardar profile local
-        fs::create_dir_all(instance_dir).await?;
+        fs::create_dir_all(ctx.instance_dir).await?;
 
-        let profile_path = instance_dir.join(format!(
+        let profile_path = ctx.instance_dir.join(format!(
             "fabric-{}-{}.json",
-            minecraft_version, loader_version
+            ctx.minecraft_version, ctx.loader_version
         ));
 
         let profile_json = serde_json::to_string_pretty(&profile)?;
@@ -126,7 +120,7 @@ impl LoaderInstaller for FabricInstaller {
 
         // 3️⃣ Instalar librerías en paralelo
         let libraries = self
-            .install_libraries(&profile, libs_dir, downloader)
+            .install_libraries(&profile, ctx.libs_dir, ctx.downloader)
             .await?;
 
         // 4️⃣ Argumentos

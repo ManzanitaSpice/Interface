@@ -1,14 +1,20 @@
-use std::path::Path;
-
 use serde::Deserialize;
 use tracing::info;
 
-use super::{LoaderInstallResult, LoaderInstaller};
-use crate::core::downloader::Downloader;
+use super::context::InstallContext;
+use super::installer::{LoaderInstallResult, LoaderInstaller};
 use crate::core::error::{LauncherError, LauncherResult};
 
 /// Installs Quilt loader via the Quilt Meta API (nearly identical to Fabric's API).
-pub struct QuiltInstaller;
+pub struct QuiltInstaller {
+    client: reqwest::Client,
+}
+
+impl QuiltInstaller {
+    pub fn new(client: reqwest::Client) -> Self {
+        Self { client }
+    }
+}
 
 const QUILT_META_BASE: &str = "https://meta.quiltmc.org/v3";
 
@@ -38,24 +44,17 @@ pub struct QuiltArguments {
 
 #[async_trait::async_trait]
 impl LoaderInstaller for QuiltInstaller {
-    async fn install(
-        &self,
-        minecraft_version: &str,
-        loader_version: &str,
-        instance_dir: &Path,
-        libs_dir: &Path,
-        downloader: &Downloader,
-    ) -> LauncherResult<LoaderInstallResult> {
+    async fn install(&self, ctx: InstallContext<'_>) -> LauncherResult<LoaderInstallResult> {
         info!(
             "Installing Quilt loader {} for MC {}",
-            loader_version, minecraft_version
+            ctx.loader_version, ctx.minecraft_version
         );
 
-        let client = reqwest::Client::new();
+        let client = self.client.clone();
 
         let profile_url = format!(
             "{}/versions/loader/{}/{}/profile/json",
-            QUILT_META_BASE, minecraft_version, loader_version
+            QUILT_META_BASE, ctx.minecraft_version, ctx.loader_version
         );
 
         let resp = client.get(&profile_url).send().await?;
@@ -70,9 +69,9 @@ impl LoaderInstaller for QuiltInstaller {
         let profile: QuiltProfile = resp.json().await?;
 
         // Save profile locally
-        let profile_path = instance_dir.join(format!(
+        let profile_path = ctx.instance_dir.join(format!(
             "quilt-{}-{}.json",
-            minecraft_version, loader_version
+            ctx.minecraft_version, ctx.loader_version
         ));
         let profile_json = serde_json::to_string_pretty(&serde_json::json!({
             "id": profile.id,
@@ -93,10 +92,10 @@ impl LoaderInstaller for QuiltInstaller {
                 .as_deref()
                 .unwrap_or(crate::core::maven::QUILT_MAVEN);
             let artifact = crate::core::maven::MavenArtifact::parse(&lib.name)?;
-            let dest = libs_dir.join(artifact.local_path());
+            let dest = ctx.libs_dir.join(artifact.local_path());
             if !dest.exists() {
                 let url = artifact.url(repo);
-                downloader.download_file(&url, &dest, None).await?;
+                ctx.downloader.download_file(&url, &dest, None).await?;
             }
             lib_names.push(lib.name.clone());
         }
@@ -122,10 +121,7 @@ impl LoaderInstaller for QuiltInstaller {
 
 /// Fetch available Quilt loader versions for a Minecraft version.
 pub async fn list_loader_versions(minecraft_version: &str) -> LauncherResult<Vec<String>> {
-    let url = format!(
-        "{}/versions/loader/{}",
-        QUILT_META_BASE, minecraft_version
-    );
+    let url = format!("{}/versions/loader/{}", QUILT_META_BASE, minecraft_version);
     let client = reqwest::Client::new();
     let resp = client.get(&url).send().await?;
     if !resp.status().is_success() {

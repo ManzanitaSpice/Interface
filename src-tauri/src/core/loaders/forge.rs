@@ -1,16 +1,20 @@
-use std::path::Path;
-
 use serde::Deserialize;
 use tracing::{info, warn};
 
-use super::{LoaderInstallResult, LoaderInstaller};
-use crate::core::downloader::Downloader;
+use super::context::InstallContext;
+use super::installer::{LoaderInstallResult, LoaderInstaller};
 use crate::core::error::{LauncherError, LauncherResult};
 use crate::core::maven::MavenArtifact;
 
 /// Installs Forge by downloading the installer JAR, extracting `install_profile.json`,
 /// and running processors via `std::process::Command`.
 pub struct ForgeInstaller;
+
+impl ForgeInstaller {
+    pub fn new(_client: reqwest::Client) -> Self {
+        Self
+    }
+}
 
 const FORGE_MAVEN: &str = "https://maven.minecraftforge.net";
 
@@ -71,20 +75,13 @@ pub struct ForgeArguments {
 
 #[async_trait::async_trait]
 impl LoaderInstaller for ForgeInstaller {
-    async fn install(
-        &self,
-        minecraft_version: &str,
-        loader_version: &str,
-        instance_dir: &Path,
-        libs_dir: &Path,
-        downloader: &Downloader,
-    ) -> LauncherResult<LoaderInstallResult> {
+    async fn install(&self, ctx: InstallContext<'_>) -> LauncherResult<LoaderInstallResult> {
         info!(
             "Installing Forge {} for MC {}",
-            loader_version, minecraft_version
+            ctx.loader_version, ctx.minecraft_version
         );
 
-        let forge_id = format!("{}-{}", minecraft_version, loader_version);
+        let forge_id = format!("{}-{}", ctx.minecraft_version, ctx.loader_version);
         let installer_name = format!("forge-{}-installer.jar", forge_id);
 
         // 1. Download the Forge installer JAR
@@ -92,8 +89,8 @@ impl LoaderInstaller for ForgeInstaller {
             "{}/net/minecraftforge/forge/{}/{}",
             FORGE_MAVEN, forge_id, installer_name
         );
-        let installer_path = instance_dir.join(&installer_name);
-        downloader
+        let installer_path = ctx.instance_dir.join(&installer_name);
+        ctx.downloader
             .download_file(&installer_url, &installer_path, None)
             .await?;
 
@@ -111,9 +108,9 @@ impl LoaderInstaller for ForgeInstaller {
 
         // Extract install_profile.json
         let install_profile: ForgeInstallProfile = {
-            let file = archive
-                .by_name("install_profile.json")
-                .map_err(|e| LauncherError::Loader(format!("Missing install_profile.json: {}", e)))?;
+            let file = archive.by_name("install_profile.json").map_err(|e| {
+                LauncherError::Loader(format!("Missing install_profile.json: {}", e))
+            })?;
             serde_json::from_reader(file)?
         };
 
@@ -129,25 +126,18 @@ impl LoaderInstaller for ForgeInstaller {
         let mut lib_names = Vec::new();
         for lib in &install_profile.libraries {
             let artifact = MavenArtifact::parse(&lib.name)?;
-            let dest = libs_dir.join(artifact.local_path());
+            let dest = ctx.libs_dir.join(artifact.local_path());
             if !dest.exists() {
                 let url = artifact.url(FORGE_MAVEN);
-                match downloader.download_file(&url, &dest, None).await {
+                match ctx.downloader.download_file(&url, &dest, None).await {
                     Ok(()) => {}
                     Err(e) => {
                         // Try Mojang libraries as fallback
-                        let mojang_url =
-                            artifact.url(crate::core::maven::MOJANG_LIBRARIES);
-                        match downloader
-                            .download_file(&mojang_url, &dest, None)
-                            .await
-                        {
+                        let mojang_url = artifact.url(crate::core::maven::MOJANG_LIBRARIES);
+                        match ctx.downloader.download_file(&mojang_url, &dest, None).await {
                             Ok(()) => {}
                             Err(_) => {
-                                warn!(
-                                    "Failed to download Forge lib {}: {}",
-                                    lib.name, e
-                                );
+                                warn!("Failed to download Forge lib {}: {}", lib.name, e);
                             }
                         }
                     }
@@ -158,10 +148,10 @@ impl LoaderInstaller for ForgeInstaller {
         // 4. Download libraries from version.json
         for lib in &version_json.libraries {
             let artifact = MavenArtifact::parse(&lib.name)?;
-            let dest = libs_dir.join(artifact.local_path());
+            let dest = ctx.libs_dir.join(artifact.local_path());
             if !dest.exists() {
                 let url = artifact.url(FORGE_MAVEN);
-                let _ = downloader.download_file(&url, &dest, None).await;
+                let _ = ctx.downloader.download_file(&url, &dest, None).await;
             }
             lib_names.push(lib.name.clone());
         }
@@ -176,28 +166,28 @@ impl LoaderInstaller for ForgeInstaller {
             }
 
             let jar_artifact = MavenArtifact::parse(&processor.jar)?;
-            let jar_path = libs_dir.join(jar_artifact.local_path());
+            let jar_path = ctx.libs_dir.join(jar_artifact.local_path());
 
             // Build classpath for the processor
             let mut cp_entries = vec![jar_path.to_string_lossy().to_string()];
             for cp_coord in &processor.classpath {
                 let cp_artifact = MavenArtifact::parse(cp_coord)?;
-                let cp_path = libs_dir.join(cp_artifact.local_path());
+                let cp_path = ctx.libs_dir.join(cp_artifact.local_path());
                 cp_entries.push(cp_path.to_string_lossy().to_string());
             }
             let classpath = cp_entries.join(if cfg!(windows) { ";" } else { ":" });
 
             // Resolve processor args — substitute known variables
-            let client_jar = instance_dir.join("client.jar");
+            let client_jar = ctx.instance_dir.join("client.jar");
             let resolved_args: Vec<String> = processor
                 .args
                 .iter()
                 .map(|arg| {
                     arg.replace("{SIDE}", "client")
                         .replace("{MINECRAFT_JAR}", &client_jar.to_string_lossy())
-                        .replace("{ROOT}", &instance_dir.to_string_lossy())
+                        .replace("{ROOT}", &ctx.instance_dir.to_string_lossy())
                         .replace("{INSTALLER}", &installer_path.to_string_lossy())
-                        .replace("{LIBRARY_DIR}", &libs_dir.to_string_lossy())
+                        .replace("{LIBRARY_DIR}", &ctx.libs_dir.to_string_lossy())
                 })
                 .collect();
 
@@ -213,7 +203,7 @@ impl LoaderInstaller for ForgeInstaller {
                 .arg(&classpath)
                 .arg("net.minecraftforge.installertools.ConsoleTool") // common entry point
                 .args(&resolved_args)
-                .current_dir(instance_dir)
+                .current_dir(ctx.instance_dir)
                 .status()
                 .map_err(|e| LauncherError::JavaExecution(e.to_string()))?;
 

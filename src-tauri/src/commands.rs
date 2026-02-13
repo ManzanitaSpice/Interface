@@ -75,33 +75,36 @@ pub async fn create_instance(
     let mut instance = state.instance_manager.create(config).await?;
 
     // Install vanilla base first
-    let vanilla_installer = loaders::vanilla::VanillaInstaller;
     let libs_dir = state.libraries_dir();
+    let client = state.http_client.clone();
+    let vanilla_installer = loaders::Installer::new(&LoaderType::Vanilla, client.clone());
 
-    let vanilla_result = loaders::LoaderInstaller::install(
-        &vanilla_installer,
-        &instance.config.minecraft_version,
-        "",
-        &instance.path,
-        &libs_dir,
-        &state.downloader,
-    )
-    .await?;
+    let vanilla_result = vanilla_installer
+        .install(loaders::InstallContext {
+            minecraft_version: &instance.config.minecraft_version,
+            loader_version: "",
+            instance_dir: &instance.path,
+            libs_dir: &libs_dir,
+            downloader: state.downloader.as_ref(),
+            http_client: &client,
+        })
+        .await?;
 
     instance.main_class = Some(vanilla_result.main_class.clone());
 
     // Install loader if not vanilla
     if instance.config.loader_type != LoaderType::Vanilla {
         if let Some(ref loader_version) = instance.config.loader_version {
-            let installer = loaders::create_installer(&instance.config.loader_type);
+            let installer = loaders::Installer::new(&instance.config.loader_type, client.clone());
             let loader_result = installer
-                .install(
-                    &instance.config.minecraft_version,
+                .install(loaders::InstallContext {
+                    minecraft_version: &instance.config.minecraft_version,
                     loader_version,
-                    &instance.path,
-                    &libs_dir,
-                    &state.downloader,
-                )
+                    instance_dir: &instance.path,
+                    libs_dir: &libs_dir,
+                    downloader: state.downloader.as_ref(),
+                    http_client: &client,
+                })
                 .await?;
 
             // Loader's main class overrides vanilla's
@@ -159,8 +162,7 @@ pub async fn launch_instance(
     let classpath = LaunchEngine::build_classpath(&instance, &libs_dir, &lib_coords)?;
 
     // Extract natives
-    let _natives_dir =
-        LaunchEngine::extract_natives(&instance, &libs_dir, &[]).await?;
+    let _natives_dir = LaunchEngine::extract_natives(&instance, &libs_dir, &[]).await?;
 
     // Update state
     instance.state = InstanceState::Running;
