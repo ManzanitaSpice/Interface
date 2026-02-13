@@ -21,10 +21,6 @@ pub struct JavaInstallation {
     pub is_64bit: bool,
 }
 
-<<<<<<< HEAD
-/// Detect all Java installations available on the system.
-pub async fn detect_java_installations() -> Vec<JavaInstallation> {
-=======
 fn preferred_embedded_runtime_dir() -> Option<PathBuf> {
     let exe_path = std::env::current_exe().ok()?;
     let exe_dir = exe_path.parent()?;
@@ -53,7 +49,6 @@ pub fn detect_embedded_java_binary() -> Option<PathBuf> {
             .join(java_exe()),
     ];
 
-    // Dev fallback by walking up and finding src-tauri/resources/runtime.
     for ancestor in exe_dir.ancestors() {
         candidates.push(
             ancestor
@@ -189,7 +184,6 @@ fn extract_jre_zip(bytes: &[u8], runtime_root: &Path) -> LauncherResult<()> {
         let mut zipped = archive.by_index(index)?;
         let mut rel_path = PathBuf::new();
 
-        // Strip first component (archive top-level folder), keep runtime layout directly in runtime_root.
         let mut components = zipped
             .enclosed_name()
             .ok_or_else(|| LauncherError::Other("Invalid zip entry path".into()))?
@@ -235,12 +229,15 @@ fn extract_jre_zip(bytes: &[u8], runtime_root: &Path) -> LauncherResult<()> {
     Ok(())
 }
 
+/// Detect all Java installations available on the system.
+pub async fn detect_java_installations() -> Vec<JavaInstallation> {
+    detect_java_installations_sync()
+}
+
 /// Blocking implementation used by async wrappers.
 pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
->>>>>>> 933f0893a623984818555e26c07f66912f243b71
     let mut installations = Vec::new();
 
-    // 1. Check JAVA_HOME
     if let Ok(java_home) = std::env::var("JAVA_HOME") {
         let bin = PathBuf::from(&java_home).join("bin").join(java_exe());
         if bin.exists() {
@@ -250,14 +247,12 @@ pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
         }
     }
 
-    // 2. Check PATH
     if let Ok(path_var) = std::env::var("PATH") {
         let separator = if cfg!(windows) { ';' } else { ':' };
         for dir in path_var.split(separator) {
             let bin = PathBuf::from(dir).join(java_exe());
             if bin.exists() {
                 if let Some(info) = probe_java(&bin) {
-                    // Avoid duplicates
                     if !installations.iter().any(|i| i.path == info.path) {
                         installations.push(info);
                     }
@@ -266,7 +261,6 @@ pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
         }
     }
 
-    // 3. Scan well-known directories (Windows)
     #[cfg(target_os = "windows")]
     {
         let search_roots = vec![
@@ -296,7 +290,6 @@ pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
         }
     }
 
-    // 4. Scan well-known directories (Linux/macOS)
     #[cfg(not(target_os = "windows"))]
     {
         let search_roots = vec![
@@ -311,7 +304,7 @@ pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
                 if let Ok(entries) = std::fs::read_dir(&root_path) {
                     for entry in entries.flatten() {
                         let bin = entry.path().join("bin").join("java");
-                        let bin_alt = entry.path().join("Contents/Home/bin/java"); // macOS
+                        let bin_alt = entry.path().join("Contents/Home/bin/java");
                         for candidate in [&bin, &bin_alt] {
                             if candidate.exists() {
                                 if let Some(info) = probe_java(candidate) {
@@ -335,12 +328,10 @@ pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
 pub async fn find_java_binary(major: u32) -> LauncherResult<PathBuf> {
     let installations = detect_java_installations().await;
 
-    // Prefer exact major match
     if let Some(exact) = installations.iter().find(|i| i.major == major) {
         return Ok(exact.path.clone());
     }
 
-    // Fallback: any version >= requested major
     if let Some(compat) = installations.iter().find(|i| i.major >= major) {
         warn!(
             "Exact Java {} not found, using Java {} at {:?}",
@@ -352,31 +343,25 @@ pub async fn find_java_binary(major: u32) -> LauncherResult<PathBuf> {
     Err(LauncherError::JavaNotFound(major))
 }
 
-<<<<<<< HEAD
-/// Probe a `java` binary to determine its version.
-=======
 pub fn is_usable_java_binary(path: &Path) -> bool {
     let path_buf = path.to_path_buf();
     probe_java(&path_buf).is_some()
 }
 
->>>>>>> 7a585b277ee6e6510bcf8ef120789f6bc6fb2c02
 fn probe_java(path: &PathBuf) -> Option<JavaInstallation> {
-    let output = Command::new(path)
-        .arg("-version")
-        .output()
-        .ok()?;
+    let output = Command::new(path).arg("-version").output().ok()?;
 
-    // `java -version` writes to stderr
     let stderr = String::from_utf8_lossy(&output.stderr);
-    debug!("Probing {:?}: {}", path, stderr.lines().next().unwrap_or(""));
+    debug!(
+        "Probing {:?}: {}",
+        path,
+        stderr.lines().next().unwrap_or("")
+    );
 
-    // Parse version string: "17.0.8" or "1.8.0_392"
     let version_str = parse_version_string(&stderr)?;
     let major = parse_major_version(&version_str);
     let is_64bit = stderr.contains("64-Bit");
 
-    // Canonicalize path for consistency
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
 
     Some(JavaInstallation {
@@ -387,9 +372,7 @@ fn probe_java(path: &PathBuf) -> Option<JavaInstallation> {
     })
 }
 
-/// Extract the version number from `java -version` output.
 fn parse_version_string(output: &str) -> Option<String> {
-    // Matches: "17.0.8", "21.0.1", "1.8.0_392"
     for line in output.lines() {
         if let Some(start) = line.find('"') {
             if let Some(end) = line[start + 1..].find('"') {
@@ -400,12 +383,10 @@ fn parse_version_string(output: &str) -> Option<String> {
     None
 }
 
-/// From "17.0.8" → 17, from "1.8.0_392" → 8.
 fn parse_major_version(version: &str) -> u32 {
     let first_part = version.split('.').next().unwrap_or("0");
     let major: u32 = first_part.parse().unwrap_or(0);
 
-    // Legacy format: "1.8.x" → major is 8
     if major == 1 {
         version
             .split('.')
@@ -442,7 +423,7 @@ mod tests {
 
     #[test]
     fn test_parse_version_string() {
-        let output = r#"openjdk version "17.0.8" 2023-07-18"#;
+        let output = "openjdk version \"17.0.8\" 2023-07-18";
         assert_eq!(parse_version_string(output), Some("17.0.8".to_string()));
     }
 }
