@@ -412,27 +412,32 @@ pub async fn launch_instance(
     id: String,
 ) -> Result<(), LauncherError> {
     let state_arc = state.inner().clone();
-    let mut state_guard = state_arc.lock().await;
-    let mut instance = state_guard.instance_manager.load(&id).await?;
+    let mut child = {
+        let mut state_guard = state_arc.lock().await;
+        let mut instance = state_guard.instance_manager.load(&id).await?;
 
-    if instance.state != InstanceState::Ready {
-        return Err(LauncherError::Other(format!(
-            "Instance {} is not in Ready state (current: {:?})",
-            id, instance.state
-        )));
-    }
+        if instance.state != InstanceState::Ready {
+            return Err(LauncherError::Other(format!(
+                "Instance {} is not in Ready state (current: {:?})",
+                id, instance.state
+            )));
+        }
 
-    let libs_dir = state_guard.libraries_dir();
-    let classpath = launch::build_classpath(&instance, &libs_dir, &instance.libraries)?;
-    let _natives_dir = launch::extract_natives(&instance, &libs_dir, &instance.libraries).await?;
+        let libs_dir = state_guard.libraries_dir();
+        let classpath = launch::build_classpath(&instance, &libs_dir, &instance.libraries)?;
+        let _natives_dir =
+            launch::extract_natives(&instance, &libs_dir, &instance.libraries).await?;
 
-    instance.state = InstanceState::Running;
-    state_guard.instance_manager.save(&instance).await?;
+        instance.state = InstanceState::Running;
+        state_guard.instance_manager.save(&instance).await?;
 
-    let mut child = launch::launch(&instance, &classpath).await?;
-    let pid = child.id();
-    state_guard.running_instances.insert(id.clone(), pid);
-    info!("Launched instance {}", instance.name);
+        let mut child = launch::launch(&instance, &classpath).await?;
+        let pid = child.id();
+        state_guard.running_instances.insert(id.clone(), pid);
+        info!("Launched instance {}", instance.name);
+
+        child
+    };
 
     if let Some(stdout) = child.stdout.take() {
         let instance_id = id.clone();
