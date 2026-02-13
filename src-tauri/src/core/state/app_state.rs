@@ -10,6 +10,7 @@ use crate::core::instance::InstanceManager;
 
 const APP_DIR_NAME: &str = "InterfaceOficial";
 const BOOTSTRAP_FILE: &str = "launcher_bootstrap.json";
+const INSTALL_MARKER_FILE: &str = "launcher_installation.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -28,6 +29,11 @@ pub struct LauncherSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BootstrapConfig {
     data_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct InstallationMarker {
+    initialized: bool,
 }
 
 impl Default for LauncherSettings {
@@ -108,6 +114,60 @@ impl AppState {
         std::fs::write(settings_path, json)
     }
 
+    pub fn is_first_launch(&self) -> bool {
+        !self.data_dir.join(INSTALL_MARKER_FILE).exists()
+    }
+
+    pub fn initialize_launcher_installation(
+        &mut self,
+        app_handle: &tauri::AppHandle,
+        target_dir: PathBuf,
+        create_shortcut: bool,
+    ) -> std::io::Result<PathBuf> {
+        let destination = normalize_install_dir(target_dir);
+
+        std::fs::create_dir_all(&destination)?;
+        std::fs::create_dir_all(destination.join("instances"))?;
+        std::fs::create_dir_all(destination.join("libraries"))?;
+        std::fs::create_dir_all(destination.join("assets"))?;
+
+        self.data_dir = destination.clone();
+        self.instance_manager = InstanceManager::new(self.instances_dir());
+        self.launcher_settings = load_settings_from_disk(&self.data_dir).unwrap_or_default();
+
+        self.install_embedded_runtime(app_handle)?;
+        self.save_settings()?;
+        self.save_install_marker()?;
+        save_bootstrap_config(&self.data_dir)?;
+
+        if create_shortcut {
+            let _ = create_desktop_shortcut(app_handle, &self.data_dir);
+        }
+
+        Ok(destination)
+    }
+
+    pub fn reinstall_launcher(&mut self, app_handle: &tauri::AppHandle) -> std::io::Result<()> {
+        if self.data_dir.exists() {
+            std::fs::remove_dir_all(&self.data_dir)?;
+        }
+
+        std::fs::create_dir_all(&self.data_dir)?;
+        std::fs::create_dir_all(self.instances_dir())?;
+        std::fs::create_dir_all(self.libraries_dir())?;
+        std::fs::create_dir_all(self.assets_dir())?;
+
+        self.running_instances.clear();
+        self.launcher_settings = LauncherSettings::default();
+        self.instance_manager = InstanceManager::new(self.instances_dir());
+
+        self.install_embedded_runtime(app_handle)?;
+        self.save_settings()?;
+        self.save_install_marker()?;
+        save_bootstrap_config(&self.data_dir)?;
+        Ok(())
+    }
+
     pub fn migrate_data_dir(&mut self, target_dir: PathBuf) -> std::io::Result<PathBuf> {
         let destination = if target_dir
             .file_name()
@@ -141,6 +201,32 @@ impl AppState {
     }
 }
 
+impl AppState {
+    fn install_embedded_runtime(&self, app_handle: &tauri::AppHandle) -> std::io::Result<()> {
+        let embedded_runtime = self.data_dir.join("runtime");
+        if embedded_runtime.exists() {
+            std::fs::remove_dir_all(&embedded_runtime)?;
+        }
+
+        if let Some(resource_dir) = app_handle.path().resource_dir().ok() {
+            let bundled_runtime = resource_dir.join("runtime");
+            if bundled_runtime.exists() {
+                std::fs::create_dir_all(&embedded_runtime)?;
+                copy_dir_recursive(&bundled_runtime, &embedded_runtime)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn save_install_marker(&self) -> std::io::Result<()> {
+        let marker_path = self.data_dir.join(INSTALL_MARKER_FILE);
+        let marker = InstallationMarker { initialized: true };
+        let marker_json = serde_json::to_string_pretty(&marker)?;
+        std::fs::write(marker_path, marker_json)
+    }
+}
+
 fn load_settings_from_disk(data_dir: &PathBuf) -> Option<LauncherSettings> {
     let path = data_dir.join("launcher_settings.json");
     let raw = std::fs::read_to_string(path).ok()?;
@@ -149,6 +235,65 @@ fn load_settings_from_disk(data_dir: &PathBuf) -> Option<LauncherSettings> {
 
 fn default_base_dir() -> PathBuf {
     dirs::data_dir().unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn normalize_install_dir(target_dir: PathBuf) -> PathBuf {
+    if target_dir
+        .file_name()
+        .map(|n| n.to_string_lossy() == APP_DIR_NAME)
+        .unwrap_or(false)
+    {
+        target_dir
+    } else {
+        target_dir.join(APP_DIR_NAME)
+    }
+}
+
+fn save_bootstrap_config(data_dir: &PathBuf) -> std::io::Result<()> {
+    let bootstrap = BootstrapConfig {
+        data_dir: data_dir.clone(),
+    };
+    let bootstrap_json = serde_json::to_string_pretty(&bootstrap)?;
+    std::fs::write(default_base_dir().join(BOOTSTRAP_FILE), bootstrap_json)
+}
+
+fn create_desktop_shortcut(
+    app_handle: &tauri::AppHandle,
+    data_dir: &PathBuf,
+) -> std::io::Result<()> {
+    let desktop_dir = dirs::desktop_dir()
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    #[cfg(target_os = "windows")]
+    {
+        let launcher_exe = app_handle.path().executable()?;
+        let shortcut_path = desktop_dir.join("Interface Launcher.bat");
+        let content = format!("@echo off\r\nstart \"\" \"{}\"\r\n", launcher_exe.display());
+        std::fs::write(shortcut_path, content)?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let launcher_exe = app_handle.path().executable()?;
+        let shortcut_path = desktop_dir.join("interface-launcher.desktop");
+        let content = format!(
+            "[Desktop Entry]\nType=Application\nName=Interface Launcher\nExec={}\nPath={}\nTerminal=false\n",
+            launcher_exe.display(),
+            data_dir.display()
+        );
+        std::fs::write(&shortcut_path, content)?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let launcher_exe = app_handle.path().executable()?;
+        let shortcut_path = desktop_dir.join("Interface Launcher.command");
+        let content = format!("#!/bin/bash\n\"{}\"\n", launcher_exe.display());
+        std::fs::write(&shortcut_path, content)?;
+    }
+
+    Ok(())
 }
 
 fn default_data_dir() -> PathBuf {

@@ -42,6 +42,18 @@ pub struct LauncherSettingsPayload {
     pub data_dir: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct FirstLaunchStatus {
+    pub first_launch: bool,
+    pub suggested_data_dir: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InitializeInstallationPayload {
+    pub target_dir: String,
+    pub create_desktop_shortcut: bool,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct MigrateLauncherDataDirPayload {
     pub target_dir: String,
@@ -551,6 +563,58 @@ fn kill_process(pid: u32) -> Result<(), LauncherError> {
 #[tauri::command]
 pub async fn get_java_installations() -> Result<Vec<JavaInstallation>, LauncherError> {
     Ok(java::detect_java_installations().await)
+}
+
+#[tauri::command]
+pub async fn get_first_launch_status(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+) -> Result<FirstLaunchStatus, LauncherError> {
+    let state = state.lock().await;
+    Ok(FirstLaunchStatus {
+        first_launch: state.is_first_launch(),
+        suggested_data_dir: state.data_dir.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
+pub async fn initialize_launcher_installation(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    payload: InitializeInstallationPayload,
+) -> Result<LauncherSettingsPayload, LauncherError> {
+    let mut state = state.lock().await;
+    let installed_dir = state
+        .initialize_launcher_installation(
+            &app_handle,
+            std::path::PathBuf::from(payload.target_dir),
+            payload.create_desktop_shortcut,
+        )
+        .map_err(|e| {
+            LauncherError::Other(format!("No se pudo completar la instalación inicial: {e}"))
+        })?;
+
+    let embedded_available = state.embedded_java_path().exists();
+    let mut response =
+        LauncherSettingsPayload::from_settings(&state.launcher_settings, embedded_available);
+    response.data_dir = installed_dir.to_string_lossy().to_string();
+    Ok(response)
+}
+
+#[tauri::command]
+pub async fn reinstall_launcher_completely(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+) -> Result<LauncherSettingsPayload, LauncherError> {
+    let mut state = state.lock().await;
+    state
+        .reinstall_launcher(&app_handle)
+        .map_err(|e| LauncherError::Other(format!("No se pudo reinstalar el launcher: {e}")))?;
+
+    let embedded_available = state.embedded_java_path().exists();
+    let mut response =
+        LauncherSettingsPayload::from_settings(&state.launcher_settings, embedded_available);
+    response.data_dir = state.data_dir.to_string_lossy().to_string();
+    Ok(response)
 }
 
 #[tauri::command]
