@@ -1,0 +1,208 @@
+.logo.vite:hover {
+  filter: drop-shadow(0 0 2em #747bff);
+}
+
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafb);
+}
+/* Reset and Base Styles */
+:root {
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+
+  color: #f6f6f6; /* Defaulting to light text for dark mode feel */
+  background-color: #1a1a1a; /* Dark background */
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+/* Loading Screen */
+.loading-screen {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background-color: #1a1a1a;
+  z-index: 1000;
+}
+
+.loading-title {
+  margin-bottom: 20px;
+  font-size: 1.5rem;
+  color: #ffffff;
+}
+
+.progress-bar-container {
+  width: 300px;
+  height: 10px;
+  background-color: #333;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background-color: #646cff;
+  transition: width 0.1s linear;
+}
+
+/* Main App Layout */
+.app-layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 250px;
+  background-color: #252526;
+  border-right: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 10px;
+  box-sizing: border-box;
+}
+
+.sidebar-header {
+  margin-bottom: 30px;
+  text-align: center;
+  font-weight: bold;
+  font-size: 1.2rem;
+  color: #fff;
+}
+
+.sidebar-btn {
+  background: transparent;
+  border: none;
+  color: #cccccc;
+  padding: 12px 20px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+  font-size: 1rem;
+  margin-bottom: 5px;
+  width: 100%;
+}
+
+.sidebar-btn:hover {
+  background-color: #37373d;
+  color: white;
+}
+
+.sidebar-btn.active {
+  background-color: #37373d; /* Active state color */
+  color: #646cff;
+  border-left: 3px solid #646cff;
+}
+
+/* Content Area */
+.content-area {
+  flex: 1;
+  padding: 30px;
+  overflow-y: auto;
+  background-color: #1e1e1e;
+}
+
+h2 {
+  margin-top: 0;
+  border-bottom: 1px solid #333;
+  padding-bottom: 15px;
+  margin-bottom: 25px;
+}
+
+/* Create Instance Form */
+.create-instance-form {
+  max-width: 600px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-group label {
+  font-weight: 500;
+  color: #ddd;
+}
+
+.form-group select,
+.form-group input {
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background-color: #2d2d2d;
+  color: white;
+  font-size: 1rem;
+}
+
+.form-group select:focus,
+.form-group input:focus {
+  border-color: #646cff;
+  outline: none;
+}
+
+.generate-btn {
+  margin-top: 20px;
+  padding: 12px;
+  background-color: #646cff;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.generate-btn:hover {
+  background-color: #535bf2;
+}
+
+/* Helper for hidden elements if needed */
+.hidden {
+  display: none;
+}
+
+    background-color: #2f2f2f;
+  }
+
+  a:hover {
+    color: #24c8db;
+  }
+
+  input,
+  button {
+    color: #ffffff;
+    background-color: #0f0f0f98;
+  }
+  button:active {
+    background-color: #0f0f0f69;
+  }
+}
