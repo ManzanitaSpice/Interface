@@ -1,17 +1,34 @@
-import { useState, useEffect } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
-// Mock Data
-const MINECRAFT_VERSIONS = ["1.20.4", "1.20.1", "1.19.4", "1.19.2", "1.18.2", "1.16.5", "1.12.2"];
-const LOADERS = ["Vanilla", "Forge", "Fabric", "NeoForge", "Quilt"];
+type LoaderType = "vanilla" | "forge" | "fabric" | "neoforge" | "quilt";
+type InstanceState = "created" | "installing" | "ready" | "running" | "error";
 
-const LOADER_VERSIONS: Record<string, string[]> = {
-  Vanilla: ["Latest Release", "Snapshot"],
-  Forge: ["47.2.0 (Recommended)", "47.2.1", "47.1.0"],
-  Fabric: ["0.15.3", "0.15.2", "0.14.24"],
-  NeoForge: ["20.4.80-beta", "20.4.5"],
-  Quilt: ["0.23.1-beta", "0.22.0"],
-};
+interface InstanceInfo {
+  id: string;
+  name: string;
+  minecraft_version: string;
+  loader_type: LoaderType;
+  loader_version: string | null;
+  state: InstanceState;
+}
+
+interface CreateInstancePayload {
+  name: string;
+  minecraft_version: string;
+  loader_type: LoaderType;
+  loader_version: string | null;
+  memory_max_mb?: number;
+}
+
+const LOADERS: { label: string; value: LoaderType }[] = [
+  { label: "Vanilla", value: "vanilla" },
+  { label: "Forge", value: "forge" },
+  { label: "Fabric", value: "fabric" },
+  { label: "NeoForge", value: "neoforge" },
+  { label: "Quilt", value: "quilt" },
+];
 
 function LoadingScreen() {
   const [progress, setProgress] = useState(0);
@@ -23,7 +40,7 @@ function LoadingScreen() {
           clearInterval(interval);
           return 100;
         }
-        return prev + 2; // Speed of loading
+        return prev + 2;
       });
     }, 50);
 
@@ -34,36 +51,100 @@ function LoadingScreen() {
     <div className="loading-screen">
       <h2 className="loading-title">Initializing Launcher...</h2>
       <div className="progress-bar-container">
-        <div className="progress-bar-fill" style={{ width: `${progress}%` }}></div>
+        <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
       </div>
-      <p style={{ marginTop: "10px", color: "#888" }}>{progress}%</p>
+      <p className="loading-progress">{progress}%</p>
     </div>
   );
 }
 
-function CreateInstancePage() {
-  const [selectedVersion, setSelectedVersion] = useState(MINECRAFT_VERSIONS[0]);
-  const [selectedLoader, setSelectedLoader] = useState(LOADERS[0]);
-  const [availableLoaderVersions, setAvailableLoaderVersions] = useState<string[]>([]);
+interface CreateInstancePageProps {
+  minecraftVersions: string[];
+  onInstanceCreated: (instance: InstanceInfo) => void;
+}
+
+function CreateInstancePage({ minecraftVersions, onInstanceCreated }: CreateInstancePageProps) {
+  const [selectedVersion, setSelectedVersion] = useState("");
+  const [selectedLoader, setSelectedLoader] = useState<LoaderType>("vanilla");
+  const [loaderVersions, setLoaderVersions] = useState<string[]>([]);
   const [selectedLoaderVersion, setSelectedLoaderVersion] = useState("");
   const [instanceName, setInstanceName] = useState("");
+  const [isLoadingVersions, setIsLoadingVersions] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [error, setError] = useState("");
 
-  // Update loader versions when loader changes
   useEffect(() => {
-    const versions = LOADER_VERSIONS[selectedLoader] || [];
-    setAvailableLoaderVersions(versions);
-    if (versions.length > 0) {
-      setSelectedLoaderVersion(versions[0]);
+    if (minecraftVersions.length > 0 && !selectedVersion) {
+      setSelectedVersion(minecraftVersions[0]);
     }
+  }, [minecraftVersions, selectedVersion]);
+
+  useEffect(() => {
+    if (!selectedVersion) return;
+
+    let isCancelled = false;
+    const load = async () => {
+      setIsLoadingVersions(true);
+      setError("");
+      try {
+        const versions = await invoke<string[]>("get_loader_versions", {
+          loaderType: selectedLoader,
+          minecraftVersion: selectedVersion,
+        });
+
+        if (isCancelled) return;
+
+        setLoaderVersions(versions);
+        setSelectedLoaderVersion(versions[0] ?? "");
+      } catch (e) {
+        if (isCancelled) return;
+        setLoaderVersions([]);
+        setSelectedLoaderVersion("");
+        setError(`No se pudieron cargar versiones del loader: ${String(e)}`);
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingVersions(false);
+        }
+      }
+    };
+
+    load();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [selectedLoader, selectedVersion]);
 
-  const handleGenerate = (e: React.FormEvent) => {
+  const canSubmit = useMemo(() => {
+    if (!instanceName.trim() || !selectedVersion) return false;
+    if (selectedLoader === "vanilla") return true;
+    return Boolean(selectedLoaderVersion);
+  }, [instanceName, selectedVersion, selectedLoader, selectedLoaderVersion]);
+
+  const handleGenerate = async (e: FormEvent) => {
     e.preventDefault();
-    alert(`Generating Instance:
-    Name: ${instanceName}
-    Minecraft: ${selectedVersion}
-    Loader: ${selectedLoader}
-    Loader Version: ${selectedLoaderVersion}`);
+    if (!canSubmit) return;
+
+    setIsCreating(true);
+    setError("");
+
+    try {
+      const payload: CreateInstancePayload = {
+        name: instanceName.trim(),
+        minecraft_version: selectedVersion,
+        loader_type: selectedLoader,
+        loader_version: selectedLoader === "vanilla" ? null : selectedLoaderVersion,
+        memory_max_mb: 4096,
+      };
+
+      const created = await invoke<InstanceInfo>("create_instance", { payload });
+      onInstanceCreated(created);
+      setInstanceName("");
+    } catch (e) {
+      setError(`No se pudo crear la instancia: ${String(e)}`);
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return (
@@ -83,11 +164,8 @@ function CreateInstancePage() {
 
         <div className="form-group">
           <label>Minecraft Version</label>
-          <select
-            value={selectedVersion}
-            onChange={(e) => setSelectedVersion(e.target.value)}
-          >
-            {MINECRAFT_VERSIONS.map((v) => (
+          <select value={selectedVersion} onChange={(e) => setSelectedVersion(e.target.value)}>
+            {minecraftVersions.map((v) => (
               <option key={v} value={v}>
                 {v}
               </option>
@@ -99,11 +177,11 @@ function CreateInstancePage() {
           <label>Mod Loader</label>
           <select
             value={selectedLoader}
-            onChange={(e) => setSelectedLoader(e.target.value)}
+            onChange={(e) => setSelectedLoader(e.target.value as LoaderType)}
           >
             {LOADERS.map((l) => (
-              <option key={l} value={l}>
-                {l}
+              <option key={l.value} value={l.value}>
+                {l.label}
               </option>
             ))}
           </select>
@@ -114,35 +192,72 @@ function CreateInstancePage() {
           <select
             value={selectedLoaderVersion}
             onChange={(e) => setSelectedLoaderVersion(e.target.value)}
-            disabled={availableLoaderVersions.length === 0}
+            disabled={selectedLoader === "vanilla" || isLoadingVersions || loaderVersions.length === 0}
           >
-            {availableLoaderVersions.map((lv) => (
-              <option key={lv} value={lv}>
-                {lv}
-              </option>
-            ))}
+            {selectedLoader === "vanilla" ? (
+              <option value="">No aplica para Vanilla</option>
+            ) : (
+              loaderVersions.map((lv) => (
+                <option key={lv} value={lv}>
+                  {lv}
+                </option>
+              ))
+            )}
           </select>
         </div>
 
-        <button type="submit" className="generate-btn">
-          Generate Instance
+        {error && <p className="error-message">{error}</p>}
+
+        <button type="submit" className="generate-btn" disabled={!canSubmit || isCreating}>
+          {isCreating ? "Creating..." : "Generate Instance"}
         </button>
       </form>
     </div>
   );
 }
 
+function formatLoader(loader: LoaderType) {
+  return loader === "neoforge"
+    ? "NeoForge"
+    : loader.charAt(0).toUpperCase() + loader.slice(1);
+}
+
 function App() {
   const [isLoading, setIsLoading] = useState(true);
-  const [currentView, setCurrentView] = useState("home"); // 'home' | 'create-instance'
+  const [currentView, setCurrentView] = useState("home");
+  const [minecraftVersions, setMinecraftVersions] = useState<string[]>([]);
+  const [instances, setInstances] = useState<InstanceInfo[]>([]);
+  const [error, setError] = useState("");
 
-  // Simulate loading delay
   useEffect(() => {
     const timer = setTimeout(() => {
       setIsLoading(false);
-    }, 3000); // 3 seconds loading time
+    }, 1500);
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const [versions, savedInstances] = await Promise.all([
+          invoke<string[]>("get_minecraft_versions"),
+          invoke<InstanceInfo[]>("list_instances"),
+        ]);
+
+        setMinecraftVersions(versions);
+        setInstances(savedInstances);
+      } catch (e) {
+        setError(`No se pudo conectar al backend: ${String(e)}`);
+      }
+    };
+
+    loadData();
+  }, []);
+
+  const handleInstanceCreated = (instance: InstanceInfo) => {
+    setInstances((prev) => [instance, ...prev]);
+    setCurrentView("home");
+  };
 
   if (isLoading) {
     return <LoadingScreen />;
@@ -150,7 +265,6 @@ function App() {
 
   return (
     <div className="app-layout">
-      {/* Sidebar */}
       <aside className="sidebar">
         <div className="sidebar-header">Launcher</div>
         <nav>
@@ -166,20 +280,50 @@ function App() {
           >
             Create Instance
           </button>
-          <button className="sidebar-btn">Settings</button>
-          <button className="sidebar-btn">About</button>
         </nav>
       </aside>
 
-      {/* Main Content */}
       <main className="content-area">
+        {error && <p className="error-message">{error}</p>}
+
         {currentView === "home" && (
           <div>
-            <h2>Welcome Back!</h2>
-            <p>Select an instance from the sidebar or create a new one to get started.</p>
+            <h2>Instances</h2>
+            <p>Tus instancias creadas aparecen aquí con información real del backend.</p>
+            <div className="instance-grid">
+              {instances.map((instance) => (
+                <article key={instance.id} className="instance-card">
+                  <h3>{instance.name}</h3>
+                  <p>
+                    <strong>Minecraft:</strong> {instance.minecraft_version}
+                  </p>
+                  <p>
+                    <strong>Loader:</strong> {formatLoader(instance.loader_type)}
+                  </p>
+                  <p>
+                    <strong>Loader Version:</strong> {instance.loader_version ?? "N/A"}
+                  </p>
+                  <p>
+                    <strong>Status:</strong> {instance.state}
+                  </p>
+                </article>
+              ))}
+
+              {instances.length === 0 && (
+                <div className="empty-state">
+                  Aún no hay instancias. Ve a <strong>Create Instance</strong> para crear una real.
+                </div>
+              )}
+            </div>
           </div>
         )}
-        {currentView === "create-instance" && <CreateInstancePage />}
+
+        {currentView === "create-instance" && (
+          <CreateInstancePage
+            minecraftVersions={minecraftVersions}
+            onInstanceCreated={handleInstanceCreated}
+          />
+        )}
       </main>
     </div>
   );
