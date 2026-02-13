@@ -132,20 +132,13 @@ pub async fn list_loader_versions(minecraft_version: &str) -> LauncherResult<Vec
     }
 
     let versions: Vec<QuiltLoaderEntry> = resp.json().await?;
-    let stable_exists = versions.iter().any(|entry| entry.stable);
 
-    Ok(versions
-        .into_iter()
-        .filter(|entry| !stable_exists || entry.stable)
-        .map(|v| v.loader.version)
-        .collect())
+    Ok(versions.into_iter().map(|v| v.loader.version).collect())
 }
 
 #[derive(Deserialize)]
 struct QuiltLoaderEntry {
     loader: QuiltLoaderVersion,
-    #[serde(default)]
-    stable: bool,
 }
 
 #[derive(Deserialize)]

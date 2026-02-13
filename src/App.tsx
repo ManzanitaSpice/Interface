@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
@@ -28,6 +28,7 @@ interface LauncherSettingsPayload {
   java_runtime: JavaRuntimePreference;
   selected_java_path: string | null;
   embedded_java_available: boolean;
+  data_dir: string;
 }
 
 
@@ -198,6 +199,9 @@ function CreateInstancePage({
               <option key={lv} value={lv}>{lv}</option>
             ))}
           </select>
+          {selectedLoader !== "vanilla" && !isLoadingVersions && loaderVersions.length > 0 && (
+            <small>Seleccionada automáticamente la versión más reciente compatible con {selectedVersion}.</small>
+          )}
         </div>
         {error && <pre className="error-message">{error}</pre>}
         <button type="submit" className="generate-btn" disabled={!canSubmit || isCreating}>
@@ -220,6 +224,8 @@ function App() {
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [error, setError] = useState("");
+  const [isMigratingDataDir, setIsMigratingDataDir] = useState(false);
+  const launcherDirInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedInstance = useMemo(
     () => instances.find((instance) => instance.id === selectedInstanceId) ?? null,
@@ -272,6 +278,48 @@ function App() {
     }
   };
 
+
+  const runDataDirMigration = async (selected: string) => {
+    setIsMigratingDataDir(true);
+    try {
+      const updated = await invoke<LauncherSettingsPayload>("migrate_launcher_data_dir", {
+        payload: { targetDir: selected },
+      });
+      setSettings(updated);
+    } catch (e) {
+      setError(`No se pudo migrar la instalación del launcher: ${getErrorMessage(e)}`);
+    } finally {
+      setIsMigratingDataDir(false);
+    }
+  };
+
+  const handleSelectLauncherDir = () => {
+    setError("");
+    launcherDirInputRef.current?.click();
+  };
+
+  const handleLauncherDirPicked = async (event: ChangeEvent<HTMLInputElement>) => {
+    const first = event.target.files?.[0] as (File & { path?: string }) | undefined;
+    const absolutePath = first?.path;
+    if (!absolutePath) {
+      setError("No se pudo detectar la carpeta seleccionada. Asegúrate de elegir una carpeta con al menos un archivo.");
+      return;
+    }
+
+    const relativePath = first.webkitRelativePath;
+    const selectedFolderName = relativePath.split("/")[0];
+    const normalizedAbsolute = absolutePath.split("\\").join("/");
+    const marker = `/${selectedFolderName}/`;
+    const markerIndex = normalizedAbsolute.indexOf(marker);
+    if (markerIndex === -1) {
+      setError("No se pudo resolver la ruta de la carpeta seleccionada.");
+      return;
+    }
+
+    const selectedRoot = normalizedAbsolute.slice(0, markerIndex + marker.length - 1);
+    await runDataDirMigration(selectedRoot);
+    event.target.value = "";
+  };
   const handleStartInstance = async (id: string) => {
     setError("");
     setSelectedInstanceId(id);
@@ -374,7 +422,16 @@ function App() {
                 </div>
               )}
 
-              {settingsTab === "launcher" && <div className="settings-panel"><p>Próximamente: más opciones globales del launcher.</p></div>}
+              {settingsTab === "launcher" && settings && (
+                <div className="settings-panel">
+                  <h3>Ruta de datos del launcher</h3>
+                  <p>Ubicación actual: <code>{settings.data_dir}</code></p>
+                  <input ref={launcherDirInputRef} type="file" className="hidden-dir-picker" style={{ display: "none" }} onChange={(e) => void handleLauncherDirPicked(e)} {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} />
+                  <button className="generate-btn" type="button" onClick={handleSelectLauncherDir} disabled={isMigratingDataDir}>
+                    {isMigratingDataDir ? "Migrando datos..." : "Cambiar carpeta e iniciar migración"}
+                  </button>
+                </div>
+              )}
             </section>
           )}
         </main>

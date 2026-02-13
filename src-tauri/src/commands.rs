@@ -39,6 +39,12 @@ pub struct LauncherSettingsPayload {
     pub java_runtime: JavaRuntimePreference,
     pub selected_java_path: Option<String>,
     pub embedded_java_available: bool,
+    pub data_dir: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MigrateLauncherDataDirPayload {
+    pub target_dir: String,
 }
 
 impl From<&Instance> for InstanceInfo {
@@ -64,6 +70,7 @@ impl LauncherSettingsPayload {
                 .as_ref()
                 .map(|p| p.to_string_lossy().to_string()),
             embedded_java_available,
+            data_dir: String::new(),
         }
     }
 }
@@ -154,6 +161,14 @@ pub async fn get_minecraft_versions(
     Ok(versions)
 }
 
+fn version_sort_key(version: &str) -> Vec<u64> {
+    version
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(|part| part.parse::<u64>().unwrap_or(0))
+        .collect()
+}
+
 #[tauri::command]
 pub async fn get_loader_versions(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
@@ -169,8 +184,6 @@ pub async fn get_loader_versions(
             #[derive(Deserialize)]
             struct FabricLoaderEntry {
                 loader: FabricLoaderVersion,
-                #[serde(default)]
-                stable: bool,
             }
             #[derive(Deserialize)]
             struct FabricLoaderVersion {
@@ -191,11 +204,9 @@ pub async fn get_loader_versions(
             }
 
             let entries = response.json::<Vec<FabricLoaderEntry>>().await?;
-            let stable_exists = entries.iter().any(|entry| entry.stable);
 
             entries
                 .into_iter()
-                .filter(|entry| !stable_exists || entry.stable)
                 .map(|entry| entry.loader.version)
                 .collect()
         }
@@ -272,10 +283,12 @@ pub async fn get_loader_versions(
         }
     };
 
-    versions.sort();
+    versions.sort_by(|a, b| {
+        version_sort_key(b)
+            .cmp(&version_sort_key(a))
+            .then_with(|| b.cmp(a))
+    });
     versions.dedup();
-    versions.reverse();
-    versions.truncate(200);
 
     Ok(versions)
 }
@@ -319,6 +332,7 @@ pub async fn create_instance(
     instance.libraries = vanilla_result.libraries.clone();
     instance.jvm_args = vanilla_result.extra_jvm_args.clone();
     instance.game_args = vanilla_result.extra_game_args.clone();
+    instance.required_java_major = vanilla_result.java_major;
 
     if instance.loader != LoaderType::Vanilla {
         if let Some(ref loader_version) = instance.loader_version {
@@ -530,10 +544,10 @@ pub async fn get_launcher_settings(
 ) -> Result<LauncherSettingsPayload, LauncherError> {
     let state = state.lock().await;
     let embedded_available = state.embedded_java_path().exists();
-    Ok(LauncherSettingsPayload::from_settings(
-        &state.launcher_settings,
-        embedded_available,
-    ))
+    let mut payload =
+        LauncherSettingsPayload::from_settings(&state.launcher_settings, embedded_available);
+    payload.data_dir = state.data_dir.to_string_lossy().to_string();
+    Ok(payload)
 }
 
 #[tauri::command]
@@ -554,8 +568,26 @@ pub async fn update_launcher_settings(
     })?;
 
     let embedded_available = state.embedded_java_path().exists();
-    Ok(LauncherSettingsPayload::from_settings(
-        &state.launcher_settings,
-        embedded_available,
-    ))
+    let mut payload =
+        LauncherSettingsPayload::from_settings(&state.launcher_settings, embedded_available);
+    payload.data_dir = state.data_dir.to_string_lossy().to_string();
+    Ok(payload)
+}
+
+#[tauri::command]
+pub async fn migrate_launcher_data_dir(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    payload: MigrateLauncherDataDirPayload,
+) -> Result<LauncherSettingsPayload, LauncherError> {
+    let mut state = state.lock().await;
+    let target = std::path::PathBuf::from(payload.target_dir);
+    let migrated_to = state
+        .migrate_data_dir(target)
+        .map_err(|e| LauncherError::Other(format!("No se pudo migrar el launcher: {e}")))?;
+
+    let embedded_available = state.embedded_java_path().exists();
+    let mut response =
+        LauncherSettingsPayload::from_settings(&state.launcher_settings, embedded_available);
+    response.data_dir = migrated_to.to_string_lossy().to_string();
+    Ok(response)
 }
