@@ -508,3 +508,33 @@ h2 {
   align-items: center;
   margin: 10px 0;
 }
+
+
+.onboarding-overlay {
+  position: fixed;
+  inset: 48px 0 0 220px;
+  background: rgba(8, 8, 14, 0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+  padding: 20px;
+}
+
+.onboarding-card {
+  width: min(720px, 100%);
+  border: 1px solid #47475a;
+  border-radius: 12px;
+  background: #23232c;
+  padding: 18px;
+}
+
+.onboarding-card p {
+  color: #cdced8;
+}
+
+.settings-separator {
+  border: 0;
+  border-top: 1px solid #404040;
+  margin: 20px 0;
+}

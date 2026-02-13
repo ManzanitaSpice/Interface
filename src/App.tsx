@@ -31,6 +31,16 @@ interface LauncherSettingsPayload {
   data_dir: string;
 }
 
+interface FirstLaunchStatus {
+  first_launch: boolean;
+  suggested_data_dir: string;
+}
+
+interface InitializeInstallationPayload {
+  target_dir: string;
+  create_desktop_shortcut: boolean;
+}
+
 
 interface CreateInstancePayload {
   name: string;
@@ -227,6 +237,14 @@ function App() {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [error, setError] = useState("");
   const [isMigratingDataDir, setIsMigratingDataDir] = useState(false);
+  const [firstLaunchStatus, setFirstLaunchStatus] = useState<FirstLaunchStatus | null>(null);
+  const [installTargetDir, setInstallTargetDir] = useState("");
+  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [acceptAdminPrompt, setAcceptAdminPrompt] = useState(false);
+  const [createDesktopShortcut, setCreateDesktopShortcut] = useState(true);
+  const [isInitializingInstall, setIsInitializingInstall] = useState(false);
+  const [installationCompleted, setInstallationCompleted] = useState(false);
+  const [isReinstallingLauncher, setIsReinstallingLauncher] = useState(false);
   const launcherDirInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedInstance = useMemo(
@@ -242,16 +260,19 @@ function App() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [versions, savedInstances, javas, launcherSettings] = await Promise.all([
+        const [versions, savedInstances, javas, launcherSettings, firstStatus] = await Promise.all([
           invoke<string[]>("get_minecraft_versions"),
           invoke<InstanceInfo[]>("list_instances"),
           invoke<JavaInstallation[]>("get_java_installations"),
           invoke<LauncherSettingsPayload>("get_launcher_settings"),
+          invoke<FirstLaunchStatus>("get_first_launch_status"),
         ]);
         setMinecraftVersions(versions);
         setInstances(savedInstances);
         setJavaInstallations(javas);
         setSettings(launcherSettings);
+        setFirstLaunchStatus(firstStatus);
+        setInstallTargetDir(firstStatus.suggested_data_dir);
       } catch (e) {
         setError(`No se pudo conectar con el backend: ${getErrorMessage(e)}`);
       }
@@ -353,6 +374,55 @@ function App() {
     setCurrentView("instance-detail");
   };
 
+  const handleInitializeInstallation = async () => {
+    if (!acceptTerms || !acceptAdminPrompt || !installTargetDir.trim()) return;
+
+    setIsInitializingInstall(true);
+    setError("");
+    try {
+      const payload: InitializeInstallationPayload = {
+        target_dir: installTargetDir.trim(),
+        create_desktop_shortcut: createDesktopShortcut,
+      };
+      const updated = await invoke<LauncherSettingsPayload>("initialize_launcher_installation", { payload });
+      setSettings(updated);
+      setInstallationCompleted(true);
+      setFirstLaunchStatus({
+        first_launch: true,
+        suggested_data_dir: updated.data_dir,
+      });
+    } catch (e) {
+      setError(`No se pudo completar la instalación inicial: ${getErrorMessage(e)}`);
+    } finally {
+      setIsInitializingInstall(false);
+    }
+  };
+
+  const handleCompleteWizard = () => {
+    setInstallationCompleted(false);
+    setFirstLaunchStatus((prev) => (prev ? { ...prev, first_launch: false } : prev));
+  };
+
+  const handleReinstallLauncher = async () => {
+    if (!confirm("Esto borrará completamente la instalación del launcher, cache e instancias locales. ¿Deseas continuar?")) {
+      return;
+    }
+
+    setIsReinstallingLauncher(true);
+    setError("");
+    try {
+      const updated = await invoke<LauncherSettingsPayload>("reinstall_launcher_completely");
+      setSettings(updated);
+      setInstances([]);
+      setSelectedInstanceId(null);
+      setInstanceLogs({});
+    } catch (e) {
+      setError(`No se pudo reinstalar completamente el launcher: ${getErrorMessage(e)}`);
+    } finally {
+      setIsReinstallingLauncher(false);
+    }
+  };
+
 
   if (isLoading) return <LoadingScreen />;
 
@@ -378,7 +448,47 @@ function App() {
         <main className="content-area">
           {error && <pre className="error-message global-error">{error}</pre>}
 
-          {currentView === "home" && (
+          {firstLaunchStatus?.first_launch && (
+            <section className="onboarding-overlay">
+              <div className="onboarding-card">
+                <h2>Configuración inicial del launcher</h2>
+                {!installationCompleted ? (
+                  <>
+                    <p>Antes de usar el launcher debes completar la instalación inicial con permisos administrativos, términos y ruta de instalación.</p>
+                    <div className="form-group">
+                      <label>Ruta de instalación completa</label>
+                      <input value={installTargetDir} onChange={(e) => setInstallTargetDir(e.target.value)} placeholder="Ej: C:/Games/Interface" />
+                    </div>
+                    <label className="radio-row">
+                      <input type="checkbox" checked={acceptAdminPrompt} onChange={(e) => setAcceptAdminPrompt(e.target.checked)} />
+                      Confirmo ejecutar con permisos administrativos cuando el sistema lo solicite.
+                    </label>
+                    <label className="radio-row">
+                      <input type="checkbox" checked={acceptTerms} onChange={(e) => setAcceptTerms(e.target.checked)} />
+                      Acepto los términos y condiciones del launcher, permisos de archivos, red y actualización.
+                    </label>
+                    <label className="radio-row">
+                      <input type="checkbox" checked={createDesktopShortcut} onChange={(e) => setCreateDesktopShortcut(e.target.checked)} />
+                      Crear acceso directo en escritorio.
+                    </label>
+                    <button className="generate-btn" type="button" disabled={!acceptTerms || !acceptAdminPrompt || !installTargetDir.trim() || isInitializingInstall} onClick={() => void handleInitializeInstallation()}>
+                      {isInitializingInstall ? "Instalando launcher..." : "Instalar launcher"}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p>Instalación completada correctamente. ¿Qué deseas hacer ahora?</p>
+                    <div className="instance-log-actions">
+                      <button className="generate-btn" type="button" onClick={handleCompleteWizard}>Inicializar launcher</button>
+                      <button className="danger-btn secondary" type="button" onClick={() => window.close()}>Terminar</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
+          )}
+
+          {!firstLaunchStatus?.first_launch && currentView === "home" && (
             <div>
               <div className="home-toolbar">
                 <div><h2>Instances</h2><p>Herramientas rápidas para tus instancias.</p></div>
@@ -480,8 +590,15 @@ function App() {
                   <h3>Ruta de datos del launcher</h3>
                   <p>Ubicación actual: <code>{settings.data_dir}</code></p>
                   <input ref={launcherDirInputRef} type="file" className="hidden-dir-picker" style={{ display: "none" }} onChange={(e) => void handleLauncherDirPicked(e)} {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} />
-                  <button className="generate-btn" type="button" onClick={handleSelectLauncherDir} disabled={isMigratingDataDir}>
+                  <button className="generate-btn" type="button" onClick={handleSelectLauncherDir} disabled={isMigratingDataDir || isReinstallingLauncher}>
                     {isMigratingDataDir ? "Migrando datos..." : "Cambiar carpeta e iniciar migración"}
+                  </button>
+
+                  <hr className="settings-separator" />
+                  <h3>Reinstalación completa</h3>
+                  <p>Borra por completo datos locales, caché y jars para reinstalar de cero.</p>
+                  <button className="danger-btn" type="button" onClick={() => void handleReinstallLauncher()} disabled={isReinstallingLauncher || isMigratingDataDir}>
+                    {isReinstallingLauncher ? "Reinstalando launcher..." : "Reinstalar launcher completamente"}
                   </button>
                 </div>
               )}
