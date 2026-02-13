@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -17,6 +18,8 @@ pub struct AppState {
     pub downloader: Arc<Downloader>,
     /// Shared HTTP client — reuse across all requests to leverage connection pooling.
     pub http_client: Client,
+    /// Runtime process registry for force-close actions.
+    pub running_instances: HashMap<String, u32>,
 }
 
 impl AppState {
@@ -38,6 +41,7 @@ impl AppState {
             instance_manager,
             downloader,
             http_client,
+            running_instances: HashMap::new(),
         }
     }
 
