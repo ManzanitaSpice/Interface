@@ -70,7 +70,7 @@ pub async fn create_instance(
             payload.loader_type,
             payload.loader_version,
             payload.memory_max_mb.unwrap_or(2048),
-            &state.instances_dir,
+            &state.instances_dir(),
         ))
         .await?;
 

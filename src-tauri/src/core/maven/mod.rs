@@ -4,6 +4,7 @@ mod resolver;
 
 pub use artifact::MavenArtifact;
 pub use pom::{PomDependency, PomDocument};
+#[allow(unused_imports)]
 pub use resolver::MavenResolver;
 
 /// Well-known Maven repositories used by Minecraft ecosystem.
