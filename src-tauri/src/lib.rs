@@ -35,6 +35,7 @@ pub fn run() {
             commands::list_instances,
             commands::delete_instance,
             commands::launch_instance,
+            commands::force_close_instance,
             commands::open_instance_folder,
             commands::get_java_installations,
         ])

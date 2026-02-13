@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::process::Command;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -118,11 +118,20 @@ pub async fn get_minecraft_versions(
     let state = state.lock().await;
     let manifest = VersionManifest::fetch(&state.http_client).await?;
 
-    let versions = manifest
+    let mut versions: Vec<String> = manifest
         .versions
         .iter()
+        .filter(|entry| entry.version_type == "release")
         .map(|entry| entry.id.clone())
         .collect();
+
+    if versions.is_empty() {
+        versions = manifest
+            .versions
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect();
+    }
 
     Ok(versions)
 }
@@ -142,6 +151,8 @@ pub async fn get_loader_versions(
             #[derive(Deserialize)]
             struct FabricLoaderEntry {
                 loader: FabricLoaderVersion,
+                #[serde(default)]
+                stable: bool,
             }
             #[derive(Deserialize)]
             struct FabricLoaderVersion {
@@ -161,10 +172,13 @@ pub async fn get_loader_versions(
                 )));
             }
 
-            response
-                .json::<Vec<FabricLoaderEntry>>()
-                .await?
+            let entries = response.json::<Vec<FabricLoaderEntry>>().await?;
+
+            let stable_exists = entries.iter().any(|entry| entry.stable);
+
+            entries
                 .into_iter()
+                .filter(|entry| !stable_exists || entry.stable)
                 .map(|entry| entry.loader.version)
                 .collect()
         }
@@ -339,7 +353,10 @@ pub async fn delete_instance(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     id: String,
 ) -> Result<(), LauncherError> {
-    let state = state.lock().await;
+    let mut state = state.lock().await;
+    if let Some(pid) = state.running_instances.remove(&id) {
+        kill_process(pid)?;
+    }
     state.instance_manager.delete(&id).await?;
     info!("Deleted instance {}", id);
     Ok(())
@@ -350,7 +367,7 @@ pub async fn launch_instance(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     id: String,
 ) -> Result<(), LauncherError> {
-    let state = state.lock().await;
+    let mut state = state.lock().await;
     let mut instance = state.instance_manager.load(&id).await?;
 
     if instance.state != InstanceState::Ready {
@@ -375,12 +392,63 @@ pub async fn launch_instance(
     state.instance_manager.save(&instance).await?;
 
     // Launch (non-blocking spawn)
-    let _child = launch::launch(&instance, &classpath).await?;
+    let child = launch::launch(&instance, &classpath).await?;
+    let pid = child.id();
+    state.running_instances.insert(id.clone(), pid);
 
     info!("Launched instance {}", instance.name);
 
     // Note: In production, you'd monitor the child process and
     // set state back to Ready when it exits.
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn force_close_instance(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    id: String,
+) -> Result<(), LauncherError> {
+    let mut state = state.lock().await;
+    let mut instance = state.instance_manager.load(&id).await?;
+
+    let pid = state.running_instances.remove(&id).ok_or_else(|| {
+        LauncherError::Other(format!("No hay proceso activo para la instancia {id}"))
+    })?;
+
+    kill_process(pid)?;
+    instance.state = InstanceState::Ready;
+    state.instance_manager.save(&instance).await?;
+
+    info!("Force closed instance {} (pid {})", id, pid);
+    Ok(())
+}
+
+fn kill_process(pid: u32) -> Result<(), LauncherError> {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        cmd
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let mut command = {
+        let mut cmd = Command::new("kill");
+        cmd.args(["-9", &pid.to_string()]);
+        cmd
+    };
+
+    let status = command
+        .status()
+        .map_err(|e| LauncherError::Other(format!("No se pudo finalizar proceso {pid}: {e}")))?;
+
+    if !status.success() {
+        return Err(LauncherError::Other(format!(
+            "El comando para cerrar el proceso {pid} devolvió código {:?}",
+            status.code()
+        )));
+    }
 
     Ok(())
 }

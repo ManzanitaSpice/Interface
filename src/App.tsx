@@ -29,6 +29,12 @@ interface CreateInstancePayload {
   memory_max_mb?: number;
 }
 
+interface LogEntry {
+  timestamp: string;
+  level: "info" | "error" | "warn";
+  message: string;
+}
+
 const LOADERS: { label: string; value: LoaderType }[] = [
   { label: "Vanilla", value: "vanilla" },
   { label: "Forge", value: "forge" },
@@ -36,6 +42,11 @@ const LOADERS: { label: string; value: LoaderType }[] = [
   { label: "NeoForge", value: "neoforge" },
   { label: "Quilt", value: "quilt" },
 ];
+
+const getErrorMessage = (e: unknown) => {
+  const text = String(e);
+  return text.replace("Error: ", "");
+};
 
 function LoadingScreen() {
   const [progress, setProgress] = useState(0);
@@ -87,7 +98,11 @@ function CreateInstancePage({ minecraftVersions, onInstanceCreated }: CreateInst
   }, [minecraftVersions, selectedVersion]);
 
   useEffect(() => {
-    if (!selectedVersion) return;
+    if (!selectedVersion || selectedLoader === "vanilla") {
+      setLoaderVersions([]);
+      setSelectedLoaderVersion("");
+      return;
+    }
 
     let isCancelled = false;
     const load = async () => {
@@ -103,11 +118,15 @@ function CreateInstancePage({ minecraftVersions, onInstanceCreated }: CreateInst
 
         setLoaderVersions(versions);
         setSelectedLoaderVersion(versions[0] ?? "");
+
+        if (versions.length === 0) {
+          setError("No se encontraron versiones estables para esta combinación de loader y Minecraft.");
+        }
       } catch (e) {
         if (isCancelled) return;
         setLoaderVersions([]);
         setSelectedLoaderVersion("");
-        setError(`No se pudieron cargar versiones del loader: ${String(e)}`);
+        setError(`No fue posible cargar versiones reales del loader. Detalle: ${getErrorMessage(e)}`);
       } finally {
         if (!isCancelled) {
           setIsLoadingVersions(false);
@@ -148,7 +167,9 @@ function CreateInstancePage({ minecraftVersions, onInstanceCreated }: CreateInst
       onInstanceCreated(created);
       setInstanceName("");
     } catch (e) {
-      setError(`No se pudo crear la instancia: ${String(e)}`);
+      setError(
+        `No se pudo crear la instancia. Revisa la configuración y vuelve a intentarlo.\nDetalle técnico: ${getErrorMessage(e)}`,
+      );
     } finally {
       setIsCreating(false);
     }
@@ -213,7 +234,7 @@ function CreateInstancePage({ minecraftVersions, onInstanceCreated }: CreateInst
           </select>
         </div>
 
-        {error && <p className="error-message">{error}</p>}
+        {error && <pre className="error-message">{error}</pre>}
 
         <button type="submit" className="generate-btn" disabled={!canSubmit || isCreating}>
           {isCreating ? "Creating..." : "Generate Instance"}
@@ -235,8 +256,15 @@ function App() {
   const [minecraftVersions, setMinecraftVersions] = useState<string[]>([]);
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
   const [instanceProgress, setInstanceProgress] = useState<Record<string, InstanceActionProgress>>({});
+  const [instanceLogs, setInstanceLogs] = useState<Record<string, LogEntry[]>>({});
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [error, setError] = useState("");
+
+  const selectedInstance = useMemo(
+    () => instances.find((instance) => instance.id === selectedInstanceId) ?? null,
+    [instances, selectedInstanceId],
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -244,6 +272,23 @@ function App() {
     }, 1500);
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+
+      if (selectedInstanceId) {
+        setSelectedInstanceId(null);
+      } else if (isProfileMenuOpen) {
+        setIsProfileMenuOpen(false);
+      } else if (currentView !== "home") {
+        setCurrentView("home");
+      }
+    };
+
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [selectedInstanceId, isProfileMenuOpen, currentView]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -256,20 +301,74 @@ function App() {
         setMinecraftVersions(versions);
         setInstances(savedInstances);
       } catch (e) {
-        setError(`No se pudo conectar al backend: ${String(e)}`);
+        setError(`No se pudo conectar con el backend.\nDetalle técnico: ${getErrorMessage(e)}`);
       }
     };
 
     void loadData();
   }, []);
 
+  const addLog = (id: string, level: LogEntry["level"], message: string) => {
+    setInstanceLogs((prev) => ({
+      ...prev,
+      [id]: [
+        ...(prev[id] ?? []),
+        {
+          timestamp: new Date().toLocaleTimeString(),
+          level,
+          message,
+        },
+      ],
+    }));
+  };
+
   const handleInstanceCreated = (instance: InstanceInfo) => {
     setInstances((prev) => [instance, ...prev]);
     setCurrentView("home");
   };
 
+  const handleDeleteInstance = async (id: string) => {
+    setError("");
+    try {
+      await invoke("delete_instance", { id });
+      setInstances((prev) => prev.filter((instance) => instance.id !== id));
+      setInstanceProgress((prev) => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
+      setInstanceLogs((prev) => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
+      if (selectedInstanceId === id) {
+        setSelectedInstanceId(null);
+      }
+    } catch (e) {
+      setError(`No se pudo eliminar la instancia.\nDetalle técnico: ${getErrorMessage(e)}`);
+    }
+  };
+
+  const handleForceClose = async (id: string) => {
+    try {
+      await invoke("force_close_instance", { id });
+      addLog(id, "warn", "Se ejecutó un cierre forzado de la instancia.");
+      setInstances((prev) =>
+        prev.map((instance) =>
+          instance.id === id ? { ...instance, state: "ready" } : instance,
+        ),
+      );
+    } catch (e) {
+      addLog(id, "error", `Falló el cierre forzado: ${getErrorMessage(e)}`);
+      setError(`No se pudo forzar el cierre de la instancia.\nDetalle técnico: ${getErrorMessage(e)}`);
+    }
+  };
+
   const handleStartInstance = async (id: string) => {
     setError("");
+    setSelectedInstanceId(id);
+    addLog(id, "info", "Solicitud de inicio recibida.");
     setInstanceProgress((prev) => ({
       ...prev,
       [id]: {
@@ -302,7 +401,8 @@ function App() {
           details: `Completado ${progress}%`,
         },
       }));
-    }, 450);
+      addLog(id, "info", `Fase actual: ${phases[phaseIndex]} (${progress}%).`);
+    }, 700);
 
     try {
       await invoke("launch_instance", { id });
@@ -322,17 +422,20 @@ function App() {
           instance.id === id ? { ...instance, state: "running" } : instance,
         ),
       );
+      addLog(id, "info", "Instancia iniciada correctamente.");
     } catch (e) {
       clearInterval(interval);
+      const details = getErrorMessage(e);
       setInstanceProgress((prev) => ({
         ...prev,
         [id]: {
           progress: 100,
           status: "Error al iniciar",
-          details: String(e),
+          details,
         },
       }));
-      setError(`No se pudo iniciar la instancia: ${String(e)}`);
+      addLog(id, "error", `Error al iniciar la instancia: ${details}`);
+      setError(`No se pudo iniciar la instancia.\nDetalle técnico: ${details}`);
     }
   };
 
@@ -340,7 +443,7 @@ function App() {
     try {
       await invoke("open_instance_folder", { id });
     } catch (e) {
-      setError(`No se pudo abrir la carpeta de la instancia: ${String(e)}`);
+      setError(`No se pudo abrir la carpeta de la instancia.\nDetalle técnico: ${getErrorMessage(e)}`);
     }
   };
 
@@ -388,7 +491,7 @@ function App() {
         </aside>
 
         <main className="content-area">
-          {error && <p className="error-message">{error}</p>}
+          {error && <pre className="error-message global-error">{error}</pre>}
 
           {currentView === "home" && (
             <div>
@@ -478,6 +581,42 @@ function App() {
           )}
         </main>
       </div>
+
+      {selectedInstance && (
+        <section className="instance-log-panel" role="dialog" aria-label="Panel de ejecución de instancia">
+          <div className="instance-log-toolbar">
+            <div>
+              <h3>{selectedInstance.name}</h3>
+              <p>
+                Estado: <strong>{selectedInstance.state}</strong>
+              </p>
+            </div>
+            <div className="instance-log-actions">
+              <button type="button" className="danger-btn" onClick={() => void handleForceClose(selectedInstance.id)}>
+                Forzar cierre
+              </button>
+              <button type="button" className="danger-btn secondary" onClick={() => void handleDeleteInstance(selectedInstance.id)}>
+                Eliminar instancia
+              </button>
+              <button type="button" className="open-folder-btn" onClick={() => setSelectedInstanceId(null)}>
+                Cerrar (Esc)
+              </button>
+            </div>
+          </div>
+
+          <div className="instance-log-stream">
+            {(instanceLogs[selectedInstance.id] ?? []).map((entry, idx) => (
+              <div key={`${selectedInstance.id}-log-${idx}`} className={`log-entry ${entry.level}`}>
+                <span>[{entry.timestamp}]</span>
+                <span>{entry.message}</span>
+              </div>
+            ))}
+            {(instanceLogs[selectedInstance.id] ?? []).length === 0 && (
+              <p className="empty-logs">Aún no hay eventos para esta instancia.</p>
+            )}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
