@@ -39,18 +39,15 @@ impl AssetManager {
 
         // Save index file
         let indexes_dir = assets_dir.join("indexes");
-        tokio::fs::create_dir_all(&indexes_dir)
-            .await
-            .map_err(|e| crate::core::error::LauncherError::Io {
+        tokio::fs::create_dir_all(&indexes_dir).await.map_err(|e| {
+            crate::core::error::LauncherError::Io {
                 path: indexes_dir.clone(),
                 source: e,
-            })?;
+            }
+        })?;
 
         // Derive the index name from URL (e.g. "17" from ".../17.json")
-        let index_name = index_url
-            .rsplit('/')
-            .next()
-            .unwrap_or("unknown.json");
+        let index_name = index_url.rsplit('/').next().unwrap_or("unknown.json");
         let index_path = indexes_dir.join(index_name);
         tokio::fs::write(&index_path, &index_text)
             .await

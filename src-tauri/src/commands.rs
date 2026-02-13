@@ -2,19 +2,18 @@ use std::process::Command;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
-use tracing::info;
-
-use crate::core::version::VersionManifest;
+use tracing::{error, info, warn};
 
 use crate::core::error::LauncherError;
 use crate::core::instance::{Instance, InstanceState, LoaderType};
 use crate::core::java::{self, JavaInstallation};
 use crate::core::launch;
 use crate::core::loaders;
-use crate::core::state::AppState;
+use crate::core::state::{AppState, JavaRuntimePreference, LauncherSettings};
+use crate::core::version::VersionManifest;
 
-/// Payload sent from the frontend to create an instance.
 #[derive(Debug, Deserialize)]
 pub struct CreateInstancePayload {
     pub name: String,
@@ -24,7 +23,6 @@ pub struct CreateInstancePayload {
     pub memory_max_mb: Option<u32>,
 }
 
-/// Lightweight instance info returned to the frontend.
 #[derive(Debug, Serialize)]
 pub struct InstanceInfo {
     pub id: String,
@@ -34,6 +32,13 @@ pub struct InstanceInfo {
     pub loader_type: LoaderType,
     pub loader_version: Option<String>,
     pub state: InstanceState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LauncherSettingsPayload {
+    pub java_runtime: JavaRuntimePreference,
+    pub selected_java_path: Option<String>,
+    pub embedded_java_available: bool,
 }
 
 impl From<&Instance> for InstanceInfo {
@@ -46,6 +51,19 @@ impl From<&Instance> for InstanceInfo {
             loader_type: inst.loader.clone(),
             loader_version: inst.loader_version.clone(),
             state: inst.state.clone(),
+        }
+    }
+}
+
+impl LauncherSettingsPayload {
+    fn from_settings(settings: &LauncherSettings, embedded_java_available: bool) -> Self {
+        Self {
+            java_runtime: settings.java_runtime.clone(),
+            selected_java_path: settings
+                .selected_java_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string()),
+            embedded_java_available,
         }
     }
 }
@@ -173,7 +191,6 @@ pub async fn get_loader_versions(
             }
 
             let entries = response.json::<Vec<FabricLoaderEntry>>().await?;
-
             let stable_exists = entries.iter().any(|entry| entry.stable);
 
             entries
@@ -233,7 +250,6 @@ pub async fn get_loader_versions(
                 .filter(|v| v.starts_with(&version_prefix))
                 .collect();
 
-            // Legacy NeoForge builds for MC 1.20.1 were published as net.neoforged:forge.
             if minecraft_version == "1.20.1" {
                 let legacy_xml = client
                     .get("https://maven.neoforged.net/releases/net/neoforged/forge/maven-metadata.xml")
@@ -258,29 +274,18 @@ pub async fn get_loader_versions(
 
     versions.sort();
     versions.dedup();
-    versions.sort();
     versions.reverse();
     versions.truncate(200);
 
     Ok(versions)
 }
 
-// ── Tauri Commands ──────────────────────────────────────
-
 #[tauri::command]
 pub async fn create_instance(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     payload: CreateInstancePayload,
 ) -> Result<InstanceInfo, LauncherError> {
-    let state = state.lock().await;
-
-    let _java_major = if payload.minecraft_version.starts_with("1.20")
-        || payload.minecraft_version.starts_with("1.21")
-    {
-        17
-    } else {
-        17 // Safe default; can be refined per version later
-    };
+    let mut state = state.lock().await;
 
     let mut instance = state
         .instance_manager
@@ -294,7 +299,6 @@ pub async fn create_instance(
         ))
         .await?;
 
-    // Install vanilla base first
     let libs_dir = state.libraries_dir();
     let client = state.http_client.clone();
     let vanilla_installer = loaders::Installer::new(&LoaderType::Vanilla, client.clone());
@@ -311,8 +315,11 @@ pub async fn create_instance(
         .await?;
 
     instance.main_class = Some(vanilla_result.main_class.clone());
+    instance.asset_index = vanilla_result.asset_index_id.clone();
+    instance.libraries = vanilla_result.libraries.clone();
+    instance.jvm_args = vanilla_result.extra_jvm_args.clone();
+    instance.game_args = vanilla_result.extra_game_args.clone();
 
-    // Install loader if not vanilla
     if instance.loader != LoaderType::Vanilla {
         if let Some(ref loader_version) = instance.loader_version {
             let installer = loaders::Installer::new(&instance.loader, client.clone());
@@ -327,9 +334,32 @@ pub async fn create_instance(
                 })
                 .await?;
 
-            // Loader's main class overrides vanilla's
             instance.main_class = Some(loader_result.main_class);
+            instance.jvm_args.extend(loader_result.extra_jvm_args);
+            instance.game_args.extend(loader_result.extra_game_args);
+            instance.libraries.extend(loader_result.libraries);
+            if loader_result.asset_index_id.is_some() {
+                instance.asset_index = loader_result.asset_index_id;
+            }
         }
+    }
+
+    instance.libraries.sort();
+    instance.libraries.dedup();
+
+    match state.launcher_settings.java_runtime {
+        JavaRuntimePreference::System => {
+            if let Some(ref selected) = state.launcher_settings.selected_java_path {
+                instance.java_path = Some(selected.clone());
+            }
+        }
+        JavaRuntimePreference::Embedded => {
+            let embedded = state.embedded_java_path();
+            if embedded.exists() {
+                instance.java_path = Some(embedded);
+            }
+        }
+        JavaRuntimePreference::Auto => {}
     }
 
     instance.state = InstanceState::Ready;
@@ -367,8 +397,9 @@ pub async fn launch_instance(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     id: String,
 ) -> Result<(), LauncherError> {
-    let mut state = state.lock().await;
-    let mut instance = state.instance_manager.load(&id).await?;
+    let state_arc = state.inner().clone();
+    let mut state_guard = state_arc.lock().await;
+    let mut instance = state_guard.instance_manager.load(&id).await?;
 
     if instance.state != InstanceState::Ready {
         return Err(LauncherError::Other(format!(
@@ -377,29 +408,64 @@ pub async fn launch_instance(
         )));
     }
 
-    let libs_dir = state.libraries_dir();
+    let libs_dir = state_guard.libraries_dir();
+    let classpath = launch::build_classpath(&instance, &libs_dir, &instance.libraries)?;
+    let _natives_dir = launch::extract_natives(&instance, &libs_dir, &instance.libraries).await?;
 
-    // TODO: Collect actual library coordinates from saved version data
-    let lib_coords: Vec<String> = vec![];
-
-    let classpath = launch::build_classpath(&instance, &libs_dir, &lib_coords)?;
-
-    // Extract natives
-    let _natives_dir = launch::extract_natives(&instance, &libs_dir, &[]).await?;
-
-    // Update state
     instance.state = InstanceState::Running;
-    state.instance_manager.save(&instance).await?;
+    state_guard.instance_manager.save(&instance).await?;
 
-    // Launch (non-blocking spawn)
-    let child = launch::launch(&instance, &classpath).await?;
+    let mut child = launch::launch(&instance, &classpath).await?;
     let pid = child.id();
-    state.running_instances.insert(id.clone(), pid);
-
+    state_guard.running_instances.insert(id.clone(), pid);
     info!("Launched instance {}", instance.name);
 
-    // Note: In production, you'd monitor the child process and
-    // set state back to Ready when it exits.
+    if let Some(stdout) = child.stdout.take() {
+        let instance_id = id.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                info!("[mc:{}][stdout] {}", instance_id, line);
+            }
+        });
+    }
+
+    if let Some(stderr) = child.stderr.take() {
+        let instance_id = id.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                warn!("[mc:{}][stderr] {}", instance_id, line);
+            }
+        });
+    }
+
+    tauri::async_runtime::spawn(async move {
+        let wait_result = tauri::async_runtime::spawn_blocking(move || child.wait())
+            .await
+            .map_err(|e| std::io::Error::other(e.to_string()))
+            .and_then(|result| result);
+        let mut state = state_arc.lock().await;
+
+        state.running_instances.remove(&id);
+        match state.instance_manager.load(&id).await {
+            Ok(mut persisted) => {
+                persisted.state = InstanceState::Ready;
+                if let Err(err) = state.instance_manager.save(&persisted).await {
+                    error!("Cannot persist ready state for {}: {}", id, err);
+                }
+            }
+            Err(err) => error!("Cannot load instance {} after process exit: {}", id, err),
+        }
+
+        match wait_result {
+            Ok(status) => info!(
+                "Minecraft process for {} exited with status: {:?}",
+                id, status
+            ),
+            Err(err) => error!("Minecraft process for {} failed while waiting: {}", id, err),
+        }
+    });
 
     Ok(())
 }
@@ -455,6 +521,41 @@ fn kill_process(pid: u32) -> Result<(), LauncherError> {
 
 #[tauri::command]
 pub async fn get_java_installations() -> Result<Vec<JavaInstallation>, LauncherError> {
-    let installations = java::detect_java_installations().await;
-    Ok(installations)
+    Ok(java::detect_java_installations().await)
+}
+
+#[tauri::command]
+pub async fn get_launcher_settings(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+) -> Result<LauncherSettingsPayload, LauncherError> {
+    let state = state.lock().await;
+    let embedded_available = state.embedded_java_path().exists();
+    Ok(LauncherSettingsPayload::from_settings(
+        &state.launcher_settings,
+        embedded_available,
+    ))
+}
+
+#[tauri::command]
+pub async fn update_launcher_settings(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    payload: LauncherSettingsPayload,
+) -> Result<LauncherSettingsPayload, LauncherError> {
+    let mut state = state.lock().await;
+
+    state.launcher_settings.java_runtime = payload.java_runtime;
+    state.launcher_settings.selected_java_path = payload
+        .selected_java_path
+        .as_ref()
+        .map(std::path::PathBuf::from);
+
+    state.save_settings().map_err(|e| {
+        LauncherError::Other(format!("No se pudo guardar launcher_settings.json: {e}"))
+    })?;
+
+    let embedded_available = state.embedded_java_path().exists();
+    Ok(LauncherSettingsPayload::from_settings(
+        &state.launcher_settings,
+        embedded_available,
+    ))
 }

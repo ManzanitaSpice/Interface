@@ -46,99 +46,101 @@ impl MavenResolver {
         artifact: &'a MavenArtifact,
         libs_dir: &'a Path,
         downloader: &'a Downloader,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = LauncherResult<Vec<std::path::PathBuf>>> + Send + 'a>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = LauncherResult<Vec<std::path::PathBuf>>> + Send + 'a>,
+    > {
         Box::pin(async move {
-        let key = artifact.to_string();
-        if self.resolved.contains(&key) {
-            return Ok(vec![]);
-        }
-        self.resolved.insert(key.clone());
+            let key = artifact.to_string();
+            if self.resolved.contains(&key) {
+                return Ok(vec![]);
+            }
+            self.resolved.insert(key.clone());
 
-        let mut collected = Vec::new();
+            let mut collected = Vec::new();
 
-        // 1. Try to download the JAR (skip for pom-only packaging)
-        if !artifact.is_pom() {
-            let dest = libs_dir.join(artifact.local_path());
-            if !dest.exists() {
-                let downloaded = self
-                    .try_download(artifact, &dest, downloader)
-                    .await;
-                match downloaded {
-                    Ok(()) => {
-                        debug!("Downloaded JAR: {}", artifact);
-                        collected.push(dest);
+            // 1. Try to download the JAR (skip for pom-only packaging)
+            if !artifact.is_pom() {
+                let dest = libs_dir.join(artifact.local_path());
+                if !dest.exists() {
+                    let downloaded = self.try_download(artifact, &dest, downloader).await;
+                    match downloaded {
+                        Ok(()) => {
+                            debug!("Downloaded JAR: {}", artifact);
+                            collected.push(dest);
+                        }
+                        Err(e) => {
+                            warn!("JAR download failed for {}: {}", artifact, e);
+                            // It might be a POM-only artifact. Fall through to POM resolution.
+                        }
                     }
-                    Err(e) => {
-                        warn!("JAR download failed for {}: {}", artifact, e);
-                        // It might be a POM-only artifact. Fall through to POM resolution.
-                    }
+                } else {
+                    collected.push(dest);
                 }
-            } else {
-                collected.push(dest);
             }
-        }
 
-        // 2. Download and parse POM for transitive dependencies
-        let pom_artifact = artifact.with_packaging("pom");
-        let pom_dest = libs_dir.join(pom_artifact.local_path());
+            // 2. Download and parse POM for transitive dependencies
+            let pom_artifact = artifact.with_packaging("pom");
+            let pom_dest = libs_dir.join(pom_artifact.local_path());
 
-        if !pom_dest.exists() {
-            if let Err(e) = self.try_download(&pom_artifact, &pom_dest, downloader).await {
-                // POM not available is non-fatal for many Mojang libs
-                debug!("POM not available for {}: {}", artifact, e);
-                return Ok(collected);
+            if !pom_dest.exists() {
+                if let Err(e) = self
+                    .try_download(&pom_artifact, &pom_dest, downloader)
+                    .await
+                {
+                    // POM not available is non-fatal for many Mojang libs
+                    debug!("POM not available for {}: {}", artifact, e);
+                    return Ok(collected);
+                }
             }
-        }
 
-        // Read and parse POM
-        let pom_content = tokio::fs::read_to_string(&pom_dest).await.map_err(|e| {
-            LauncherError::Io {
-                path: pom_dest.clone(),
-                source: e,
-            }
-        })?;
+            // Read and parse POM
+            let pom_content =
+                tokio::fs::read_to_string(&pom_dest)
+                    .await
+                    .map_err(|e| LauncherError::Io {
+                        path: pom_dest.clone(),
+                        source: e,
+                    })?;
 
-        let pom = match PomDocument::parse(&pom_content) {
-            Ok(p) => p,
-            Err(e) => {
-                warn!("Failed to parse POM for {}: {}", artifact, e);
-                return Ok(collected);
-            }
-        };
-
-        // 3. Resolve compile-scope transitive dependencies
-        for dep in pom.compile_dependencies() {
-            let version = match pom.resolve_version(&dep) {
-                Some(v) => v,
-                None => {
-                    warn!(
-                        "Cannot resolve version for {}:{} (skipping)",
-                        dep.group_id, dep.artifact_id
-                    );
-                    continue;
+            let pom = match PomDocument::parse(&pom_content) {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!("Failed to parse POM for {}: {}", artifact, e);
+                    return Ok(collected);
                 }
             };
 
-            let dep_packaging = dep.dep_type.as_deref().unwrap_or("jar");
-            let coord = match &dep.classifier {
-                Some(c) => format!(
-                    "{}:{}:{}:{}@{}",
-                    dep.group_id, dep.artifact_id, version, c, dep_packaging
-                ),
-                None => format!(
-                    "{}:{}:{}@{}",
-                    dep.group_id, dep.artifact_id, version, dep_packaging
-                ),
-            };
+            // 3. Resolve compile-scope transitive dependencies
+            for dep in pom.compile_dependencies() {
+                let version = match pom.resolve_version(&dep) {
+                    Some(v) => v,
+                    None => {
+                        warn!(
+                            "Cannot resolve version for {}:{} (skipping)",
+                            dep.group_id, dep.artifact_id
+                        );
+                        continue;
+                    }
+                };
 
-            let child = MavenArtifact::parse(&coord)?;
-            let child_paths = self
-                .resolve_artifact(&child, libs_dir, downloader)
-                .await?;
-            collected.extend(child_paths);
-        }
+                let dep_packaging = dep.dep_type.as_deref().unwrap_or("jar");
+                let coord = match &dep.classifier {
+                    Some(c) => format!(
+                        "{}:{}:{}:{}@{}",
+                        dep.group_id, dep.artifact_id, version, c, dep_packaging
+                    ),
+                    None => format!(
+                        "{}:{}:{}@{}",
+                        dep.group_id, dep.artifact_id, version, dep_packaging
+                    ),
+                };
 
-        Ok(collected)
+                let child = MavenArtifact::parse(&coord)?;
+                let child_paths = self.resolve_artifact(&child, libs_dir, downloader).await?;
+                collected.extend(child_paths);
+            }
+
+            Ok(collected)
         }) // end Box::pin
     }
 
