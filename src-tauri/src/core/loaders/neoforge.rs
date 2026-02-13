@@ -1,15 +1,19 @@
-use std::path::Path;
-
 use serde::Deserialize;
 use tracing::{info, warn};
 
-use super::{LoaderInstallResult, LoaderInstaller};
-use crate::core::downloader::Downloader;
+use super::context::InstallContext;
+use super::installer::{LoaderInstallResult, LoaderInstaller};
 use crate::core::error::{LauncherError, LauncherResult};
 use crate::core::maven::MavenArtifact;
 
 /// NeoForge installer — similar to Forge but uses the NeoForge Maven and API.
 pub struct NeoForgeInstaller;
+
+impl NeoForgeInstaller {
+    pub fn new(_client: reqwest::Client) -> Self {
+        Self
+    }
+}
 
 const NEOFORGE_MAVEN: &str = "https://maven.neoforged.net/releases";
 
@@ -66,29 +70,22 @@ pub struct NeoForgeArguments {
 
 #[async_trait::async_trait]
 impl LoaderInstaller for NeoForgeInstaller {
-    async fn install(
-        &self,
-        minecraft_version: &str,
-        loader_version: &str,
-        instance_dir: &Path,
-        libs_dir: &Path,
-        downloader: &Downloader,
-    ) -> LauncherResult<LoaderInstallResult> {
+    async fn install(&self, ctx: InstallContext<'_>) -> LauncherResult<LoaderInstallResult> {
         info!(
             "Installing NeoForge {} for MC {}",
-            loader_version, minecraft_version
+            ctx.loader_version, ctx.minecraft_version
         );
 
         // NeoForge 1.21+ uses `neoforge` as the artifact name
-        // Coordinate: net.neoforged:neoforge:<loader_version>:installer
-        let installer_name = format!("neoforge-{}-installer.jar", loader_version);
+        // Coordinate: net.neoforged:neoforge:<ctx.loader_version>:installer
+        let installer_name = format!("neoforge-{}-installer.jar", ctx.loader_version);
         let installer_url = format!(
             "{}/net/neoforged/neoforge/{}/{}",
-            NEOFORGE_MAVEN, loader_version, installer_name
+            NEOFORGE_MAVEN, ctx.loader_version, installer_name
         );
-        let installer_path = instance_dir.join(&installer_name);
+        let installer_path = ctx.instance_dir.join(&installer_name);
 
-        downloader
+        ctx.downloader
             .download_file(&installer_url, &installer_path, None)
             .await?;
 
@@ -121,13 +118,13 @@ impl LoaderInstaller for NeoForgeInstaller {
         // Download libraries from install_profile
         for lib in &install_profile.libraries {
             let artifact = MavenArtifact::parse(&lib.name)?;
-            let dest = libs_dir.join(artifact.local_path());
+            let dest = ctx.libs_dir.join(artifact.local_path());
             if !dest.exists() {
                 let url = artifact.url(NEOFORGE_MAVEN);
-                if let Err(e) = downloader.download_file(&url, &dest, None).await {
+                if let Err(e) = ctx.downloader.download_file(&url, &dest, None).await {
                     // Fallback to Mojang libs
                     let mojang_url = artifact.url(crate::core::maven::MOJANG_LIBRARIES);
-                    if let Err(_) = downloader.download_file(&mojang_url, &dest, None).await {
+                    if let Err(_) = ctx.downloader.download_file(&mojang_url, &dest, None).await {
                         warn!("Failed to download NeoForge lib {}: {}", lib.name, e);
                     }
                 }
@@ -138,10 +135,10 @@ impl LoaderInstaller for NeoForgeInstaller {
         let mut lib_names = Vec::new();
         for lib in &version_json.libraries {
             let artifact = MavenArtifact::parse(&lib.name)?;
-            let dest = libs_dir.join(artifact.local_path());
+            let dest = ctx.libs_dir.join(artifact.local_path());
             if !dest.exists() {
                 let url = artifact.url(NEOFORGE_MAVEN);
-                let _ = downloader.download_file(&url, &dest, None).await;
+                let _ = ctx.downloader.download_file(&url, &dest, None).await;
             }
             lib_names.push(lib.name.clone());
         }
@@ -155,26 +152,26 @@ impl LoaderInstaller for NeoForgeInstaller {
             }
 
             let jar_artifact = MavenArtifact::parse(&processor.jar)?;
-            let jar_path = libs_dir.join(jar_artifact.local_path());
+            let jar_path = ctx.libs_dir.join(jar_artifact.local_path());
 
             let mut cp_entries = vec![jar_path.to_string_lossy().to_string()];
             for cp_coord in &processor.classpath {
                 let cp_artifact = MavenArtifact::parse(cp_coord)?;
-                let cp_path = libs_dir.join(cp_artifact.local_path());
+                let cp_path = ctx.libs_dir.join(cp_artifact.local_path());
                 cp_entries.push(cp_path.to_string_lossy().to_string());
             }
             let classpath = cp_entries.join(if cfg!(windows) { ";" } else { ":" });
 
-            let client_jar = instance_dir.join("client.jar");
+            let client_jar = ctx.instance_dir.join("client.jar");
             let resolved_args: Vec<String> = processor
                 .args
                 .iter()
                 .map(|arg| {
                     arg.replace("{SIDE}", "client")
                         .replace("{MINECRAFT_JAR}", &client_jar.to_string_lossy())
-                        .replace("{ROOT}", &instance_dir.to_string_lossy())
+                        .replace("{ROOT}", &ctx.instance_dir.to_string_lossy())
                         .replace("{INSTALLER}", &installer_path.to_string_lossy())
-                        .replace("{LIBRARY_DIR}", &libs_dir.to_string_lossy())
+                        .replace("{LIBRARY_DIR}", &ctx.libs_dir.to_string_lossy())
                 })
                 .collect();
 
@@ -189,7 +186,7 @@ impl LoaderInstaller for NeoForgeInstaller {
                 .arg(&classpath)
                 .arg("net.minecraftforge.installertools.ConsoleTool")
                 .args(&resolved_args)
-                .current_dir(instance_dir)
+                .current_dir(ctx.instance_dir)
                 .status()
                 .map_err(|e| LauncherError::JavaExecution(e.to_string()))?;
 
@@ -204,7 +201,7 @@ impl LoaderInstaller for NeoForgeInstaller {
 
         let _ = tokio::fs::remove_file(&installer_path).await;
 
-        info!("NeoForge {} installed successfully", loader_version);
+        info!("NeoForge {} installed successfully", ctx.loader_version);
 
         Ok(LoaderInstallResult {
             main_class: version_json.main_class,
