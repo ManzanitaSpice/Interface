@@ -139,6 +139,8 @@ function CreateInstancePage({
     return Boolean(selectedLoaderVersion);
   }, [instanceName, selectedVersion, selectedLoader, selectedLoaderVersion]);
 
+  const recommendedLoaderVersion = loaderVersions[0] ?? "";
+
   const handleGenerate = async (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
@@ -196,7 +198,7 @@ function CreateInstancePage({
             disabled={selectedLoader === "vanilla" || isLoadingVersions || loaderVersions.length === 0}
           >
             {selectedLoader === "vanilla" ? <option value="">No aplica para Vanilla</option> : loaderVersions.map((lv) => (
-              <option key={lv} value={lv}>{lv}</option>
+              <option key={lv} value={lv}>{`${lv === recommendedLoaderVersion ? "★ " : ""}${lv}`}</option>
             ))}
           </select>
           {selectedLoader !== "vanilla" && !isLoadingVersions && loaderVersions.length > 0 && (
@@ -214,7 +216,7 @@ function CreateInstancePage({
 
 function App() {
   const [isLoading, setIsLoading] = useState(true);
-  const [currentView, setCurrentView] = useState<"home" | "create-instance" | "settings">("home");
+  const [currentView, setCurrentView] = useState<"home" | "create-instance" | "settings" | "instance-detail">("home");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("java");
   const [minecraftVersions, setMinecraftVersions] = useState<string[]>([]);
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
@@ -324,20 +326,33 @@ function App() {
     setError("");
     setSelectedInstanceId(id);
     addLog(id, "info", "Solicitud de inicio recibida.");
-    const interval = setInterval(() => undefined, 700);
-
     try {
       await invoke("launch_instance", { id });
-      clearInterval(interval);
       setInstances((prev) => prev.map((instance) => (instance.id === id ? { ...instance, state: "running" } : instance)));
       addLog(id, "info", "Instancia iniciada correctamente.");
     } catch (e) {
-      clearInterval(interval);
       const details = getErrorMessage(e);
       addLog(id, "error", details);
       setError(`No se pudo iniciar la instancia: ${details}`);
     }
   };
+
+  const handleForceCloseInstance = async (id: string) => {
+    setError("");
+    try {
+      await invoke("force_close_instance", { id });
+      setInstances((prev) => prev.map((instance) => (instance.id === id ? { ...instance, state: "ready" } : instance)));
+      addLog(id, "warn", "Instancia detenida de forma forzada por el usuario.");
+    } catch (e) {
+      setError(`No se pudo cerrar la instancia: ${getErrorMessage(e)}`);
+    }
+  };
+
+  const openInstanceDetail = (id: string) => {
+    setSelectedInstanceId(id);
+    setCurrentView("instance-detail");
+  };
+
 
   if (isLoading) return <LoadingScreen />;
 
@@ -371,13 +386,13 @@ function App() {
               </div>
               <div className="instance-grid">
                 {instances.map((instance) => (
-                  <article key={instance.id} className="instance-card">
+                  <article key={instance.id} className="instance-card clickable" onClick={() => openInstanceDetail(instance.id)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") openInstanceDetail(instance.id); }}>
                     <h3>{instance.name}</h3>
                     <p><strong>Minecraft:</strong> {instance.minecraft_version}</p>
                     <p><strong>Loader:</strong> {instance.loader_type}</p>
                     <p><strong>Status:</strong> {instance.state}</p>
                     <div className="instance-actions">
-                      <button className="start-instance-btn" onClick={() => void handleStartInstance(instance.id)}>
+                      <button className="start-instance-btn" onClick={(e) => { e.stopPropagation(); void handleStartInstance(instance.id); }}>
                         {instance.state === "running" ? "En ejecución" : "Iniciar instancia"}
                       </button>
                     </div>
@@ -388,6 +403,43 @@ function App() {
           )}
 
           {currentView === "create-instance" && <CreateInstancePage minecraftVersions={minecraftVersions} onInstanceCreated={(instance) => { setInstances((prev) => [instance, ...prev]); setCurrentView("home"); }} />}
+
+          {currentView === "instance-detail" && selectedInstance && (
+            <section className="settings-page">
+              <div className="home-toolbar">
+                <div>
+                  <h2>{selectedInstance.name}</h2>
+                  <p>Minecraft {selectedInstance.minecraft_version} · {selectedInstance.loader_type}</p>
+                </div>
+                <button className="generate-btn toolbar-btn" onClick={() => setCurrentView("home")}>← Volver</button>
+              </div>
+
+              <div className="instance-log-toolbar">
+                <div>
+                  <h3>Herramientas</h3>
+                  <p>Administra la ejecución y revisa los logs de esta instancia.</p>
+                </div>
+                <div className="instance-log-actions">
+                  <button className="start-instance-btn" type="button" onClick={() => void handleStartInstance(selectedInstance.id)}>
+                    {selectedInstance.state === "running" ? "En ejecución" : "Iniciar instancia"}
+                  </button>
+                  <button className="danger-btn secondary" type="button" onClick={() => void handleForceCloseInstance(selectedInstance.id)} disabled={selectedInstance.state !== "running"}>
+                    Parar / Forzar cierre
+                  </button>
+                </div>
+              </div>
+
+              <section className="instance-log-stream">
+                {(instanceLogs[selectedInstance.id] ?? []).length === 0 ? (
+                  <p className="empty-logs">Sin logs todavía. Inicia la instancia para ver salida.</p>
+                ) : (
+                  (instanceLogs[selectedInstance.id] ?? []).map((entry, idx) => (
+                    <div key={`${selectedInstance.id}-${idx}`} className={`log-entry ${entry.level}`}><span>[{entry.timestamp}]</span><span>{entry.message}</span></div>
+                  ))
+                )}
+              </section>
+            </section>
+          )}
 
           {currentView === "settings" && (
             <section className="settings-page">
@@ -402,7 +454,8 @@ function App() {
                   <h3>Motor de Java para instancias nuevas</h3>
                   <label className="radio-row"><input type="radio" checked={settings.java_runtime === "auto"} onChange={() => setSettings({ ...settings, java_runtime: "auto" })} />Auto (detectar por versión)</label>
                   <label className="radio-row"><input type="radio" checked={settings.java_runtime === "system"} onChange={() => setSettings({ ...settings, java_runtime: "system" })} />Java del sistema</label>
-                  <label className="radio-row"><input type="radio" checked={settings.java_runtime === "embedded"} onChange={() => setSettings({ ...settings, java_runtime: "embedded" })} />Java embebido del launcher {settings.embedded_java_available ? "(disponible)" : "(no encontrado)"}</label>
+                  <label className="radio-row"><input type="radio" checked={settings.java_runtime === "embedded"} disabled={!settings.embedded_java_available} onChange={() => setSettings({ ...settings, java_runtime: "embedded" })} />Java embebido del launcher {settings.embedded_java_available ? "(disponible)" : "(no encontrado)"}</label>
+                  {!settings.embedded_java_available && <small>Coloca un runtime Java en <code>{settings.data_dir}/runtime</code> para habilitarlo.</small>}
 
                   <div className="form-group">
                     <label>Ruta Java del sistema</label>
@@ -437,15 +490,6 @@ function App() {
         </main>
       </div>
 
-      {selectedInstance && (
-        <section className="instance-log-panel">
-          <div className="instance-log-stream">
-            {(instanceLogs[selectedInstance.id] ?? []).map((entry, idx) => (
-              <div key={`${selectedInstance.id}-${idx}`} className={`log-entry ${entry.level}`}><span>[{entry.timestamp}]</span><span>{entry.message}</span></div>
-            ))}
-          </div>
-        </section>
-      )}
     </div>
   );
 }

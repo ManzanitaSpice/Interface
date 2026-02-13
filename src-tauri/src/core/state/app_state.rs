@@ -51,6 +51,16 @@ pub struct AppState {
 impl AppState {
     pub fn new(app_handle: tauri::AppHandle) -> Self {
         let data_dir = default_data_dir();
+        let embedded_runtime = data_dir.join("runtime");
+        if !embedded_runtime.exists() {
+            if let Some(resource_dir) = app_handle.path().resource_dir().ok() {
+                let bundled_runtime = resource_dir.join("runtime");
+                if bundled_runtime.exists() {
+                    let _ = std::fs::create_dir_all(&embedded_runtime);
+                    let _ = copy_dir_recursive(&bundled_runtime, &embedded_runtime);
+                }
+            }
+        }
         let instances_dir = data_dir.join("instances");
         let instance_manager = InstanceManager::new(instances_dir);
 
