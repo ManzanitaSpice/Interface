@@ -1,10 +1,16 @@
-use std::path::{Path, PathBuf};
+use std::fs::File;
+use std::io::Cursor;
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
+use zip::ZipArchive;
 
 use crate::core::error::{LauncherError, LauncherResult};
+
+const ADOPTIUM_JRE17_X64_URL: &str =
+    "https://github.com/adoptium/temurin17-binaries/releases/latest/download/OpenJDK17U-jre_x64_windows_hotspot.zip";
 
 /// A detected Java installation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,6 +19,216 @@ pub struct JavaInstallation {
     pub version: String,
     pub major: u32,
     pub is_64bit: bool,
+}
+
+fn preferred_embedded_runtime_dir() -> Option<PathBuf> {
+    let exe_path = std::env::current_exe().ok()?;
+    let exe_dir = exe_path.parent()?;
+    Some(exe_dir.join("resources").join("runtime"))
+}
+
+/// Resolve the embedded Java path from executable location.
+///
+/// Build (Windows/Tauri): `<exe_dir>/resources/runtime/bin/java.exe`
+/// Dev fallback: `<repo>/src-tauri/resources/runtime/bin/java.exe`
+pub fn detect_embedded_java_binary() -> Option<PathBuf> {
+    let exe_path = std::env::current_exe().ok()?;
+    let exe_dir = exe_path.parent()?;
+
+    let mut candidates = vec![
+        exe_dir
+            .join("resources")
+            .join("runtime")
+            .join("bin")
+            .join(java_exe()),
+        exe_dir
+            .join("..")
+            .join("Resources")
+            .join("runtime")
+            .join("bin")
+            .join(java_exe()),
+    ];
+
+    // Dev fallback by walking up and finding src-tauri/resources/runtime.
+    for ancestor in exe_dir.ancestors() {
+        candidates.push(
+            ancestor
+                .join("src-tauri")
+                .join("resources")
+                .join("runtime")
+                .join("bin")
+                .join(java_exe()),
+        );
+    }
+
+    for candidate in candidates {
+        if candidate.exists() {
+            let canonical = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+            info!("Embedded Java detected at {:?}", canonical);
+            return Some(canonical);
+        }
+    }
+
+    warn!("Embedded Java binary not found next to current executable");
+    None
+}
+
+/// Returns embedded Java if available; otherwise fallback to system Java.
+pub async fn resolve_java_binary(required_major: u32) -> LauncherResult<PathBuf> {
+    if let Some(embedded) = detect_embedded_java_binary() {
+        if let Some(probed) = probe_java(&embedded) {
+            if probed.major >= required_major {
+                info!("Using embedded Java {} at {:?}", probed.major, probed.path);
+                return Ok(probed.path);
+            }
+
+            warn!(
+                "Embedded Java {} is lower than required {}. Falling back to system Java.",
+                probed.major, required_major
+            );
+        } else {
+            warn!(
+                "Embedded Java exists but is not usable (failed `java -version`): {:?}",
+                embedded
+            );
+        }
+    }
+
+    if let Some(runtime_dir) = preferred_embedded_runtime_dir() {
+        if let Ok(downloaded) = ensure_embedded_jre17(&runtime_dir).await {
+            if let Some(probed) = probe_java(&downloaded) {
+                if probed.major >= required_major {
+                    info!(
+                        "Using freshly downloaded embedded Java {} at {:?}",
+                        probed.major, probed.path
+                    );
+                    return Ok(probed.path);
+                }
+            }
+        }
+    }
+
+    find_java_binary(required_major).await
+}
+
+/// Ensure a JRE 17 exists in `runtime_root`, downloading and extracting it when missing.
+pub async fn ensure_embedded_jre17(runtime_root: &Path) -> LauncherResult<PathBuf> {
+    let java_bin = runtime_root.join("bin").join(java_exe());
+    if java_bin.exists() && is_usable_java_binary(&java_bin) {
+        info!("Embedded runtime already available at {:?}", java_bin);
+        return Ok(java_bin);
+    }
+
+    warn!(
+        "Embedded runtime missing or invalid at {:?}. Downloading JRE 17...",
+        runtime_root
+    );
+
+    tokio::fs::create_dir_all(runtime_root)
+        .await
+        .map_err(|source| LauncherError::Io {
+            path: runtime_root.to_path_buf(),
+            source,
+        })?;
+
+    let response = reqwest::get(ADOPTIUM_JRE17_X64_URL).await?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(LauncherError::DownloadFailed {
+            url: ADOPTIUM_JRE17_X64_URL.to_string(),
+            status: status.as_u16(),
+        });
+    }
+
+    let bytes = response.bytes().await?;
+    let runtime_root = runtime_root.to_path_buf();
+
+    tauri::async_runtime::spawn_blocking(move || extract_jre_zip(&bytes, &runtime_root))
+        .await
+        .map_err(|e| LauncherError::Other(format!("Join error extracting JRE: {e}")))??;
+
+    if !java_bin.exists() {
+        return Err(LauncherError::Other(format!(
+            "JRE extracted but {} was not found",
+            java_bin.display()
+        )));
+    }
+
+    if !is_usable_java_binary(&java_bin) {
+        return Err(LauncherError::Other(format!(
+            "Downloaded embedded Java at {} failed validation",
+            java_bin.display()
+        )));
+    }
+
+    info!("Embedded JRE 17 installed successfully at {:?}", java_bin);
+    Ok(java_bin)
+}
+
+fn extract_jre_zip(bytes: &[u8], runtime_root: &Path) -> LauncherResult<()> {
+    let cursor = Cursor::new(bytes.to_vec());
+    let mut archive = ZipArchive::new(cursor)?;
+
+    if runtime_root.exists() {
+        std::fs::remove_dir_all(runtime_root).map_err(|source| LauncherError::Io {
+            path: runtime_root.to_path_buf(),
+            source,
+        })?;
+    }
+
+    std::fs::create_dir_all(runtime_root).map_err(|source| LauncherError::Io {
+        path: runtime_root.to_path_buf(),
+        source,
+    })?;
+
+    for index in 0..archive.len() {
+        let mut zipped = archive.by_index(index)?;
+        let mut rel_path = PathBuf::new();
+
+        // Strip first component (archive top-level folder), keep runtime layout directly in runtime_root.
+        let mut components = zipped
+            .enclosed_name()
+            .ok_or_else(|| LauncherError::Other("Invalid zip entry path".into()))?
+            .components();
+        let _ = components.next();
+        for component in components {
+            if let Component::Normal(part) = component {
+                rel_path.push(part);
+            }
+        }
+
+        if rel_path.as_os_str().is_empty() {
+            continue;
+        }
+
+        let out_path = runtime_root.join(rel_path);
+
+        if zipped.name().ends_with('/') {
+            std::fs::create_dir_all(&out_path).map_err(|source| LauncherError::Io {
+                path: out_path,
+                source,
+            })?;
+            continue;
+        }
+
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| LauncherError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+
+        let mut out = File::create(&out_path).map_err(|source| LauncherError::Io {
+            path: out_path.clone(),
+            source,
+        })?;
+        std::io::copy(&mut zipped, &mut out).map_err(|source| LauncherError::Io {
+            path: out_path,
+            source,
+        })?;
+    }
+
+    Ok(())
 }
 
 /// Blocking implementation used by async wrappers.
