@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 use tracing::info;
 
 use crate::core::error::LauncherError;
-use crate::core::instance::{Instance, InstanceConfig, InstanceState, LoaderType};
+use crate::core::instance::{Instance, InstanceState, LoaderType};
 use crate::core::java::{self, JavaInstallation};
 use crate::core::launch::LaunchEngine;
 use crate::core::loaders;
@@ -36,10 +36,10 @@ impl From<&Instance> for InstanceInfo {
     fn from(inst: &Instance) -> Self {
         Self {
             id: inst.id.clone(),
-            name: inst.config.name.clone(),
-            minecraft_version: inst.config.minecraft_version.clone(),
-            loader_type: inst.config.loader_type.clone(),
-            loader_version: inst.config.loader_version.clone(),
+            name: inst.name.clone(),
+            minecraft_version: inst.minecraft_version.clone(),
+            loader_type: inst.loader.clone(),
+            loader_version: inst.loader_version.clone(),
             state: inst.state.clone(),
         }
     }
@@ -62,17 +62,17 @@ pub async fn create_instance(
         17 // Safe default; can be refined per version later
     };
 
-    let config = InstanceConfig {
-        name: payload.name,
-        minecraft_version: payload.minecraft_version,
-        loader_type: payload.loader_type,
-        loader_version: payload.loader_version,
-        java_major,
-        memory_max_mb: payload.memory_max_mb.unwrap_or(2048),
-        jvm_args: vec![],
-    };
-
-    let mut instance = state.instance_manager.create(config).await?;
+    let mut instance = state
+        .instance_manager
+        .create(Instance::new(
+            payload.name,
+            payload.minecraft_version,
+            payload.loader_type,
+            payload.loader_version,
+            payload.memory_max_mb.unwrap_or(2048),
+            &state.instances_dir,
+        ))
+        .await?;
 
     // Install vanilla base first
     let libs_dir = state.libraries_dir();
@@ -81,7 +81,7 @@ pub async fn create_instance(
 
     let vanilla_result = vanilla_installer
         .install(loaders::InstallContext {
-            minecraft_version: &instance.config.minecraft_version,
+            minecraft_version: &instance.minecraft_version,
             loader_version: "",
             instance_dir: &instance.path,
             libs_dir: &libs_dir,
@@ -93,12 +93,12 @@ pub async fn create_instance(
     instance.main_class = Some(vanilla_result.main_class.clone());
 
     // Install loader if not vanilla
-    if instance.config.loader_type != LoaderType::Vanilla {
-        if let Some(ref loader_version) = instance.config.loader_version {
-            let installer = loaders::Installer::new(&instance.config.loader_type, client.clone());
+    if instance.loader != LoaderType::Vanilla {
+        if let Some(ref loader_version) = instance.loader_version {
+            let installer = loaders::Installer::new(&instance.loader, client.clone());
             let loader_result = installer
                 .install(loaders::InstallContext {
-                    minecraft_version: &instance.config.minecraft_version,
+                    minecraft_version: &instance.minecraft_version,
                     loader_version,
                     instance_dir: &instance.path,
                     libs_dir: &libs_dir,
@@ -115,7 +115,7 @@ pub async fn create_instance(
     instance.state = InstanceState::Ready;
     state.instance_manager.save(&instance).await?;
 
-    info!("Instance '{}' created and ready", instance.config.name);
+    info!("Instance '{}' created and ready", instance.name);
     Ok(InstanceInfo::from(&instance))
 }
 
@@ -171,7 +171,7 @@ pub async fn launch_instance(
     // Launch (non-blocking spawn)
     let _child = LaunchEngine::launch(&instance, &classpath).await?;
 
-    info!("Launched instance {}", instance.config.name);
+    info!("Launched instance {}", instance.name);
 
     // Note: In production, you'd monitor the child process and
     // set state back to Ready when it exits.

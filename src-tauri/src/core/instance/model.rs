@@ -49,6 +49,7 @@ pub enum InstanceState {
 /// - `mods/`       — mod JARs
 /// - `config/`     — mod configuration files
 /// - `instance.json` — this serialized struct
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Instance {
     pub name: String,
     pub path: PathBuf,
