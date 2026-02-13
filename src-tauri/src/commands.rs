@@ -1,8 +1,8 @@
 use std::process::Command;
 use std::sync::Arc;
+use std::{io::BufRead, io::BufReader as StdBufReader};
 
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
@@ -298,7 +298,7 @@ pub async fn create_instance(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     payload: CreateInstancePayload,
 ) -> Result<InstanceInfo, LauncherError> {
-    let mut state = state.lock().await;
+    let state = state.lock().await;
 
     let mut instance = state
         .instance_manager
@@ -437,20 +437,24 @@ pub async fn launch_instance(
     if let Some(stdout) = child.stdout.take() {
         let instance_id = id.clone();
         tauri::async_runtime::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                info!("[mc:{}][stdout] {}", instance_id, line);
-            }
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                for line in StdBufReader::new(stdout).lines().map_while(Result::ok) {
+                    info!("[mc:{}][stdout] {}", instance_id, line);
+                }
+            })
+            .await;
         });
     }
 
     if let Some(stderr) = child.stderr.take() {
         let instance_id = id.clone();
         tauri::async_runtime::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                warn!("[mc:{}][stderr] {}", instance_id, line);
-            }
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                for line in StdBufReader::new(stderr).lines().map_while(Result::ok) {
+                    warn!("[mc:{}][stderr] {}", instance_id, line);
+                }
+            })
+            .await;
         });
     }
 
