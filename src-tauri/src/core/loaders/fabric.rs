@@ -2,7 +2,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tracing::info;
 
@@ -12,7 +12,7 @@ use crate::core::downloader::Downloader;
 use crate::core::error::{LauncherError, LauncherResult};
 use crate::core::maven::{MavenArtifact, FABRIC_MAVEN};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FabricProfile {
     pub id: Option<String>,
@@ -22,13 +22,13 @@ pub struct FabricProfile {
     pub arguments: Option<FabricArguments>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FabricLibrary {
     pub name: String,
     pub url: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct FabricArguments {
     #[serde(default)]
     pub jvm: Vec<String>,

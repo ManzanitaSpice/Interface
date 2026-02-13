@@ -7,7 +7,7 @@ use tracing::info;
 use crate::core::error::LauncherError;
 use crate::core::instance::{Instance, InstanceState, LoaderType};
 use crate::core::java::{self, JavaInstallation};
-use crate::core::launch::LaunchEngine;
+use crate::core::launch;
 use crate::core::loaders;
 use crate::core::state::AppState;
 
@@ -159,17 +159,17 @@ pub async fn launch_instance(
     // TODO: Collect actual library coordinates from saved version data
     let lib_coords: Vec<String> = vec![];
 
-    let classpath = LaunchEngine::build_classpath(&instance, &libs_dir, &lib_coords)?;
+    let classpath = launch::build_classpath(&instance, &libs_dir, &lib_coords)?;
 
     // Extract natives
-    let _natives_dir = LaunchEngine::extract_natives(&instance, &libs_dir, &[]).await?;
+    let _natives_dir = launch::extract_natives(&instance, &libs_dir, &[]).await?;
 
     // Update state
     instance.state = InstanceState::Running;
     state.instance_manager.save(&instance).await?;
 
     // Launch (non-blocking spawn)
-    let _child = LaunchEngine::launch(&instance, &classpath).await?;
+    let _child = launch::launch(&instance, &classpath).await?;
 
     info!("Launched instance {}", instance.name);
 
