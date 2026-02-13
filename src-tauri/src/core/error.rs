@@ -75,6 +75,15 @@ pub enum LauncherError {
 /// Convenience alias used throughout the crate.
 pub type LauncherResult<T> = Result<T, LauncherError>;
 
+impl From<std::io::Error> for LauncherError {
+    fn from(source: std::io::Error) -> Self {
+        LauncherError::Io {
+            path: PathBuf::new(),
+            source,
+        }
+    }
+}
+
 // ── Serialization for Tauri IPC ─────────────────────────
 // Tauri commands require the error type to implement `Serialize`.
 impl serde::Serialize for LauncherError {

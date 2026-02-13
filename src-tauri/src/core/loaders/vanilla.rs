@@ -53,17 +53,21 @@ impl LoaderInstaller for VanillaInstaller {
 
         // 6. Collect asset index info
         let asset_index_id = version_json.asset_index.as_ref().map(|ai| ai.id.clone());
+        let asset_index_url = version_json.asset_index.as_ref().map(|ai| ai.url.clone());
+        let extra_jvm_args = version_json.simple_jvm_args();
+        let extra_game_args = version_json.simple_game_args();
+        let java_major = Some(version_json.required_java_major());
 
         info!("Vanilla {} installed successfully", ctx.minecraft_version);
 
         Ok(LoaderInstallResult {
             main_class: version_json.main_class,
-            extra_jvm_args: version_json.simple_jvm_args(),
-            extra_game_args: version_json.simple_game_args(),
+            extra_jvm_args,
+            extra_game_args,
             libraries: lib_coords,
             asset_index_id,
-            asset_index_url: version_json.asset_index.as_ref().map(|ai| ai.url.clone()),
-            java_major: Some(version_json.required_java_major()),
+            asset_index_url,
+            java_major,
         })
     }
 }
