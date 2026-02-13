@@ -428,10 +428,16 @@ pub async fn launch_instance(
         let _natives_dir =
             launch::extract_natives(&instance, &libs_dir, &instance.libraries).await?;
 
+        let mut child = match launch::launch(&instance, &classpath).await {
+            Ok(child) => child,
+            Err(err) => {
+                instance.state = InstanceState::Ready;
+                state_guard.instance_manager.save(&instance).await?;
+                return Err(err);
+            }
+        };
         instance.state = InstanceState::Running;
         state_guard.instance_manager.save(&instance).await?;
-
-        let mut child = launch::launch(&instance, &classpath).await?;
         let pid = child.id();
         state_guard.running_instances.insert(id.clone(), pid);
         info!("Launched instance {}", instance.name);
