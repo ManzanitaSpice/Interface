@@ -1214,7 +1214,8 @@ pub async fn launch_instance(
                     emit_launch_log(&app_handle, &instance_id, "warn", line.clone());
                     if let Some(diagnostic) = detect_launch_diagnostic(&line) {
                         let should_emit = match diagnostic {
-                            LaunchDiagnostic::NeoForgeEarlyDisplayRendererFuture => {
+                            LaunchDiagnostic::NeoForgeEarlyDisplayRendererFuture
+                            | LaunchDiagnostic::NeoForgeEarlyDisplayStillEnabled => {
                                 if neoforge_hint_emitted {
                                     false
                                 } else {
