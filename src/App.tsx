@@ -63,6 +63,12 @@ interface MinecraftVersionEntry {
   version_type: string;
 }
 
+interface LoaderVersionEntry {
+  version: string;
+  stable: boolean;
+  source: "official" | "fallback";
+}
+
 type MinecraftVersionFilter = "all" | "playable";
 
 const SECTION_LABELS: { key: TopSection; label: string }[] = [
@@ -138,6 +144,12 @@ const formatBytes = (bytes: number) => {
 
 const prettyLoader = (loader: LoaderType) => loader.charAt(0).toUpperCase() + loader.slice(1);
 
+const MOJANG_VERSION_MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
+const FABRIC_LOADER_URL = "https://meta.fabricmc.net/v2/versions/loader";
+const FORGE_MAVEN_METADATA_URL = "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml";
+const NEOFORGE_MAVEN_METADATA_URL = "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml";
+const QUILT_LOADER_URL = "https://meta.quiltmc.org/v3/versions/loader";
+
 function App() {
   const [activeSection, setActiveSection] = useState<TopSection>("instances");
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
@@ -164,10 +176,14 @@ function App() {
     message: "",
   });
   const [minecraftVersions, setMinecraftVersions] = useState<MinecraftVersionEntry[]>([]);
+  const [minecraftVersionsLoading, setMinecraftVersionsLoading] = useState(false);
+  const [minecraftVersionsError, setMinecraftVersionsError] = useState<string | null>(null);
   const [minecraftFilter, setMinecraftFilter] = useState<MinecraftVersionFilter>("all");
   const [selectedMinecraftVersion, setSelectedMinecraftVersion] = useState<string | null>(null);
   const [selectedLoaderType, setSelectedLoaderType] = useState<LoaderType | null>("vanilla");
-  const [loaderVersions, setLoaderVersions] = useState<string[]>([]);
+  const [loaderVersions, setLoaderVersions] = useState<LoaderVersionEntry[]>([]);
+  const [loaderVersionsLoading, setLoaderVersionsLoading] = useState(false);
+  const [loaderVersionsError, setLoaderVersionsError] = useState<string | null>(null);
   const [selectedLoaderVersion, setSelectedLoaderVersion] = useState<string | null>(null);
   const [newInstanceName, setNewInstanceName] = useState("");
   const [createInProgress, setCreateInProgress] = useState(false);
@@ -194,11 +210,30 @@ function App() {
 
   useEffect(() => {
     const loadMinecraftVersions = async () => {
+      setMinecraftVersionsLoading(true);
+      setMinecraftVersionsError(null);
       try {
         const versions = await invoke<MinecraftVersionEntry[]>("get_minecraft_versions_detailed");
-        setMinecraftVersions(versions);
+        setMinecraftVersions(
+          versions.sort((a, b) => new Date(b.release_time).getTime() - new Date(a.release_time).getTime()),
+        );
       } catch {
-        setMinecraftVersions([]);
+        try {
+          const response = await fetch(MOJANG_VERSION_MANIFEST_URL);
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          const data = await response.json() as { versions?: MinecraftVersionEntry[] };
+          const officialVersions = (data.versions ?? [])
+            .filter((entry) => !entry.id.toLowerCase().includes("demo"))
+            .sort((a, b) => new Date(b.release_time).getTime() - new Date(a.release_time).getTime());
+          setMinecraftVersions(officialVersions);
+        } catch {
+          setMinecraftVersions([]);
+          setMinecraftVersionsError("No se pudieron cargar las versiones oficiales de Minecraft.");
+        }
+      } finally {
+        setMinecraftVersionsLoading(false);
       }
     };
 
@@ -215,20 +250,84 @@ function App() {
     if (!selectedMinecraftVersion || !selectedLoaderType || selectedLoaderType === "vanilla") {
       setLoaderVersions([]);
       setSelectedLoaderVersion(selectedLoaderType === "vanilla" ? "integrado" : null);
+      setLoaderVersionsError(null);
+      setLoaderVersionsLoading(false);
       return;
     }
 
     const loadLoaderVersions = async () => {
+      setLoaderVersionsLoading(true);
+      setLoaderVersionsError(null);
       try {
         const versions = await invoke<string[]>("get_loader_versions", {
           loaderType: selectedLoaderType,
           minecraftVersion: selectedMinecraftVersion,
         });
-        setLoaderVersions(versions);
-        setSelectedLoaderVersion(versions[0] ?? null);
+        const normalized = versions.map((version, index) => ({
+          version,
+          stable: index === 0,
+          source: "official" as const,
+        }));
+        setLoaderVersions(normalized);
+        setSelectedLoaderVersion(normalized[0]?.version ?? null);
       } catch {
-        setLoaderVersions([]);
-        setSelectedLoaderVersion(null);
+        try {
+          let fallbackVersions: LoaderVersionEntry[] = [];
+
+          if (selectedLoaderType === "fabric") {
+            const response = await fetch(`${FABRIC_LOADER_URL}/${selectedMinecraftVersion}`);
+            const payload = await response.json() as Array<{ loader?: { version?: string }; stable?: boolean }>;
+            fallbackVersions = payload
+              .filter((entry) => entry.loader?.version)
+              .map((entry) => ({
+                version: entry.loader?.version ?? "",
+                stable: Boolean(entry.stable),
+                source: "fallback",
+              }));
+          }
+
+          if (selectedLoaderType === "quilt") {
+            const response = await fetch(QUILT_LOADER_URL);
+            const payload = await response.json() as Array<{ loader?: { version?: string }; stable?: boolean }>; 
+            fallbackVersions = payload
+              .filter((entry) => entry.loader?.version)
+              .map((entry) => ({
+                version: entry.loader?.version ?? "",
+                stable: Boolean(entry.stable),
+                source: "fallback",
+              }));
+          }
+
+          if (selectedLoaderType === "forge" || selectedLoaderType === "neoforge") {
+            const metadataUrl = selectedLoaderType === "forge" ? FORGE_MAVEN_METADATA_URL : NEOFORGE_MAVEN_METADATA_URL;
+            const response = await fetch(metadataUrl);
+            const xmlText = await response.text();
+            const parser = new DOMParser();
+            const xml = parser.parseFromString(xmlText, "application/xml");
+            const versions = Array.from(xml.querySelectorAll("version"))
+              .map((entry) => entry.textContent?.trim() ?? "")
+              .filter(Boolean)
+              .filter((version) => selectedLoaderType === "forge"
+                ? version.startsWith(`${selectedMinecraftVersion}-`)
+                : version.includes(selectedMinecraftVersion.replace("1.", "").split(".").slice(0, 2).join("."))
+              )
+              .map((version) => selectedLoaderType === "forge" ? version.replace(`${selectedMinecraftVersion}-`, "") : version);
+
+            fallbackVersions = versions.map((version, index) => ({ version, stable: index === 0, source: "fallback" }));
+          }
+
+          setLoaderVersions(fallbackVersions);
+          setSelectedLoaderVersion(fallbackVersions[0]?.version ?? null);
+          if (fallbackVersions.length === 0) {
+            setLoaderVersionsError("No se encontraron versiones oficiales para este loader y versión de Minecraft.");
+          }
+        } catch {
+          setLoaderVersions([]);
+          setSelectedLoaderVersion(null);
+          setLoaderVersionsError("No se pudieron cargar versiones de loaders desde APIs oficiales.");
+        }
+      } finally {
+        setLoaderVersionsLoading(false);
       }
     };
 
@@ -537,6 +636,9 @@ function App() {
     }
   };
 
+  const shouldShowMinecraftBlock = ["Base", "Version"].includes(activeCreateSection);
+  const shouldShowLoaderBlock = ["Base", "Loader"].includes(activeCreateSection);
+
   const onSelectInstance = (instance: InstanceInfo) => {
     setSelectedInstance(instance);
     setLaunchError(null);
@@ -696,6 +798,7 @@ function App() {
             ))}
           </aside>
           <main className="create-main-content create-main-grid">
+            {shouldShowMinecraftBlock && (
             <section className="create-block">
               <header><h2>Bloque 1 · Versiones Minecraft</h2></header>
               <div className="create-block-body">
@@ -703,6 +806,8 @@ function App() {
                   <table className="version-table">
                     <thead><tr><th>Version</th><th>Fecha de lanzado</th><th>Tipo</th></tr></thead>
                     <tbody>
+                      {minecraftVersionsLoading && <tr><td colSpan={3}>Cargando versiones oficiales desde Mojang/Microsoft...</td></tr>}
+                      {!minecraftVersionsLoading && minecraftVersionsError && <tr><td colSpan={3}>{minecraftVersionsError}</td></tr>}
                       {filteredMinecraftVersions.map((entry) => (
                         <tr key={entry.id} className={selectedMinecraftVersion === entry.id ? "selected" : ""} onClick={() => setSelectedMinecraftVersion(entry.id)}>
                           <td>{entry.id}</td>
@@ -721,6 +826,8 @@ function App() {
                 </aside>
               </div>
             </section>
+            )}
+            {shouldShowLoaderBlock && (
             <section className="create-block">
               <header><h2>Bloque 2 · Loaders</h2></header>
               <div className="create-block-body">
@@ -728,9 +835,9 @@ function App() {
                   <table className="version-table">
                     <thead><tr><th>Version</th><th>Compatibilidad</th><th>Estado</th></tr></thead>
                     <tbody>
-                      {selectedLoaderType === null ? <tr><td colSpan={3}>Selecciona un loader.</td></tr> : selectedLoaderType === "vanilla" ? <tr className="selected"><td>Integrado</td><td>{selectedMinecraftVersion ?? "-"}</td><td>Recomendado</td></tr> : loaderVersions.length === 0 ? <tr><td colSpan={3}>Sin versiones compatibles.</td></tr> : loaderVersions.map((version, idx) => (
-                        <tr key={version} className={selectedLoaderVersion === version ? "selected" : ""} onClick={() => setSelectedLoaderVersion(version)}>
-                          <td>{version}</td><td>{selectedMinecraftVersion ?? "-"}</td><td>{idx === 0 ? "Recomendada / Más actual" : "Disponible"}</td>
+                      {selectedLoaderType === null ? <tr><td colSpan={3}>Selecciona un loader.</td></tr> : selectedLoaderType === "vanilla" ? <tr className="selected"><td>Integrado</td><td>{selectedMinecraftVersion ?? "-"}</td><td>Recomendado</td></tr> : loaderVersionsLoading ? <tr><td colSpan={3}>Cargando loaders oficiales...</td></tr> : loaderVersionsError ? <tr><td colSpan={3}>{loaderVersionsError}</td></tr> : loaderVersions.length === 0 ? <tr><td colSpan={3}>Sin versiones compatibles.</td></tr> : loaderVersions.map((entry, idx) => (
+                        <tr key={entry.version} className={selectedLoaderVersion === entry.version ? "selected" : ""} onClick={() => setSelectedLoaderVersion(entry.version)}>
+                          <td>{entry.version}</td><td>{selectedMinecraftVersion ?? "-"}</td><td>{entry.stable || idx === 0 ? "Recomendada / Más actual" : "Disponible"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -746,6 +853,7 @@ function App() {
                 </aside>
               </div>
             </section>
+            )}
           </main>
           <aside className="create-right-sidebar compact-sidebar">
             <h3>Crear instancia</h3>

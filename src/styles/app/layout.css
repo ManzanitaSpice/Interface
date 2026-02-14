@@ -1,9 +1,6 @@
 .app-shell {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 80% -10%, rgba(141, 100, 255, 0.18), transparent 38%),
-    radial-gradient(circle at 0 20%, rgba(101, 176, 255, 0.12), transparent 36%),
-    linear-gradient(180deg, #0f1a2f 0%, #0a1324 42%, #070d1a 100%);
+  background: var(--bg-0);
 }
 
 .topbar-primary,
@@ -17,7 +14,7 @@
 
 .topbar-primary {
   justify-content: space-between;
-  background: rgba(10, 17, 31, 0.88);
+  background: #16181D;
   backdrop-filter: blur(10px);
   position: sticky;
   top: 0;
@@ -33,7 +30,7 @@
 }
 
 .topbar-secondary {
-  background: rgba(11, 20, 35, 0.82);
+  background: #16181D;
   backdrop-filter: blur(10px);
   position: sticky;
   top: 50px;
@@ -52,7 +49,7 @@
   min-height: calc(100vh - 112px);
   width: 100%;
   padding: 18px 20px 20px;
-  background: rgba(8, 14, 26, 0.42);
+  background: transparent;
 }
 
 .instances-page {
@@ -86,9 +83,9 @@
 }
 
 .create-block {
-  border: 1px solid rgba(124, 167, 244, 0.32);
+  border: 1px solid var(--line-soft);
   border-radius: 16px;
-  background: linear-gradient(170deg, rgba(21, 34, 58, 0.88), rgba(11, 20, 36, 0.95));
+  background: #1C1E22;
   display: grid;
   grid-template-rows: auto 1fr;
   min-height: calc(100vh - 95px);
@@ -96,7 +93,7 @@
 }
 
 .create-block > header {
-  border-bottom: 1px solid rgba(124, 167, 244, 0.2);
+  border-bottom: 1px solid var(--line-soft);
   padding: 12px;
 }
 
@@ -125,7 +122,7 @@
 .version-table th,
 .version-table td {
   padding: 9px 10px;
-  border-bottom: 1px solid rgba(122, 163, 236, 0.2);
+  border-bottom: 1px solid var(--line-soft);
   text-align: left;
 }
 
@@ -135,15 +132,15 @@
 }
 
 .version-table tbody tr:hover {
-  background: rgba(85, 132, 210, 0.16);
+  background: #2C7BE580;
 }
 
 .version-table tbody tr.selected {
-  background: rgba(84, 142, 224, 0.3);
+  background: #2C7BE580;
 }
 
 .block-sidebar {
-  border-left: 1px solid rgba(124, 167, 244, 0.18);
+  border-left: 1px solid var(--line-soft);
   padding: 10px;
   display: grid;
   align-content: start;
@@ -156,13 +153,13 @@
 }
 
 .create-log-box {
-  border: 1px solid rgba(117, 174, 255, 0.42);
+  border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(10, 20, 35, 0.75);
+  background: #16181D;
   padding: 10px;
   font-family: "JetBrains Mono", "Fira Code", monospace;
   font-size: 0.76rem;
-  color: #b9d5ff;
+  color: var(--text-muted);
   display: grid;
   gap: 5px;
 }
