@@ -1,19 +1,19 @@
 :root {
   color-scheme: dark;
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-  --bg-0: #101112;
-  --bg-1: #161719;
-  --bg-2: #1d1f22;
-  --bg-3: #26292d;
-  --line: #35383d;
-  --line-soft: #2d3035;
-  --text-main: #f2f3f4;
-  --text-muted: #a7acb3;
-  --accent: #575d65;
-  --accent-strong: #6c737c;
-  --success: #a9d5a2;
-  --danger: #e8a2a2;
-  --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.35);
+  --bg-0: #090d16;
+  --bg-1: #101726;
+  --bg-2: #151f33;
+  --bg-3: #1b2740;
+  --line: #25314a;
+  --line-soft: #1d2940;
+  --text-main: #eef4ff;
+  --text-muted: #9baed4;
+  --accent: #5fa8ff;
+  --accent-strong: #7bb8ff;
+  --success: #95e0b4;
+  --danger: #ff9eb1;
+  --shadow-lg: 0 20px 38px rgba(2, 7, 16, 0.45);
 }
 
 * {
@@ -28,7 +28,7 @@
 
 body {
   margin: 0;
-  background: var(--bg-0);
+  background: radial-gradient(circle at top, #1a2a45 0%, var(--bg-1) 34%, var(--bg-0) 100%);
   color: var(--text-main);
 }
 
@@ -36,6 +36,20 @@ button,
 input,
 textarea {
   font-family: inherit;
+}
+
+input,
+textarea {
+  border: 1px solid #314361;
+  background: rgba(16, 24, 39, 0.92);
+  color: var(--text-main);
+  border-radius: 12px;
+  padding: 9px 12px;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #86a1cf;
 }
 
 .sr-only {
