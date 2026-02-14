@@ -15,6 +15,7 @@ interface InstanceInfo {
   loader_type: LoaderType;
   loader_version: string | null;
   state: InstanceState;
+  required_java_major?: number | null;
 }
 
 interface JavaInstallation {
@@ -246,6 +247,8 @@ function App() {
   const [installationCompleted, setInstallationCompleted] = useState(false);
   const [isReinstallingLauncher, setIsReinstallingLauncher] = useState(false);
   const launcherDirInputRef = useRef<HTMLInputElement | null>(null);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const [isDetectingJava, setIsDetectingJava] = useState(false);
 
   const selectedInstance = useMemo(
     () => instances.find((instance) => instance.id === selectedInstanceId) ?? null,
@@ -255,6 +258,17 @@ function App() {
   useEffect(() => {
     const timer = setTimeout(() => setIsLoading(false), 1500);
     return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!profileMenuRef.current?.contains(event.target as Node)) {
+        setIsProfileMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
 
   useEffect(() => {
@@ -298,6 +312,19 @@ function App() {
       await persistSettings(settings);
     } catch (e) {
       setError(`No se pudo guardar la configuración de Java: ${getErrorMessage(e)}`);
+    }
+  };
+
+  const handleDetectJavaInstallations = async () => {
+    setIsDetectingJava(true);
+    setError("");
+    try {
+      const javas = await invoke<JavaInstallation[]>("get_java_installations");
+      setJavaInstallations(javas);
+    } catch (e) {
+      setError(`No se pudo detectar Java: ${getErrorMessage(e)}`);
+    } finally {
+      setIsDetectingJava(false);
     }
   };
 
@@ -369,6 +396,38 @@ function App() {
     }
   };
 
+  const handleOpenInstanceFolder = async (id: string) => {
+    setError("");
+    try {
+      await invoke("open_instance_folder", { id });
+    } catch (e) {
+      setError(`No se pudo abrir la carpeta de la instancia: ${getErrorMessage(e)}`);
+    }
+  };
+
+  const handleDeleteInstance = async (id: string) => {
+    if (!confirm("¿Seguro que deseas eliminar esta instancia? Esta acción no se puede deshacer.")) {
+      return;
+    }
+
+    setError("");
+    try {
+      await invoke("delete_instance", { id });
+      setInstances((prev) => prev.filter((instance) => instance.id !== id));
+      setInstanceLogs((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      if (selectedInstanceId === id) {
+        setSelectedInstanceId(null);
+        setCurrentView("home");
+      }
+    } catch (e) {
+      setError(`No se pudo eliminar la instancia: ${getErrorMessage(e)}`);
+    }
+  };
+
   const openInstanceDetail = (id: string) => {
     setSelectedInstanceId(id);
     setCurrentView("instance-detail");
@@ -430,7 +489,7 @@ function App() {
     <div className="app-root">
       <header className="global-topbar">
         <div className="brand-zone"><div className="brand-logo-placeholder" /><span className="brand-title">INTERFACE</span></div>
-        <div className="profile-menu-container">
+        <div className="profile-menu-container" ref={profileMenuRef}>
           <button className="profile-btn" onClick={() => setIsProfileMenuOpen((prev) => !prev)} type="button">Perfil ▾</button>
           {isProfileMenuOpen && <div className="profile-dropdown"><button type="button">Mi perfil (próximamente)</button></div>}
         </div>
@@ -500,10 +559,20 @@ function App() {
                     <h3>{instance.name}</h3>
                     <p><strong>Minecraft:</strong> {instance.minecraft_version}</p>
                     <p><strong>Loader:</strong> {instance.loader_type}</p>
+                    <p><strong>Java recomendada:</strong> {instance.required_java_major ? `Java ${instance.required_java_major}+` : "Auto"}</p>
                     <p><strong>Status:</strong> {instance.state}</p>
                     <div className="instance-actions">
                       <button className="start-instance-btn" onClick={(e) => { e.stopPropagation(); void handleStartInstance(instance.id); }}>
                         {instance.state === "running" ? "En ejecución" : "Iniciar instancia"}
+                      </button>
+                      <button className="open-folder-btn" onClick={(e) => { e.stopPropagation(); void handleOpenInstanceFolder(instance.id); }}>
+                        Abrir carpeta
+                      </button>
+                      <button className="danger-btn secondary" onClick={(e) => { e.stopPropagation(); void handleForceCloseInstance(instance.id); }} disabled={instance.state !== "running"}>
+                        Detener instancia
+                      </button>
+                      <button className="danger-btn" onClick={(e) => { e.stopPropagation(); void handleDeleteInstance(instance.id); }}>
+                        Eliminar instancia
                       </button>
                     </div>
                   </article>
@@ -534,7 +603,13 @@ function App() {
                     {selectedInstance.state === "running" ? "En ejecución" : "Iniciar instancia"}
                   </button>
                   <button className="danger-btn secondary" type="button" onClick={() => void handleForceCloseInstance(selectedInstance.id)} disabled={selectedInstance.state !== "running"}>
-                    Parar / Forzar cierre
+                    Parar ejecución
+                  </button>
+                  <button className="open-folder-btn" type="button" onClick={() => void handleOpenInstanceFolder(selectedInstance.id)}>
+                    Abrir carpeta
+                  </button>
+                  <button className="danger-btn" type="button" onClick={() => void handleDeleteInstance(selectedInstance.id)}>
+                    Eliminar instancia
                   </button>
                 </div>
               </div>
@@ -580,6 +655,10 @@ function App() {
                       ))}
                     </select>
                   </div>
+
+                  <button className="open-folder-btn" type="button" onClick={() => void handleDetectJavaInstallations()} disabled={isDetectingJava}>
+                    {isDetectingJava ? "Detectando instalaciones..." : "Detectar instalaciones Java"}
+                  </button>
 
                   <button className="generate-btn" type="button" onClick={() => void handleSaveJavaSettings()}>Guardar configuración Java</button>
                 </div>

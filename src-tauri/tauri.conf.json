@@ -13,7 +13,8 @@
     "windows": [
       {
         "title": "interface",
-        "fullscreen": true
+        "fullscreen": false,
+        "maximized": true
       }
     ],
     "security": {

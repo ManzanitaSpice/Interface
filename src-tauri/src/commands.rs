@@ -32,6 +32,7 @@ pub struct InstanceInfo {
     pub loader_type: LoaderType,
     pub loader_version: Option<String>,
     pub state: InstanceState,
+    pub required_java_major: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +70,7 @@ impl From<&Instance> for InstanceInfo {
             loader_type: inst.loader.clone(),
             loader_version: inst.loader_version.clone(),
             state: inst.state.clone(),
+            required_java_major: inst.required_java_major,
         }
     }
 }
@@ -519,9 +521,15 @@ pub async fn force_close_instance(
     let mut state = state.lock().await;
     let mut instance = state.instance_manager.load(&id).await?;
 
-    let pid = state.running_instances.remove(&id).ok_or_else(|| {
-        LauncherError::Other(format!("No hay proceso activo para la instancia {id}"))
-    })?;
+    let Some(pid) = state.running_instances.remove(&id) else {
+        if instance.state == InstanceState::Running {
+            instance.state = InstanceState::Ready;
+            state.instance_manager.save(&instance).await?;
+        }
+        return Err(LauncherError::Other(format!(
+            "No hay proceso activo para la instancia {id}"
+        )));
+    };
 
     kill_process(pid)?;
     instance.state = InstanceState::Ready;
@@ -533,31 +541,51 @@ pub async fn force_close_instance(
 
 fn kill_process(pid: u32) -> Result<(), LauncherError> {
     #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut cmd = Command::new("taskkill");
-        cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
-        cmd
-    };
+    {
+        let status = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status()
+            .map_err(|e| LauncherError::Other(format!("No se pudo finalizar proceso {pid}: {e}")))?;
 
-    #[cfg(not(target_os = "windows"))]
-    let mut command = {
-        let mut cmd = Command::new("kill");
-        cmd.args(["-9", &pid.to_string()]);
-        cmd
-    };
+        if !status.success() {
+            return Err(LauncherError::Other(format!(
+                "El comando para cerrar el proceso {pid} devolvió código {:?}",
+                status.code()
+            )));
+        }
 
-    let status = command
-        .status()
-        .map_err(|e| LauncherError::Other(format!("No se pudo finalizar proceso {pid}: {e}")))?;
-
-    if !status.success() {
-        return Err(LauncherError::Other(format!(
-            "El comando para cerrar el proceso {pid} devolvió código {:?}",
-            status.code()
-        )));
+        return Ok(());
     }
 
-    Ok(())
+    #[cfg(not(target_os = "windows"))]
+    {
+        let graceful = Command::new("kill")
+            .args(["-15", &pid.to_string()])
+            .status()
+            .map_err(|e| LauncherError::Other(format!("No se pudo enviar SIGTERM a {pid}: {e}")))?;
+
+        if graceful.success() {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let check = Command::new("kill").args(["-0", &pid.to_string()]).status();
+            if matches!(check, Ok(status) if !status.success()) {
+                return Ok(());
+            }
+        }
+
+        let force = Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+            .map_err(|e| LauncherError::Other(format!("No se pudo finalizar proceso {pid}: {e}")))?;
+
+        if !force.success() {
+            return Err(LauncherError::Other(format!(
+                "El comando para cerrar el proceso {pid} devolvió código {:?}",
+                force.code()
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 #[tauri::command]
