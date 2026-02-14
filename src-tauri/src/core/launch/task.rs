@@ -129,6 +129,8 @@ fn sanitize_jvm_args(
     let game_dir = safe_path_str(&instance.game_dir());
     let library_dir = safe_path_str(&instance.game_dir().join("libraries"));
     let classpath_separator = super::classpath::get_classpath_separator();
+    let launch_version_name = launch_version_name(instance);
+    let loader_version = instance.loader_version.as_deref().unwrap_or("");
 
     while i < raw_args.len() {
         let arg = &raw_args[i];
@@ -146,13 +148,16 @@ fn sanitize_jvm_args(
             .replace("${classpath}", classpath)
             .replace("${classpath_separator}", classpath_separator)
             .replace("${game_directory}", &game_dir)
-            .replace("${version_name}", &instance.minecraft_version)
+            .replace("${version_name}", &launch_version_name)
+            .replace("${version}", loader_version)
+            .replace("${mc_version}", &instance.minecraft_version)
             .replace("${launcher_name}", "InterfaceOficial")
             .replace("${launcher_version}", "0.1.0");
 
         // Any remaining placeholders indicate data we cannot currently resolve.
         // Skip to avoid passing invalid runtime arguments to Java.
         if resolved.contains("${") {
+            drop_dangling_option(&mut sanitized);
             i += 1;
             continue;
         }
@@ -174,6 +179,8 @@ fn sanitize_game_args(
     let mut sanitized = Vec::new();
     let game_dir = safe_path_str(game_dir);
     let assets_dir = safe_path_str(assets_dir);
+    let launch_version_name = launch_version_name(instance);
+    let loader_version = instance.loader_version.as_deref().unwrap_or("");
 
     let mut i = 0;
     while i < raw_args.len() {
@@ -181,7 +188,9 @@ fn sanitize_game_args(
 
         let resolved = arg
             .replace("${auth_player_name}", &account.username)
-            .replace("${version_name}", &instance.minecraft_version)
+            .replace("${version_name}", &launch_version_name)
+            .replace("${version}", loader_version)
+            .replace("${mc_version}", &instance.minecraft_version)
             .replace("${game_directory}", &game_dir)
             .replace("${assets_root}", &assets_dir)
             .replace(
@@ -198,6 +207,7 @@ fn sanitize_game_args(
 
         // Skip unresolved placeholders to avoid passing malformed values.
         if resolved.contains("${") {
+            drop_dangling_option(&mut sanitized);
             i += 1;
             continue;
         }
@@ -207,6 +217,21 @@ fn sanitize_game_args(
     }
 
     sanitized
+}
+
+fn launch_version_name(instance: &Instance) -> String {
+    match instance.loader_version.as_deref() {
+        Some(loader_version) if !loader_version.trim().is_empty() => {
+            format!("{}-{}", instance.minecraft_version, loader_version)
+        }
+        _ => instance.minecraft_version.clone(),
+    }
+}
+
+fn drop_dangling_option(args: &mut Vec<String>) {
+    if args.last().is_some_and(|last| last.starts_with('-')) {
+        let _ = args.pop();
+    }
 }
 
 #[cfg(test)]
@@ -307,8 +332,38 @@ mod tests {
                 "00000000402B5328",
                 "--assetIndex",
                 "17",
-                "--bad",
             ]
         );
+    }
+
+    #[test]
+    fn sanitize_game_args_drops_dangling_option_for_unresolved_placeholder() {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::Forge,
+            Some("47.2.0".into()),
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+        instance.account = LaunchAccountProfile::offline("Alex").sanitized();
+
+        let args = vec![
+            "--fml.forgeVersion".into(),
+            "${missing_forge_version}".into(),
+            "--fml.mcVersion".into(),
+            "${mc_version}".into(),
+        ];
+
+        let sanitized = sanitize_game_args(
+            &instance,
+            &args,
+            std::path::Path::new("/tmp/game"),
+            std::path::Path::new("/tmp/assets"),
+            &instance.account,
+        );
+
+        assert_eq!(sanitized, vec!["--fml.mcVersion", "1.20.1"]);
     }
 }
