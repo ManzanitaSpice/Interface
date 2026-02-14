@@ -237,6 +237,7 @@ function App() {
             release_time: entry.release_time ?? entry.releaseTime ?? "",
             version_type: entry.version_type ?? entry.type ?? "unknown",
           }))
+          .filter((entry) => entry.version_type === "release")
           .sort((a, b) => new Date(b.release_time).getTime() - new Date(a.release_time).getTime());
         setMinecraftVersions(normalized);
       } catch {
@@ -252,7 +253,7 @@ function App() {
               release_time: entry.release_time ?? entry.releaseTime ?? "",
               version_type: entry.version_type ?? entry.type ?? "unknown",
             }))
-            .filter((entry) => !entry.id.toLowerCase().includes("demo"))
+            .filter((entry) => entry.version_type === "release")
             .sort((a, b) => new Date(b.release_time).getTime() - new Date(a.release_time).getTime());
           setMinecraftVersions(officialVersions);
         } catch {

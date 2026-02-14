@@ -576,7 +576,6 @@ pub async fn get_minecraft_versions(
         .versions
         .iter()
         .filter(|entry| entry.version_type == "release")
-        .filter(|entry| !entry.id.to_ascii_lowercase().contains("demo"))
         .map(|entry| entry.id.clone())
         .collect();
 
@@ -593,7 +592,7 @@ pub async fn get_minecraft_versions_detailed(
     let versions = manifest
         .versions
         .into_iter()
-        .filter(|entry| !entry.id.to_ascii_lowercase().contains("demo"))
+        .filter(|entry| entry.version_type == "release")
         .map(|entry| MinecraftVersionInfo {
             id: entry.id,
             release_time: entry.release_time,
