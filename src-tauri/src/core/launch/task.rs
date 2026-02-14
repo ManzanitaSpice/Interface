@@ -179,19 +179,6 @@ fn sanitize_game_args(
     while i < raw_args.len() {
         let arg = &raw_args[i];
 
-        // Avoid launching the Minecraft demo profile.
-        // We only want official release arguments.
-        if arg == "--demo" || arg == "--demoMode" {
-            i += 1;
-            continue;
-        }
-
-        // Some manifests expose a demo toggle as key/value pair.
-        if arg == "--isDemo" {
-            i += 2;
-            continue;
-        }
-
         let resolved = arg
             .replace("${auth_player_name}", &account.username)
             .replace("${version_name}", &instance.minecraft_version)
@@ -293,10 +280,6 @@ mod tests {
             "${assets_index_name}".into(),
             "--bad".into(),
             "${unknown_placeholder}".into(),
-            "--demo".into(),
-            "--isDemo".into(),
-            "true".into(),
-            "--demoMode".into(),
         ];
 
         instance.account = LaunchAccountProfile::offline("Alex").sanitized();
