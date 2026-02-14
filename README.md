@@ -1,7 +1,24 @@
-# Tauri + React + Typescript
+# Interface Launcher
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+Launcher de Minecraft basado en Tauri + React + TypeScript.
 
-## Recommended IDE Setup
+## Política de versiones de Minecraft
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+- Este proyecto **solo** debe mostrar y permitir versiones **oficiales estables** de Minecraft (`release`).
+- Quedan **prohibidas** las versiones demo y cualquier variante no oficial en el selector de versiones.
+- A futuro, **no se debe agregar** soporte para versiones demo.
+
+## Desarrollo
+
+### Requisitos
+
+- Node.js y npm
+- Rust + Cargo
+- Dependencias de Tauri
+
+### Comandos útiles
+
+```bash
+npm install
+npm run tauri dev
+```
