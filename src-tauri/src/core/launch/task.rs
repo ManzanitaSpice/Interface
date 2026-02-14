@@ -358,14 +358,7 @@ fn ensure_loader_jvm_workarounds(instance: &Instance, args: &mut Vec<String>) {
 }
 
 fn ensure_jvm_arg_present(args: &mut Vec<String>, flag_with_value: &str) {
-    let Some((key, _)) = flag_with_value.split_once('=') else {
-        if !args.iter().any(|arg| arg == flag_with_value) {
-            args.push(flag_with_value.to_string());
-        }
-        return;
-    };
-
-    if args.iter().any(|arg| arg == flag_with_value || arg.starts_with(&format!("{key}="))) {
+    if args.iter().any(|arg| arg == flag_with_value) {
         return;
     }
 
@@ -756,17 +749,9 @@ mod tests {
         ];
         ensure_loader_jvm_workarounds(&instance, &mut args);
 
-        assert_eq!(
-            args.iter()
-                .filter(|arg| arg.starts_with("--add-modules="))
-                .count(),
-            1
-        );
-        assert_eq!(
-            args.iter()
-                .filter(|arg| arg.starts_with("--add-opens="))
-                .count(),
-            1
-        );
+        assert!(args.contains(&"--add-modules=java.naming".to_string()));
+        assert!(args.contains(&"--add-modules=jdk.naming.dns".to_string()));
+        assert!(args.contains(&"--add-opens=java.base/java.lang=ALL-UNNAMED".to_string()));
+        assert!(args.contains(&"--add-opens=java.base/java.util.jar=ALL-UNNAMED".to_string()));
     }
 }
