@@ -385,8 +385,13 @@ pub fn required_java_for_minecraft_version(minecraft_version: &str) -> u32 {
         .next()
         .and_then(|p| p.parse::<u32>().ok())
         .unwrap_or(20);
+    let patch = parts
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(0);
 
-    if major > 1 || minor >= 21 {
+    // Java 21 is required from Minecraft 1.20.5 onward (including all 1.21+).
+    if major > 1 || minor >= 21 || (minor == 20 && patch >= 5) {
         21
     } else if minor >= 17 {
         17
@@ -482,7 +487,9 @@ mod tests {
     #[test]
     fn java_required_by_minecraft_version() {
         assert_eq!(required_java_for_minecraft_version("1.16.5"), 8);
-        assert_eq!(required_java_for_minecraft_version("1.20.6"), 17);
+        assert_eq!(required_java_for_minecraft_version("1.20.4"), 17);
+        assert_eq!(required_java_for_minecraft_version("1.20.5"), 21);
+        assert_eq!(required_java_for_minecraft_version("1.20.6"), 21);
         assert_eq!(required_java_for_minecraft_version("1.21.1"), 21);
         assert_eq!(required_java_for_minecraft_version("25w03a"), 17);
     }
