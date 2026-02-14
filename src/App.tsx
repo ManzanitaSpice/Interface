@@ -698,8 +698,7 @@ function App() {
     }
   };
 
-  const shouldShowMinecraftBlock = activeCreateSection === "Version";
-  const shouldShowLoaderBlock = activeCreateSection === "Loader";
+  const shouldShowVersionLoaderPanels = activeCreateSection === "Version" || activeCreateSection === "Loader";
 
   const onSelectInstance = (instance: InstanceInfo) => {
     setSelectedInstance(instance);
@@ -933,110 +932,105 @@ function App() {
                   </section>
                 )}
 
-                {/* VERSION LIST & FILTERS BLOCK */}
-                {shouldShowMinecraftBlock && (
-                <section className="create-block-advanced">
-                    <div className="version-list-container">
-                        <table className="version-table sticky-header">
-                            <thead><tr><th>Versión</th><th>Lanzado</th><th>Tipo</th></tr></thead>
-                            <tbody>
-                                {minecraftVersionsLoading && <tr><td colSpan={3}>Cargando...</td></tr>}
-                                {filteredMinecraftVersions.map((entry) => (
-                                    <tr key={entry.id} className={selectedMinecraftVersion === entry.id ? "selected" : ""} onClick={() => setSelectedMinecraftVersion(entry.id)}>
-                                        <td>{entry.id}</td>
-                                        <td>{formatReleaseDate(entry.release_time)}</td>
-                                        <td>{entry.version_type}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                    
-                    <aside className="version-filters-sidebar">
-                        <h4>Filtrar</h4>
-                         <label><input type="checkbox" checked={mcFilterVersions} onChange={(e) => setMcFilterVersions(e.target.checked)} /> Versiones</label>
-                         <label><input type="checkbox" checked={mcFilterSnapshots} onChange={(e) => setMcFilterSnapshots(e.target.checked)} /> Snapshots</label>
-                         <label><input type="checkbox" checked={mcFilterBetas} onChange={(e) => setMcFilterBetas(e.target.checked)} /> Betas</label>
-                         <label><input type="checkbox" checked={mcFilterAlphas} onChange={(e) => setMcFilterAlphas(e.target.checked)} /> Alfas</label>
-                         <label><input type="checkbox" checked={mcFilterExperiments} onChange={(e) => setMcFilterExperiments(e.target.checked)} /> Experimentales</label>
-                         
-                         <div style={{ marginTop: "auto", paddingTop: 10 }}>
-                             <button type="button" onClick={() => window.location.reload()}>Recargar catálogo</button>
-                         </div>
-                    </aside>
-                </section>
-                )}
-                
-                {/* SEARCH BAR UNDER LIST */}
-                {shouldShowMinecraftBlock && (
-                <div className="create-search-bar">
-                     <input 
-                        type="text" 
-                        placeholder="Buscar" 
-                        value={minecraftVersionSearch} 
-                        onChange={(e) => setMinecraftVersionSearch(e.target.value)}
-                     />
-                </div>
-                )}
-
-                {/* LOADER BLOCK */}
-                {shouldShowLoaderBlock && (
-                <section className="create-block-advanced loader-block">
-                     <div className="loader-info-panel">
-                        {selectedLoaderType === "vanilla" || !selectedLoaderType ? (
-                             <div className="empty-loader-state">
-                                 <h3>Ningún cargador de mods esta seleccionado.</h3>
-                             </div>
-                        ) : (
-                             <div className="loader-version-list">
-                                 <h3>{prettyLoader(selectedLoaderType)} Seleccionado</h3>
-                                 <p>Versión seleccionada: {selectedLoaderVersion ?? "Automática"}</p>
-                                 {loaderVersionsError && <p className="execution-error">{loaderVersionsError}</p>}
-                                 {loaderVersionsLoading ? (
-                                   <p>Cargando versiones de loader...</p>
-                                 ) : (
-                                  <table className="version-table sticky-header">
-                                    <thead>
-                                      <tr>
-                                        <th>Versión</th>
-                                        <th>Estado</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {loaderVersions.map((version) => (
-                                        <tr
-                                          key={version.version}
-                                          className={selectedLoaderVersion === version.version ? "selected" : ""}
-                                          onClick={() => setSelectedLoaderVersion(version.version)}
-                                        >
-                                          <td>{version.version}</td>
-                                          <td>{version.stable ? "Recomendada" : "Disponible"}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                 )}
-                             </div>
+                {shouldShowVersionLoaderPanels && (
+                  <div className="stacked-create-panels">
+                    <section className="create-block-advanced minecraft-version-panel">
+                      <header className="panel-toolbar">
+                        <input
+                          type="text"
+                          placeholder="Buscar versión..."
+                          value={minecraftVersionSearch}
+                          onChange={(e) => setMinecraftVersionSearch(e.target.value)}
+                        />
+                        <button type="button" onClick={() => window.location.reload()}>Recargar catálogo</button>
+                      </header>
+                      <div className="minecraft-version-list">
+                        {minecraftVersionsLoading && <p className="version-list-feedback">Cargando versiones...</p>}
+                        {!minecraftVersionsLoading && filteredMinecraftVersions.length === 0 && (
+                          <p className="version-list-feedback">No hay versiones para los filtros seleccionados.</p>
                         )}
-                     </div>
-                     
-                     <aside className="loader-selection-sidebar">
+                        {filteredMinecraftVersions.map((entry) => {
+                          const isSelected = selectedMinecraftVersion === entry.id;
+                          return (
+                            <button
+                              key={entry.id}
+                              type="button"
+                              className={`minecraft-version-row ${isSelected ? "selected" : ""}`}
+                              onClick={() => setSelectedMinecraftVersion(entry.id)}
+                            >
+                              <span className="mc-version-main">{entry.id}</span>
+                              <span className="mc-version-meta">{formatReleaseDate(entry.release_time)} · {entry.version_type}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <aside className="version-filters-sidebar">
+                        <h4>Filtrar</h4>
+                        <label><input type="checkbox" checked={mcFilterVersions} onChange={(e) => setMcFilterVersions(e.target.checked)} /> Versiones</label>
+                        <label><input type="checkbox" checked={mcFilterSnapshots} onChange={(e) => setMcFilterSnapshots(e.target.checked)} /> Snapshots</label>
+                        <label><input type="checkbox" checked={mcFilterBetas} onChange={(e) => setMcFilterBetas(e.target.checked)} /> Betas</label>
+                        <label><input type="checkbox" checked={mcFilterAlphas} onChange={(e) => setMcFilterAlphas(e.target.checked)} /> Alfas</label>
+                        <label><input type="checkbox" checked={mcFilterExperiments} onChange={(e) => setMcFilterExperiments(e.target.checked)} /> Experimentales</label>
+                      </aside>
+                    </section>
+
+                    <section className="create-block-advanced loader-block">
+                      <div className="loader-info-panel">
+                        {selectedLoaderType === "vanilla" || !selectedLoaderType ? (
+                          <div className="empty-loader-state">
+                            <h3>Ningún cargador de mods está seleccionado.</h3>
+                          </div>
+                        ) : (
+                          <div className="loader-version-list">
+                            <h3>{prettyLoader(selectedLoaderType)} seleccionado</h3>
+                            <p>Versión seleccionada: {selectedLoaderVersion ?? "Automática"}</p>
+                            {loaderVersionsError && <p className="execution-error">{loaderVersionsError}</p>}
+                            {loaderVersionsLoading ? (
+                              <p>Cargando versiones de loader...</p>
+                            ) : (
+                              <table className="version-table sticky-header">
+                                <thead>
+                                  <tr>
+                                    <th>Versión</th>
+                                    <th>Estado</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {loaderVersions.map((version) => (
+                                    <tr
+                                      key={version.version}
+                                      className={selectedLoaderVersion === version.version ? "selected" : ""}
+                                      onClick={() => setSelectedLoaderVersion(version.version)}
+                                    >
+                                      <td>{version.version}</td>
+                                      <td>{version.stable ? "Recomendada" : "Disponible"}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <aside className="loader-selection-sidebar">
                         <h4>Cargador de Mods</h4>
                         <div className="radio-group">
-                            {LOADER_CHOICES.map((loader) => (
-                                <label key={loader.value} className="radio-option">
-                                    <input 
-                                        type="radio" 
-                                        name="modloader" 
-                                        checked={selectedLoaderType === loader.value}
-                                        onChange={() => setSelectedLoaderType(loader.value)}
-                                    />
-                                    {loader.label}
-                                </label>
-                            ))}
+                          {LOADER_CHOICES.map((loader) => (
+                            <label key={loader.value} className="radio-option">
+                              <input
+                                type="radio"
+                                name="modloader"
+                                checked={selectedLoaderType === loader.value}
+                                onChange={() => setSelectedLoaderType(loader.value)}
+                              />
+                              {loader.label}
+                            </label>
+                          ))}
                         </div>
-                     </aside>
-                </section>
+                      </aside>
+                    </section>
+                  </div>
                 )}
 
                 {!["Base", "Version", "Loader"].includes(activeCreateSection) && (

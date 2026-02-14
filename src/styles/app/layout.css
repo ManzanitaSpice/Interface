@@ -146,6 +146,85 @@
     min-height: 300px;
 }
 
+.stacked-create-panels {
+    display: grid;
+    gap: 14px;
+}
+
+.minecraft-version-panel {
+    grid-template-columns: minmax(0, 1fr) 220px;
+    grid-template-rows: auto minmax(260px, 42vh);
+    min-height: 360px;
+}
+
+.panel-toolbar {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line-soft);
+    background: var(--bg-1);
+}
+
+.panel-toolbar input {
+    flex: 1;
+    min-width: 180px;
+    background: var(--bg-0);
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+    padding: 7px 10px;
+    color: var(--text-main);
+}
+
+.minecraft-version-list {
+    overflow-y: auto;
+    background: var(--bg-0);
+    border-right: 1px solid var(--line-soft);
+    padding: 8px;
+    display: grid;
+    align-content: start;
+    gap: 6px;
+}
+
+.version-list-feedback {
+    color: var(--text-muted);
+    margin: 8px;
+}
+
+.minecraft-version-row {
+    width: 100%;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-main);
+    text-align: left;
+    padding: 8px 10px;
+    display: grid;
+    gap: 2px;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.minecraft-version-row:hover {
+    background: rgba(109, 145, 205, 0.18);
+}
+
+.minecraft-version-row.selected {
+    background: rgba(109, 145, 205, 0.28);
+    border-color: rgba(151, 188, 246, 0.5);
+}
+
+.mc-version-main {
+    font-weight: 700;
+    font-size: 0.95rem;
+}
+
+.mc-version-meta {
+    color: var(--text-muted);
+    font-size: 0.76rem;
+}
+
 .version-list-container {
     border-right: 1px solid var(--line-soft);
     overflow-y: auto;
@@ -356,6 +435,20 @@
 
 .create-log-box p {
   margin: 0;
+}
+
+@media (max-width: 900px) {
+    .minecraft-version-panel,
+    .loader-block,
+    .create-block-advanced {
+        grid-template-columns: 1fr;
+    }
+
+    .minecraft-version-list,
+    .loader-info-panel {
+        border-right: 0;
+        border-bottom: 1px solid var(--line-soft);
+    }
 }
 
 @media (max-width: 1200px) {
