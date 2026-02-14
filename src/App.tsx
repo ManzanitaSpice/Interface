@@ -109,24 +109,16 @@ const EDIT_SECTIONS: EditSection[] = [
 
 const CREATE_SECTIONS = [
   "Base",
-  "Version",
-  "Loader",
-  "Java",
-  "Memoria",
-  "Mods",
-  "Recursos",
-  "Revision",
+  "CurseForge",
+  "Modrinth",
+  "AtLauncher",
 ] as const;
 
 const CREATE_SECTION_TITLES: Record<(typeof CREATE_SECTIONS)[number], string> = {
   Base: "Personalizado",
-  Version: "Versión de Minecraft",
-  Loader: "Loader",
-  Java: "Java",
-  Memoria: "Memoria",
-  Mods: "Mods",
-  Recursos: "Recursos",
-  Revision: "Revisión",
+  CurseForge: "CurseForge",
+  Modrinth: "Modrinth",
+  AtLauncher: "AtLauncher",
 };
 
 const LOADER_CHOICES: { value: LoaderType; label: string }[] = [
@@ -705,7 +697,7 @@ function App() {
     }
   };
 
-  const shouldShowVersionLoaderPanels = activeCreateSection === "Version" || activeCreateSection === "Loader";
+  const shouldShowVersionLoaderPanels = activeCreateSection === "Base";
 
   const onSelectInstance = (instance: InstanceInfo) => {
     setSelectedInstance(instance);
@@ -930,28 +922,11 @@ function App() {
                   </div>
                 )}
 
-                {activeCreateSection === "Base" && (
-                  <section className="create-block-advanced single-pane-block">
-                    <div className="single-pane-content">
-                      <p>
-                        Configuración personalizada de la instancia. Usa el menú lateral para abrir
-                        cada sección (Versión, Loader, Java, etc.) por separado.
-                      </p>
-                      <p>
-                        Versión actual: <strong>{selectedMinecraftVersion ?? "No seleccionada"}</strong>
-                      </p>
-                      <p>
-                        Loader actual: <strong>{selectedLoaderType ? prettyLoader(selectedLoaderType) : "No seleccionado"}</strong>
-                        {selectedLoaderVersion ? ` · ${selectedLoaderVersion}` : ""}
-                      </p>
-                    </div>
-                  </section>
-                )}
-
                 {shouldShowVersionLoaderPanels && (
                   <div className="stacked-create-panels">
                     <section className="create-block-advanced minecraft-version-panel">
                       <header className="panel-toolbar">
+                        <h3>Versiones de Minecraft</h3>
                         <input
                           type="text"
                           placeholder="Buscar versión..."
@@ -992,6 +967,7 @@ function App() {
 
                     <section className="create-block-advanced minecraft-version-panel loader-block">
                       <header className="panel-toolbar">
+                        <h3>Versiones de Loader</h3>
                         <input
                           type="text"
                           placeholder="Buscar versión de loader..."
@@ -1064,7 +1040,7 @@ function App() {
                   </div>
                 )}
 
-                {!["Base", "Version", "Loader"].includes(activeCreateSection) && (
+                {activeCreateSection !== "Base" && (
                   <section className="create-block-advanced single-pane-block">
                     <div className="single-pane-content">
                       <p>
