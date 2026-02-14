@@ -4,6 +4,7 @@ use std::{io::BufRead, io::BufReader as StdBufReader};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
@@ -129,7 +130,7 @@ fn directory_size_bytes(path: &std::path::Path) -> u64 {
 }
 
 async fn validate_instance_state_before_launch(
-    state: &crate::core::state::AppState,
+    _state: &crate::core::state::AppState,
     instance: &Instance,
 ) -> Result<(), LauncherError> {
     if instance.state != InstanceState::Ready && instance.state != InstanceState::Error {
@@ -149,17 +150,6 @@ async fn validate_instance_state_before_launch(
         return Err(LauncherError::Other(
             "Instancia inválida: falta required_java_major".into(),
         ));
-    }
-
-    let game_dir = instance.game_dir();
-    let libraries_dir = state.libraries_dir();
-    for required in [&game_dir, &libraries_dir] {
-        if !required.exists() {
-            return Err(LauncherError::Other(format!(
-                "Instancia incompleta: no existe el directorio requerido {}",
-                required.to_string_lossy()
-            )));
-        }
     }
 
     Ok(())
@@ -381,6 +371,50 @@ struct MavenVersioning {
 struct MavenVersions {
     #[serde(rename = "version", default)]
     version: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct InstanceLaunchProgressEvent {
+    id: String,
+    value: u8,
+    stage: String,
+    state: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct InstanceLaunchLogEvent {
+    id: String,
+    level: String,
+    message: String,
+}
+
+fn emit_launch_progress(
+    app_handle: &tauri::AppHandle,
+    id: &str,
+    value: u8,
+    stage: &str,
+    state: &str,
+) {
+    let _ = app_handle.emit(
+        "instance-launch-progress",
+        InstanceLaunchProgressEvent {
+            id: id.to_string(),
+            value,
+            stage: stage.to_string(),
+            state: state.to_string(),
+        },
+    );
+}
+
+fn emit_launch_log(app_handle: &tauri::AppHandle, id: &str, level: &str, message: String) {
+    let _ = app_handle.emit(
+        "instance-launch-log",
+        InstanceLaunchLogEvent {
+            id: id.to_string(),
+            level: level.to_string(),
+            message,
+        },
+    );
 }
 
 #[tauri::command]
@@ -694,37 +728,103 @@ pub async fn delete_instance(
 
 #[tauri::command]
 pub async fn launch_instance(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     id: String,
 ) -> Result<(), LauncherError> {
     let state_arc = state.inner().clone();
+    emit_launch_progress(
+        &app_handle,
+        &id,
+        5,
+        "Iniciando validación de instancia",
+        "running",
+    );
+    emit_launch_log(
+        &app_handle,
+        &id,
+        "info",
+        "[PREPARACIÓN] Solicitud de inicio recibida en backend.".into(),
+    );
+
     let mut child = {
         let mut state_guard = state_arc.lock().await;
         let mut instance = state_guard.instance_manager.load(&id).await?;
 
         if let Err(err) = validate_instance_state_before_launch(&state_guard, &instance).await {
+            emit_launch_progress(&app_handle, &id, 100, "Validación fallida", "error");
+            emit_launch_log(
+                &app_handle,
+                &id,
+                "error",
+                format!("[ERROR] Validación fallida: {err}"),
+            );
             instance.state = InstanceState::Error;
             state_guard.instance_manager.save(&instance).await?;
             return Err(err);
         }
+
+        emit_launch_progress(&app_handle, &id, 15, "Validación completada", "running");
+        emit_launch_log(
+            &app_handle,
+            &id,
+            "info",
+            "[PREPARACIÓN] Validación completada. Preparando archivos, Java y librerías.".into(),
+        );
 
         instance.state = InstanceState::Installing;
         state_guard.instance_manager.save(&instance).await?;
 
         if let Err(err) = prepare_instance_for_launch(&state_guard, &mut instance).await {
+            emit_launch_progress(&app_handle, &id, 100, "Error en preparación", "error");
+            emit_launch_log(
+                &app_handle,
+                &id,
+                "error",
+                format!("[ERROR] Preparación fallida: {err}"),
+            );
             instance.state = InstanceState::Error;
             state_guard.instance_manager.save(&instance).await?;
             return Err(err);
         }
+
+        emit_launch_progress(
+            &app_handle,
+            &id,
+            72,
+            "Instalación y verificación completadas",
+            "running",
+        );
+        emit_launch_log(
+            &app_handle,
+            &id,
+            "info",
+            "[DESCARGA] Recursos y dependencias listos. Construyendo classpath y extrayendo nativos.".into(),
+        );
 
         let libs_dir = state_guard.libraries_dir();
         let classpath = launch::build_classpath(&instance, &libs_dir, &instance.libraries)?;
         let _natives_dir =
             launch::extract_natives(&instance, &libs_dir, &instance.libraries).await?;
 
+        emit_launch_progress(
+            &app_handle,
+            &id,
+            90,
+            "Lanzando proceso de Minecraft",
+            "running",
+        );
+
         let child = match launch::launch(&instance, &classpath).await {
             Ok(child) => child,
             Err(err) => {
+                emit_launch_progress(&app_handle, &id, 100, "Error al iniciar proceso", "error");
+                emit_launch_log(
+                    &app_handle,
+                    &id,
+                    "error",
+                    format!("[ERROR] No se pudo lanzar Minecraft: {err}"),
+                );
                 instance.state = InstanceState::Error;
                 state_guard.instance_manager.save(&instance).await?;
                 return Err(err);
@@ -736,15 +836,24 @@ pub async fn launch_instance(
         let pid = child.id();
         state_guard.running_instances.insert(id.clone(), pid);
         info!("Launched instance {}", instance.name);
+        emit_launch_progress(&app_handle, &id, 100, "Instancia en ejecución", "done");
+        emit_launch_log(
+            &app_handle,
+            &id,
+            "info",
+            format!("[RUNTIME] Instancia en ejecución (PID {pid})."),
+        );
 
         child
     };
 
     if let Some(stdout) = child.stdout.take() {
         let instance_id = id.clone();
+        let app_handle = app_handle.clone();
         tauri::async_runtime::spawn(async move {
             let _ = tauri::async_runtime::spawn_blocking(move || {
                 for line in StdBufReader::new(stdout).lines().map_while(Result::ok) {
+                    emit_launch_log(&app_handle, &instance_id, "info", line.clone());
                     info!("[mc:{}][stdout] {}", instance_id, line);
                 }
             })
@@ -754,9 +863,11 @@ pub async fn launch_instance(
 
     if let Some(stderr) = child.stderr.take() {
         let instance_id = id.clone();
+        let app_handle = app_handle.clone();
         tauri::async_runtime::spawn(async move {
             let _ = tauri::async_runtime::spawn_blocking(move || {
                 for line in StdBufReader::new(stderr).lines().map_while(Result::ok) {
+                    emit_launch_log(&app_handle, &instance_id, "warn", line.clone());
                     warn!("[mc:{}][stderr] {}", instance_id, line);
                 }
             })
@@ -764,6 +875,7 @@ pub async fn launch_instance(
         });
     }
 
+    let app_handle_for_wait = app_handle.clone();
     tauri::async_runtime::spawn(async move {
         let wait_result = tauri::async_runtime::spawn_blocking(move || child.wait())
             .await
@@ -786,11 +898,37 @@ pub async fn launch_instance(
         match wait_result {
             Ok(status) => {
                 if status.success() {
+                    emit_launch_progress(
+                        &app_handle_for_wait,
+                        &id,
+                        0,
+                        "Pendiente de inicio",
+                        "idle",
+                    );
+                    emit_launch_log(
+                        &app_handle_for_wait,
+                        &id,
+                        "info",
+                        "[RUNTIME] Proceso finalizado correctamente.".into(),
+                    );
                     info!(
                         "Minecraft process for {} exited with status: {:?}",
                         id, status
                     );
                 } else {
+                    emit_launch_progress(
+                        &app_handle_for_wait,
+                        &id,
+                        100,
+                        "Minecraft finalizó con error",
+                        "error",
+                    );
+                    emit_launch_log(
+                        &app_handle_for_wait,
+                        &id,
+                        "error",
+                        format!("[ERROR] El proceso finalizó con código {:?}", status.code()),
+                    );
                     error!(
                         "Minecraft process for {} exited abnormally with status: {:?}",
                         id, status
@@ -803,7 +941,22 @@ pub async fn launch_instance(
                     }
                 }
             }
-            Err(err) => error!("Minecraft process for {} failed while waiting: {}", id, err),
+            Err(err) => {
+                emit_launch_progress(
+                    &app_handle_for_wait,
+                    &id,
+                    100,
+                    "Error de espera del proceso",
+                    "error",
+                );
+                emit_launch_log(
+                    &app_handle_for_wait,
+                    &id,
+                    "error",
+                    format!("[ERROR] Fallo al esperar el proceso: {err}"),
+                );
+                error!("Minecraft process for {} failed while waiting: {}", id, err)
+            }
         }
     });
 
@@ -843,6 +996,7 @@ pub async fn update_instance_launch_config(
 
 #[tauri::command]
 pub async fn force_close_instance(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     id: String,
 ) -> Result<(), LauncherError> {
@@ -853,6 +1007,13 @@ pub async fn force_close_instance(
         if instance.state == InstanceState::Running {
             instance.state = InstanceState::Ready;
             state.instance_manager.save(&instance).await?;
+            emit_launch_progress(&app_handle, &id, 0, "Pendiente de inicio", "idle");
+            emit_launch_log(
+                &app_handle,
+                &id,
+                "warn",
+                "[RUNTIME] No había PID registrado. Estado corregido a listo.".into(),
+            );
         }
         return Err(LauncherError::Other(format!(
             "No hay proceso activo para la instancia {id}"
@@ -862,6 +1023,13 @@ pub async fn force_close_instance(
     kill_process(pid)?;
     instance.state = InstanceState::Ready;
     state.instance_manager.save(&instance).await?;
+    emit_launch_progress(&app_handle, &id, 0, "Instancia detenida", "idle");
+    emit_launch_log(
+        &app_handle,
+        &id,
+        "warn",
+        format!("[RUNTIME] Instancia detenida por usuario (PID {pid})."),
+    );
 
     info!("Force closed instance {} (pid {})", id, pid);
     Ok(())

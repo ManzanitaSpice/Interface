@@ -157,6 +157,8 @@
 }
 .instance-tools-sidebar h3 { margin: 0 0 6px; color: #f2f3f5; }
 .instance-config-tabs { margin-top: 8px; }
+.instance-detail-tabs { margin: 8px 0 12px; }
+.instance-config-panel { max-width: 520px; }
 
 .instance-progress-wrap {
   margin: -6px 0 10px;

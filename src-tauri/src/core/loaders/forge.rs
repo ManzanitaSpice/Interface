@@ -99,12 +99,15 @@ impl LoaderInstaller for ForgeInstaller {
 
         let launcher_profiles_path = minecraft_dir.join("launcher_profiles.json");
         if !launcher_profiles_path.exists() {
-            tokio::fs::write(&launcher_profiles_path, br#"{"profiles":{},"selectedProfile":null}"#)
-                .await
-                .map_err(|e| LauncherError::Io {
-                    path: launcher_profiles_path.clone(),
-                    source: e,
-                })?;
+            tokio::fs::write(
+                &launcher_profiles_path,
+                br#"{"profiles":{},"selectedProfile":null}"#,
+            )
+            .await
+            .map_err(|e| LauncherError::Io {
+                path: launcher_profiles_path.clone(),
+                source: e,
+            })?;
         }
 
         let output = std::process::Command::new(&java_bin)
