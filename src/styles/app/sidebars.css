@@ -1,0 +1,39 @@
+.edit-left-sidebar,
+.edit-right-sidebar,
+.create-left-sidebar,
+.create-right-sidebar {
+  border-right: 1px solid var(--line-soft);
+  background: #181a1d;
+  padding: 12px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.edit-right-sidebar,
+.create-right-sidebar {
+  border-right: 0;
+  border-left: 1px solid var(--line-soft);
+}
+
+.compact-sidebar button,
+.instance-right-panel button {
+  width: 100%;
+  text-align: left;
+  justify-self: stretch;
+}
+
+.instance-right-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 210px;
+  border: 1px solid var(--line);
+  background: #1a1c20;
+  border-radius: 14px;
+  padding: 14px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  box-shadow: var(--shadow-lg);
+}

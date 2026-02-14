@@ -1,0 +1,109 @@
+.execution-log {
+  border: 1px solid #363b45;
+  border-radius: 10px;
+  background: #14161a;
+  padding: 14px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  color: var(--success);
+  max-height: 65vh;
+  overflow: auto;
+}
+
+.execution-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.execution-error {
+  color: var(--danger);
+}
+
+.instance-settings-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.instance-settings-header {
+  display: grid;
+  gap: 10px;
+}
+
+.instance-settings-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.instance-settings-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.instance-settings-tabs button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+}
+
+.settings-block-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.settings-card {
+  border: 1px solid #3b414b;
+  border-radius: 10px;
+  background: #1a1d22;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.settings-card h4 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.settings-card p {
+  margin: 0;
+  color: #b2b8c0;
+  font-size: 0.8rem;
+}
+
+.settings-java-layout {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-inline-field {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+}
+
+.settings-inline-field input,
+.settings-card textarea {
+  width: 100%;
+  border: 1px solid #3f4550;
+  background: #131519;
+  color: #e9edf5;
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 0.8rem;
+}
+
+.settings-card textarea {
+  resize: vertical;
+}
+
+.settings-card input[type="range"] {
+  width: 100%;
+}
+
+.settings-placeholder {
+  min-height: 120px;
+  align-content: center;
+}
