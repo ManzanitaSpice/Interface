@@ -3,6 +3,9 @@
 
 use std::process::Stdio;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 use tracing::{debug, info};
 
 use crate::core::auth::LaunchAccountProfile;
@@ -101,6 +104,7 @@ pub async fn launch(
 
     cmd.current_dir(&game_dir);
     configure_native_library_env(&mut cmd, &natives_dir);
+    configure_platform_spawn(&mut cmd);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
@@ -380,6 +384,21 @@ fn configure_native_library_env(cmd: &mut std::process::Command, natives_dir: &s
     } else if cfg!(target_os = "macos") {
         let merged = append_env_path("DYLD_LIBRARY_PATH", &native_path);
         cmd.env("DYLD_LIBRARY_PATH", merged);
+    }
+}
+
+fn configure_platform_spawn(cmd: &mut std::process::Command) {
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NEW_CONSOLE: u32 = 0x00000010;
+        cmd.creation_flags(CREATE_NEW_CONSOLE);
+
+        // Tauri/terminal-related vars can make Java/LWJGL treat the process as
+        // a virtual terminal session. Drop the most common ones to keep the
+        // child process environment closer to a standard desktop launch.
+        cmd.env_remove("WT_SESSION");
+        cmd.env_remove("TERM");
+        cmd.env_remove("ConEmuANSI");
     }
 }
 
