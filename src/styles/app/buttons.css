@@ -1,32 +1,25 @@
 button {
-  border: 1px solid rgba(133, 180, 255, 0.44);
-  background:
-    linear-gradient(160deg, rgba(138, 88, 255, 0.24), rgba(89, 166, 255, 0.28) 44%, rgba(25, 42, 72, 0.92) 100%),
-    linear-gradient(180deg, #21365c 0%, #162746 100%);
-  color: var(--text-main);
-  border-radius: 13px;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  background: linear-gradient(180deg, rgba(51, 65, 85, 0.7) 0%, rgba(30, 41, 59, 0.92) 100%);
+  color: #e5e7eb;
+  border-radius: 12px;
   padding: 8px 14px;
   cursor: pointer;
   font-size: 0.84rem;
   letter-spacing: 0.01em;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), var(--shadow-soft);
-  transition: transform 0.2s ease, border-color 0.24s ease, box-shadow 0.24s ease, filter 0.24s ease;
+  box-shadow: 0 8px 20px rgba(2, 8, 23, 0.28);
+  transition: transform 0.2s ease, border-color 0.24s ease, box-shadow 0.24s ease, background-color 0.24s ease;
 }
 
 button:hover:not(:disabled) {
-  border-color: rgba(164, 205, 255, 0.82);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.24),
-    0 16px 26px rgba(5, 14, 31, 0.45),
-    0 0 24px rgba(108, 170, 255, 0.24);
+  border-color: rgba(125, 211, 252, 0.55);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.34), 0 0 0 1px rgba(56, 189, 248, 0.16);
   transform: translateY(-1px);
-  filter: brightness(1.06);
 }
 
 button:active:not(:disabled) {
   transform: translateY(0);
-  filter: brightness(0.96);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 16px rgba(5, 14, 31, 0.36);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.35);
 }
 
 button:disabled {
@@ -36,14 +29,9 @@ button:disabled {
 }
 
 button.active {
-  border-color: rgba(178, 224, 255, 0.92);
-  background:
-    linear-gradient(145deg, rgba(107, 185, 255, 0.65), rgba(111, 103, 255, 0.52)),
-    linear-gradient(180deg, #3566a5 0%, #254c7e 100%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.3),
-    0 0 0 1px rgba(163, 214, 255, 0.35),
-    0 12px 28px rgba(10, 39, 86, 0.46);
+  border-color: rgba(125, 211, 252, 0.78);
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.65) 0%, rgba(30, 64, 175, 0.7) 100%);
+  box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.24), 0 14px 24px rgba(30, 64, 175, 0.28);
 }
 
 .arrow-button {
@@ -58,6 +46,11 @@ button.active {
 }
 
 .delete-modal-actions .danger {
-  border-color: rgba(255, 149, 171, 0.78);
-  background: linear-gradient(180deg, #8d3348 0%, #652538 100%);
+  border-color: rgba(251, 113, 133, 0.72);
+  background: linear-gradient(180deg, rgba(190, 24, 93, 0.86) 0%, rgba(136, 19, 55, 0.92) 100%);
+}
+
+.delete-modal-actions .warning {
+  border-color: rgba(250, 204, 21, 0.55);
+  background: linear-gradient(180deg, rgba(120, 90, 20, 0.75) 0%, rgba(96, 72, 16, 0.9) 100%);
 }

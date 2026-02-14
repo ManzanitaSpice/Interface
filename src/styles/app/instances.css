@@ -247,3 +247,40 @@
     grid-template-columns: 1fr;
   }
 }
+
+
+.instance-card {
+  animation: cardFade 260ms ease;
+}
+
+@keyframes cardFade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.delete-feedback {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 0.84rem;
+  border: 1px solid transparent;
+  transition: all 220ms ease;
+}
+
+.delete-feedback.progress {
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(125, 211, 252, 0.4);
+  color: #bae6fd;
+}
+
+.delete-feedback.success {
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(74, 222, 128, 0.4);
+  color: #bbf7d0;
+}
+
+.delete-feedback.error {
+  background: rgba(244, 63, 94, 0.14);
+  border-color: rgba(251, 113, 133, 0.42);
+  color: #fecdd3;
+}
