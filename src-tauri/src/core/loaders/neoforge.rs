@@ -7,6 +7,7 @@ use tracing::{info, warn};
 
 use super::context::InstallContext;
 use super::installer::{LoaderInstallResult, LoaderInstaller};
+use crate::core::downloader::Downloader;
 use crate::core::error::{LauncherError, LauncherResult};
 use crate::core::maven::MavenArtifact;
 use crate::core::version::VersionJson;
@@ -90,10 +91,8 @@ impl LoaderInstaller for NeoForgeInstaller {
             NEOFORGE_MAVEN, ctx.loader_version, installer_name
         );
 
-        if let Err(primary_err) = ctx
-            .downloader
-            .download_file(&installer_url, &installer_path, None)
-            .await
+        if let Err(primary_err) =
+            download_with_archive_validation(ctx.downloader, &installer_url, &installer_path).await
         {
             // Legacy NeoForge for MC 1.20.1 was published under net.neoforged:forge
             let legacy_name = format!("forge-{}-installer.jar", ctx.loader_version);
@@ -105,8 +104,7 @@ impl LoaderInstaller for NeoForgeInstaller {
                 "Primary NeoForge route failed, trying legacy route: {}",
                 legacy_url
             );
-            ctx.downloader
-                .download_file(&legacy_url, &installer_path, None)
+            download_with_archive_validation(ctx.downloader, &legacy_url, &installer_path)
                 .await
                 .map_err(|_| primary_err)?;
         }
@@ -146,12 +144,16 @@ impl LoaderInstaller for NeoForgeInstaller {
             libraries.insert(lib.name.clone());
             let artifact = MavenArtifact::parse(&lib.name)?;
             let dest = ctx.libs_dir.join(artifact.local_path());
-            if !dest.exists() {
+            if should_download_or_replace_archive(&dest) {
+                let _ = tokio::fs::remove_file(&dest).await;
                 let url = artifact.url(NEOFORGE_MAVEN);
-                if let Err(e) = ctx.downloader.download_file(&url, &dest, None).await {
+                if let Err(e) = download_with_archive_validation(ctx.downloader, &url, &dest).await
+                {
                     // Fallback to Mojang libs
                     let mojang_url = artifact.url(crate::core::maven::MOJANG_LIBRARIES);
-                    if let Err(_) = ctx.downloader.download_file(&mojang_url, &dest, None).await {
+                    if let Err(_) =
+                        download_with_archive_validation(ctx.downloader, &mojang_url, &dest).await
+                    {
                         warn!("Failed to download NeoForge lib {}: {}", lib.name, e);
                     }
                 }
@@ -163,9 +165,10 @@ impl LoaderInstaller for NeoForgeInstaller {
             libraries.insert(lib.name.clone());
             let artifact = MavenArtifact::parse(&lib.name)?;
             let dest = ctx.libs_dir.join(artifact.local_path());
-            if !dest.exists() {
+            if should_download_or_replace_archive(&dest) {
+                let _ = tokio::fs::remove_file(&dest).await;
                 let url = artifact.url(NEOFORGE_MAVEN);
-                let _ = ctx.downloader.download_file(&url, &dest, None).await;
+                let _ = download_with_archive_validation(ctx.downloader, &url, &dest).await;
             }
         }
 
@@ -284,16 +287,16 @@ impl LoaderInstaller for NeoForgeInstaller {
                 continue;
             };
             let dest = ctx.libs_dir.join(artifact.local_path());
-            if !dest.exists() {
+            if should_download_or_replace_archive(&dest) {
+                let _ = tokio::fs::remove_file(&dest).await;
                 let primary = artifact.url(NEOFORGE_MAVEN);
-                if ctx
-                    .downloader
-                    .download_file(&primary, &dest, None)
+                if download_with_archive_validation(ctx.downloader, &primary, &dest)
                     .await
                     .is_err()
                 {
                     let fallback = artifact.url(crate::core::maven::MOJANG_LIBRARIES);
-                    let _ = ctx.downloader.download_file(&fallback, &dest, None).await;
+                    let _ =
+                        download_with_archive_validation(ctx.downloader, &fallback, &dest).await;
                 }
             }
         }
@@ -312,6 +315,43 @@ impl LoaderInstaller for NeoForgeInstaller {
             java_major: Some(required_java),
         })
     }
+}
+
+async fn download_with_archive_validation(
+    downloader: &Downloader,
+    url: &str,
+    dest: &Path,
+) -> LauncherResult<()> {
+    downloader.download_file(url, dest, None).await?;
+
+    if is_archive_path(dest) && !is_valid_archive(dest) {
+        let _ = tokio::fs::remove_file(dest).await;
+        return Err(LauncherError::Loader(format!(
+            "Downloaded artifact is corrupt: {}",
+            dest.display()
+        )));
+    }
+
+    Ok(())
+}
+
+fn should_download_or_replace_archive(path: &Path) -> bool {
+    !path.exists() || (is_archive_path(path) && !is_valid_archive(path))
+}
+
+fn is_archive_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|v| v.to_str()),
+        Some("jar") | Some("zip")
+    )
+}
+
+fn is_valid_archive(path: &Path) -> bool {
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+
+    zip::ZipArchive::new(file).is_ok()
 }
 
 fn resolve_installed_neoforge_version_path(ctx: &InstallContext<'_>) -> PathBuf {
