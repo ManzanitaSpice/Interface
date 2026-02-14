@@ -231,7 +231,53 @@ fn sanitize_game_args(
         i += 1;
     }
 
-    sanitize_numeric_window_args(sanitized)
+    let sanitized = sanitize_numeric_window_args(sanitized);
+    ensure_required_fml_game_args(instance, sanitized)
+}
+
+fn ensure_required_fml_game_args(instance: &Instance, mut args: Vec<String>) -> Vec<String> {
+    let needs_fml_args = matches!(
+        instance.loader,
+        crate::core::instance::LoaderType::Forge | crate::core::instance::LoaderType::NeoForge
+    );
+
+    if !needs_fml_args {
+        return args;
+    }
+
+    if !contains_flag(&args, "--fml.mcVersion") {
+        args.push("--fml.mcVersion".into());
+        args.push(instance.minecraft_version.clone());
+    }
+
+    match instance.loader {
+        crate::core::instance::LoaderType::Forge => {
+            if let Some(loader_version) = instance.loader_version.as_deref() {
+                if !loader_version.trim().is_empty() && !contains_flag(&args, "--fml.forgeVersion")
+                {
+                    args.push("--fml.forgeVersion".into());
+                    args.push(loader_version.to_string());
+                }
+            }
+        }
+        crate::core::instance::LoaderType::NeoForge => {
+            if let Some(loader_version) = instance.loader_version.as_deref() {
+                if !loader_version.trim().is_empty()
+                    && !contains_flag(&args, "--fml.neoForgeVersion")
+                {
+                    args.push("--fml.neoForgeVersion".into());
+                    args.push(loader_version.to_string());
+                }
+            }
+        }
+        _ => {}
+    }
+
+    args
+}
+
+fn contains_flag(args: &[String], flag: &str) -> bool {
+    args.iter().any(|arg| arg == flag)
 }
 
 fn sanitize_numeric_window_args(args: Vec<String>) -> Vec<String> {
@@ -448,5 +494,76 @@ mod tests {
         );
 
         assert_eq!(sanitized, vec!["--height", "720"]);
+    }
+
+    #[test]
+    fn sanitize_game_args_injects_required_neoforge_fml_versions() {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::NeoForge,
+            Some("47.1.79".into()),
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+        instance.account = LaunchAccountProfile::offline("Alex").sanitized();
+
+        let sanitized = sanitize_game_args(
+            &instance,
+            &Vec::new(),
+            std::path::Path::new("/tmp/game"),
+            std::path::Path::new("/tmp/assets"),
+            &instance.account,
+        );
+
+        assert_eq!(
+            sanitized,
+            vec![
+                "--fml.mcVersion",
+                "1.20.1",
+                "--fml.neoForgeVersion",
+                "47.1.79"
+            ]
+        );
+    }
+
+    #[test]
+    fn sanitize_game_args_does_not_duplicate_existing_fml_flags() {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::NeoForge,
+            Some("47.1.79".into()),
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+        instance.account = LaunchAccountProfile::offline("Alex").sanitized();
+
+        let args = vec![
+            "--fml.mcVersion".into(),
+            "${mc_version}".into(),
+            "--fml.neoForgeVersion".into(),
+            "${version}".into(),
+        ];
+
+        let sanitized = sanitize_game_args(
+            &instance,
+            &args,
+            std::path::Path::new("/tmp/game"),
+            std::path::Path::new("/tmp/assets"),
+            &instance.account,
+        );
+
+        assert_eq!(
+            sanitized,
+            vec![
+                "--fml.mcVersion",
+                "1.20.1",
+                "--fml.neoForgeVersion",
+                "47.1.79"
+            ]
+        );
     }
 }
