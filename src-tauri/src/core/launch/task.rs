@@ -62,6 +62,7 @@ pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std:
         ));
     }
     debug!("Classpath len={} value={:?}", classpath.len(), classpath);
+    info!("Classpath: {}", classpath);
     cmd.arg("-cp").arg(classpath);
 
     // Main class

@@ -22,7 +22,7 @@ pub fn build_classpath(
     libs_dir: &Path,
     extra_lib_coords: &[String],
 ) -> LauncherResult<String> {
-    let separator = if cfg!(windows) { ";" } else { ":" };
+    let separator = get_classpath_separator();
     let mut entries: Vec<String> = Vec::new();
 
     // 1. All declared libraries (Vanilla + loader)
@@ -68,6 +68,15 @@ pub fn build_classpath(
     }
 
     Ok(entries.join(separator))
+}
+
+/// Platform-specific Java classpath separator.
+pub fn get_classpath_separator() -> &'static str {
+    if cfg!(target_os = "windows") {
+        ";"
+    } else {
+        ":"
+    }
 }
 
 fn resolve_library_entry(instance: &Instance, libs_dir: &Path, raw: &str) -> Option<String> {
