@@ -74,7 +74,7 @@
 
 .home-toolbar {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: flex-start;
   gap: 12px;
   margin-bottom: 16px;
@@ -88,7 +88,7 @@
 .home-toolbar-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   min-width: 220px;
 }
 

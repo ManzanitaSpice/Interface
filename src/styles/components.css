@@ -156,14 +156,30 @@
   top: 14px;
 }
 .instance-tools-sidebar h3 { margin: 0 0 6px; color: #f2f3f5; }
-.instance-detail-tabs { margin: 0 0 6px; }
-.instance-tools-sidebar .settings-tabs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.instance-config-panel { display: flex; flex-direction: column; gap: 8px; }
+
+.instance-tool-group {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
-.instance-tools-sidebar .settings-tab { width: 100%; }
-.instance-config-panel { display: flex; flex-direction: column; gap: 8px; }
+.instance-tool-group.secondary {
+  border-top: 1px solid #3b3d45;
+  padding-top: 10px;
+}
+.instance-full-config {
+  margin-top: 14px;
+}
+.instance-config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.instance-config-header h3 {
+  margin: 0;
+}
 
 .instance-progress-wrap {
   margin: -6px 0 10px;
