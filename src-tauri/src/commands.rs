@@ -1487,8 +1487,57 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), LauncherE
         })?;
         let src_path = entry.path();
         let dst_path = destination.join(entry.file_name());
-        if src_path.is_dir() {
+
+        let file_type = entry.file_type().map_err(|source_err| LauncherError::Io {
+            path: src_path.clone(),
+            source: source_err,
+        })?;
+
+        if file_type.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
+        } else if file_type.is_symlink() {
+            let target = fs::read_link(&src_path).map_err(|source_err| LauncherError::Io {
+                path: src_path.clone(),
+                source: source_err,
+            })?;
+
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&target, &dst_path).map_err(|source_err| {
+                    LauncherError::Io {
+                        path: dst_path,
+                        source: source_err,
+                    }
+                })?;
+            }
+
+            #[cfg(windows)]
+            {
+                let resolved_target = if target.is_absolute() {
+                    target.clone()
+                } else {
+                    src_path
+                        .parent()
+                        .unwrap_or(source)
+                        .join(&target)
+                };
+
+                if resolved_target.is_dir() {
+                    std::os::windows::fs::symlink_dir(&target, &dst_path).map_err(
+                        |source_err| LauncherError::Io {
+                            path: dst_path,
+                            source: source_err,
+                        },
+                    )?;
+                } else {
+                    std::os::windows::fs::symlink_file(&target, &dst_path).map_err(
+                        |source_err| LauncherError::Io {
+                            path: dst_path,
+                            source: source_err,
+                        },
+                    )?;
+                }
+            }
         } else {
             fs::copy(&src_path, &dst_path).map_err(|source_err| LauncherError::Io {
                 path: dst_path,
