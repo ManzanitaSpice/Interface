@@ -48,8 +48,10 @@ pub async fn launch(
     let mut cmd = std::process::Command::new(&java_bin);
 
     // ── JVM Arguments ──
-    cmd.arg(format!("-Xmx{}M", instance.max_memory_mb));
-    cmd.arg("-Xms512M");
+    let xmx_mb = instance.max_memory_mb.max(1024);
+    let xms_mb = (xmx_mb / 2).max(512);
+    cmd.arg(format!("-Xmx{}M", xmx_mb));
+    cmd.arg(format!("-Xms{}M", xms_mb));
     cmd.arg(format!(
         "-Djava.library.path={}",
         safe_path_str(&natives_dir)

@@ -39,6 +39,22 @@ interface DeleteInstanceResponse {
   status: "deleted" | "needs_elevation" | "elevation_requested";
 }
 
+interface OptimizationReport {
+  instance: InstanceInfo;
+  recommended_xmx_mb: number;
+  recommended_xms_mb: number;
+  detected_mods: number;
+  duplicate_mods: string[];
+  potentially_conflicting_mods: string[];
+  missing_recommended_mods: string[];
+  removed_logs: number;
+  freed_log_bytes: number;
+  mode: "balanced" | "max_performance" | "low_power";
+  notes: string[];
+}
+
+type OptimizationMode = "balanced" | "max_performance" | "low_power";
+
 interface LaunchProgressEvent {
   id: string;
   value: number;
@@ -177,6 +193,7 @@ function App() {
   const [showSearchInput, setShowSearchInput] = useState(false);
   const [expandedInstanceId, setExpandedInstanceId] = useState<string | null>(null);
   const [optimizingInstanceId, setOptimizingInstanceId] = useState<string | null>(null);
+  const [optimizationMode, setOptimizationMode] = useState<OptimizationMode>("balanced");
   const [pendingDeleteInstances, setPendingDeleteInstances] = useState<InstanceInfo[] | null>(null);
   const [deleteInProgress, setDeleteInProgress] = useState(false);
   const [deleteFeedback, setDeleteFeedback] = useState<{ type: "idle" | "progress" | "success" | "error"; message: string; needsElevation?: boolean }>({
@@ -716,22 +733,29 @@ function App() {
   const quickOptimizeInstance = async (instance: InstanceInfo) => {
     setOptimizingInstanceId(instance.id);
     try {
-      const optimized = await invoke<InstanceInfo>("update_instance_launch_config", {
+      const report = await invoke<OptimizationReport>("optimize_instance_with_real_process", {
         payload: {
           id: instance.id,
-          java_path: instance.java_path ?? null,
-          max_memory_mb: Math.max(2048, instance.max_memory_mb ?? 2048),
-          jvm_args: Array.from(new Set([...(instance.jvm_args ?? []), "-XX:+UseG1GC", "-XX:+UnlockExperimentalVMOptions"])),
-          game_args: instance.game_args ?? [],
+          mode: optimizationMode,
         },
       });
 
-      setInstances((prev) => prev.map((entry) => (entry.id === optimized.id ? optimized : entry)));
-      if (selectedInstance?.id === optimized.id) {
-        setSelectedInstance(optimized);
+      setInstances((prev) => prev.map((entry) => (entry.id === report.instance.id ? report.instance : entry)));
+      if (selectedInstance?.id === report.instance.id) {
+        setSelectedInstance(report.instance);
       }
+
+      const highlights = [
+        `RAM: Xmx ${Math.round(report.recommended_xmx_mb / 1024 * 10) / 10} GB / Xms ${Math.round(report.recommended_xms_mb / 1024 * 10) / 10} GB`,
+        `Mods detectados: ${report.detected_mods}`,
+        report.duplicate_mods.length ? `Duplicados: ${report.duplicate_mods.join(", ")}` : null,
+        report.potentially_conflicting_mods[0] ?? null,
+        report.notes[0] ?? null,
+      ].filter(Boolean);
+
+      setLaunchError(`Optimización aplicada (${report.mode}). ${highlights.join(" · ")}`);
     } catch {
-      setLaunchError("No se pudo aplicar la optimización rápida.");
+      setLaunchError("No se pudo aplicar la optimización inteligente.");
     } finally {
       setOptimizingInstanceId(null);
     }
@@ -754,6 +778,15 @@ function App() {
           <div className="instances-toolbar-left">
             <button type="button" onClick={() => setAppMode("create")}>Crear instancia</button>
             <button type="button" onClick={() => setShowSearchInput((prev) => !prev)}>Buscar instancias</button>
+            <select
+              value={optimizationMode}
+              onChange={(event) => setOptimizationMode(event.target.value as OptimizationMode)}
+              aria-label="Modo de optimización"
+            >
+              <option value="balanced">⚡ Equilibrado</option>
+              <option value="max_performance">🚀 Máximo rendimiento</option>
+              <option value="low_power">💻 Bajo consumo</option>
+            </select>
             <button type="button" className="danger" disabled={selectedInstances.length === 0} onClick={openDeleteSelectedModal}>
               Eliminar seleccionadas ({selectedInstances.length})
             </button>
@@ -840,7 +873,7 @@ function App() {
                       }}
                       disabled={optimizingInstanceId === instance.id}
                     >
-                      {optimizingInstanceId === instance.id ? "Optimizando..." : "Optimización rápida"}
+                      {optimizingInstanceId === instance.id ? "Optimizando..." : "Optimizar instancia"}
                     </button>
                   </div>
                 </article>
