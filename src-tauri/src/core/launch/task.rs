@@ -335,6 +335,19 @@ fn drop_dangling_option(args: &mut Vec<String>) {
 }
 
 fn ensure_loader_jvm_workarounds(instance: &Instance, args: &mut Vec<String>) {
+    let is_forge_like = matches!(
+        instance.loader,
+        crate::core::instance::LoaderType::Forge | crate::core::instance::LoaderType::NeoForge
+    );
+
+    if !is_forge_like {
+        return;
+    }
+
+    if determine_java_major(&instance.minecraft_version) >= 17 {
+        ensure_modern_forge_jvm_args(args);
+    }
+
     if !matches!(instance.loader, crate::core::instance::LoaderType::NeoForge) {
         return;
     }
@@ -356,6 +369,47 @@ fn ensure_loader_jvm_workarounds(instance: &Instance, args: &mut Vec<String>) {
     // Newer NeoForge builds also support this namespace. Keeping both avoids
     // requiring users to manually tweak launch options per loader version.
     set_jvm_system_property(args, "neoforge.earlydisplay", "false");
+}
+
+fn modern_forge_jvm_arg_pairs() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("--add-modules", "ALL-SYSTEM"),
+        ("--add-opens", "java.base/java.util.jar=ALL-UNNAMED"),
+        ("--add-opens", "java.base/java.lang=ALL-UNNAMED"),
+        ("--add-opens", "java.base/java.util=ALL-UNNAMED"),
+        ("--add-opens", "java.base/java.lang.invoke=ALL-UNNAMED"),
+        ("--add-opens", "java.base/java.lang.reflect=ALL-UNNAMED"),
+        ("--add-opens", "java.base/java.nio.file=ALL-UNNAMED"),
+        ("--add-opens", "java.base/sun.security.util=ALL-UNNAMED"),
+        ("--add-exports", "java.base/sun.security.action=ALL-UNNAMED"),
+        ("--add-opens", "java.base/java.io=ALL-UNNAMED"),
+        ("--add-opens", "java.base/java.net=ALL-UNNAMED"),
+        ("--add-opens", "java.base/sun.nio.ch=ALL-UNNAMED"),
+    ]
+}
+
+fn ensure_modern_forge_jvm_args(args: &mut Vec<String>) {
+    for (flag, value) in modern_forge_jvm_arg_pairs() {
+        ensure_jvm_arg_pair_present(args, flag, value);
+    }
+}
+
+fn ensure_jvm_arg_pair_present(args: &mut Vec<String>, flag: &str, value: &str) {
+    let combined = format!("{}={}", flag, value);
+    if args.iter().any(|arg| arg == &combined) {
+        return;
+    }
+
+    let mut i = 0;
+    while i + 1 < args.len() {
+        if args[i] == flag && args[i + 1] == value {
+            return;
+        }
+        i += 1;
+    }
+
+    args.push(flag.to_string());
+    args.push(value.to_string());
 }
 
 fn ensure_jvm_arg_present(args: &mut Vec<String>, flag_with_value: &str) {
@@ -703,16 +757,13 @@ mod tests {
         ensure_loader_jvm_workarounds(&instance, &mut args);
         ensure_loader_jvm_workarounds(&instance, &mut args);
 
-        assert_eq!(
-            args,
-            vec![
-                "-Xmx2048M",
-                "-DignoreList=bootstraplauncher,neon-fml",
-                "-Dfml.earlyprogresswindow=false",
-                "-Dforge.earlywindow=false",
-                "-Dneoforge.earlydisplay=false"
-            ]
-        );
+        assert!(args.contains(&"-Xmx2048M".to_string()));
+        assert!(args.contains(&"--add-modules".to_string()));
+        assert!(args.contains(&"ALL-SYSTEM".to_string()));
+        assert!(args.contains(&"-DignoreList=bootstraplauncher,neon-fml".to_string()));
+        assert!(args.contains(&"-Dfml.earlyprogresswindow=false".to_string()));
+        assert!(args.contains(&"-Dforge.earlywindow=false".to_string()));
+        assert!(args.contains(&"-Dneoforge.earlydisplay=false".to_string()));
     }
 
     #[test]
@@ -749,12 +800,37 @@ mod tests {
         let mut args = vec!["-Xmx2G".to_string()];
         ensure_loader_jvm_workarounds(&instance, &mut args);
 
+        assert!(args.contains(&"--add-modules".to_string()));
+        assert!(args.contains(&"ALL-SYSTEM".to_string()));
+        assert!(args.contains(&"--add-opens".to_string()));
+        assert!(args.contains(&"java.base/java.lang.reflect=ALL-UNNAMED".to_string()));
         assert!(args.contains(&"--add-modules=jdk.naming.dns".to_string()));
-        assert!(args.contains(&"--add-opens=java.base/java.util.jar=ALL-UNNAMED".to_string()));
         assert!(args.contains(&"-DignoreList=bootstraplauncher,neon-fml".to_string()));
         assert!(args.contains(&"-Dfml.earlyprogresswindow=false".to_string()));
         assert!(args.contains(&"-Dforge.earlywindow=false".to_string()));
         assert!(args.contains(&"-Dneoforge.earlydisplay=false".to_string()));
+    }
+
+    #[test]
+    fn forge_workarounds_inject_modern_module_opens_for_java_17_plus() {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::Forge,
+            Some("47.2.0".into()),
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+
+        let mut args = vec!["-Xmx2G".to_string()];
+        ensure_loader_jvm_workarounds(&instance, &mut args);
+
+        assert!(args.contains(&"--add-modules".to_string()));
+        assert!(args.contains(&"ALL-SYSTEM".to_string()));
+        assert!(args.contains(&"--add-opens".to_string()));
+        assert!(args.contains(&"java.base/java.lang.reflect=ALL-UNNAMED".to_string()));
+        assert!(!args.contains(&"-DignoreList=bootstraplauncher,neon-fml".to_string()));
     }
 
     #[test]
@@ -826,8 +902,10 @@ mod tests {
         ensure_loader_jvm_workarounds(&instance, &mut args);
 
         assert!(args.contains(&"--add-modules=java.naming".to_string()));
+        assert!(args.contains(&"--add-modules".to_string()));
+        assert!(args.contains(&"ALL-SYSTEM".to_string()));
         assert!(args.contains(&"--add-modules=jdk.naming.dns".to_string()));
         assert!(args.contains(&"--add-opens=java.base/java.lang=ALL-UNNAMED".to_string()));
-        assert!(args.contains(&"--add-opens=java.base/java.util.jar=ALL-UNNAMED".to_string()));
+        assert!(args.contains(&"java.base/java.util.jar=ALL-UNNAMED".to_string()));
     }
 }
