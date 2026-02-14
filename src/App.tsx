@@ -11,6 +11,7 @@ type TopSection = "menu" | "instances" | "news" | "explorer" | "servers" | "comm
 type InstanceAction = "Iniciar" | "Forzar Cierre" | "Editar" | "Cambiar Grupo" | "Carpeta" | "Exportar" | "Copiar" | "Borrar" | "Crear Atajo";
 type EditSection = "Ejecucion" | "Version" | "Mods" | "ResourcePacks" | "Shader Packs" | "Notas" | "Mundos" | "Servidores" | "Capturas" | "Configuracion" | "Otros Registros";
 type AppMode = "main" | "create";
+type InstanceConfigTab = "General" | "Java" | "Ajustes" | "Comandos Personalizados" | "Variables de entorno";
 
 interface InstanceInfo {
   id: string;
@@ -81,6 +82,14 @@ const CREATE_SECTIONS = [
   "Revision",
 ] as const;
 
+const INSTANCE_CONFIG_TABS: InstanceConfigTab[] = [
+  "General",
+  "Java",
+  "Ajustes",
+  "Comandos Personalizados",
+  "Variables de entorno",
+];
+
 const formatBytes = (bytes: number) => {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
@@ -99,6 +108,7 @@ function App() {
   const [activeEditSection, setActiveEditSection] = useState<EditSection>("Ejecucion");
   const [appMode, setAppMode] = useState<AppMode>("main");
   const [activeCreateSection, setActiveCreateSection] = useState<(typeof CREATE_SECTIONS)[number]>("Base");
+  const [activeInstanceConfigTab, setActiveInstanceConfigTab] = useState<InstanceConfigTab>("General");
   const [launchProgress, setLaunchProgress] = useState<LaunchProgressEvent | null>(null);
   const [launchLogs, setLaunchLogs] = useState<LaunchLogEvent[]>([]);
   const [launchError, setLaunchError] = useState<string | null>(null);
@@ -358,6 +368,77 @@ function App() {
                   ))
                 )}
               </div>
+            ) : activeEditSection === "Configuracion" ? (
+              <section className="instance-settings-panel">
+                <header className="instance-settings-header">
+                  <h3>Configuracion de instancia</h3>
+                  <div className="instance-settings-tabs" role="tablist" aria-label="Configuracion de instancia">
+                    {INSTANCE_CONFIG_TABS.map((tab) => (
+                      <button
+                        key={tab}
+                        type="button"
+                        role="tab"
+                        aria-selected={activeInstanceConfigTab === tab}
+                        className={activeInstanceConfigTab === tab ? "active" : ""}
+                        onClick={() => setActiveInstanceConfigTab(tab)}
+                      >
+                        {tab}
+                      </button>
+                    ))}
+                  </div>
+                </header>
+
+                {activeInstanceConfigTab === "General" && (
+                  <div className="settings-block-grid">
+                    {[
+                      "Game Windows",
+                      "Console",
+                      "Window",
+                      "Global Datapa Packs",
+                      "Game Time",
+                      "Default Account",
+                      "ModLoaders",
+                    ].map((option) => (
+                      <article key={option} className="settings-card">
+                        <h4>{option}</h4>
+                        <p>Opciones rapidas para configurar {option.toLowerCase()}.</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
+
+                {activeInstanceConfigTab === "Java" && (
+                  <div className="settings-java-layout">
+                    <article className="settings-card">
+                      <h4>Instalacion de Java</h4>
+                      <label htmlFor="java-path">Ruta ejecutable</label>
+                      <div className="settings-inline-field">
+                        <input id="java-path" type="text" value="C:/Program Files/Java/jdk-21/bin/javaw.exe" readOnly />
+                        <button type="button">Detectar Javas</button>
+                        <button type="button">Explorar</button>
+                      </div>
+                    </article>
+
+                    <article className="settings-card">
+                      <h4>Memoria</h4>
+                      <p>Asignacion actual: 6144 MB de RAM.</p>
+                      <input type="range" min={1024} max={16384} step={512} defaultValue={6144} />
+                    </article>
+
+                    <article className="settings-card">
+                      <h4>Argumentos de Java</h4>
+                      <textarea rows={5} defaultValue="-XX:+UseG1GC -XX:+UnlockExperimentalVMOptions" />
+                    </article>
+                  </div>
+                )}
+
+                {activeInstanceConfigTab !== "General" && activeInstanceConfigTab !== "Java" && (
+                  <article className="settings-card settings-placeholder">
+                    <h4>{activeInstanceConfigTab}</h4>
+                    <p>Seccion lista para configurar opciones avanzadas de la instancia.</p>
+                  </article>
+                )}
+              </section>
             ) : (
               <p>Vista completa de la instancia. Todo lo demás está oculto, excepto la barra superior principal.</p>
             )}
