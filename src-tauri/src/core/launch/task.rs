@@ -335,6 +335,12 @@ fn ensure_loader_jvm_workarounds(instance: &Instance, args: &mut Vec<String>) {
         return;
     }
 
+    // NeoForge relies on Java modules that are not always enabled by default
+    // in third-party launchers. Keep these flags present even when profile
+    // metadata is incomplete.
+    ensure_jvm_arg_present(args, "--add-modules=jdk.naming.dns");
+    ensure_jvm_arg_present(args, "--add-opens=java.base/java.util.jar=ALL-UNNAMED");
+
     // Workaround for crashes in NeoForge Early Display (`rendererFuture` null)
     // seen on some GPU/overlay setups. Disabling the early progress window lets
     // the game continue with the normal LWJGL window initialization path.
@@ -349,6 +355,21 @@ fn ensure_loader_jvm_workarounds(instance: &Instance, args: &mut Vec<String>) {
     if !args.iter().any(|arg| arg == neoforge_early_display_flag) {
         args.push(neoforge_early_display_flag.to_string());
     }
+}
+
+fn ensure_jvm_arg_present(args: &mut Vec<String>, flag_with_value: &str) {
+    let Some((key, _)) = flag_with_value.split_once('=') else {
+        if !args.iter().any(|arg| arg == flag_with_value) {
+            args.push(flag_with_value.to_string());
+        }
+        return;
+    };
+
+    if args.iter().any(|arg| arg == flag_with_value || arg.starts_with(&format!("{key}="))) {
+        return;
+    }
+
+    args.push(flag_with_value.to_string());
 }
 
 fn configure_native_library_env(cmd: &mut std::process::Command, natives_dir: &std::path::Path) {
@@ -694,5 +715,58 @@ mod tests {
             format!("C:/Game/natives{}C:/Windows/System32", expected_sep)
         );
         std::env::remove_var("IFACE_TEST_PATH");
+    }
+
+    #[test]
+    fn neoforge_workarounds_inject_module_flags_and_early_display_flags() {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::NeoForge,
+            Some("47.1.79".into()),
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+
+        let mut args = vec!["-Xmx2G".to_string()];
+        ensure_loader_jvm_workarounds(&instance, &mut args);
+
+        assert!(args.contains(&"--add-modules=jdk.naming.dns".to_string()));
+        assert!(args.contains(&"--add-opens=java.base/java.util.jar=ALL-UNNAMED".to_string()));
+        assert!(args.contains(&"-Dfml.earlyprogresswindow=false".to_string()));
+        assert!(args.contains(&"-Dneoforge.earlydisplay=false".to_string()));
+    }
+
+    #[test]
+    fn neoforge_workarounds_keep_existing_module_values() {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::NeoForge,
+            Some("47.1.79".into()),
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+
+        let mut args = vec![
+            "--add-modules=java.naming".to_string(),
+            "--add-opens=java.base/java.lang=ALL-UNNAMED".to_string(),
+        ];
+        ensure_loader_jvm_workarounds(&instance, &mut args);
+
+        assert_eq!(
+            args.iter()
+                .filter(|arg| arg.starts_with("--add-modules="))
+                .count(),
+            1
+        );
+        assert_eq!(
+            args.iter()
+                .filter(|arg| arg.starts_with("--add-opens="))
+                .count(),
+            1
+        );
     }
 }
