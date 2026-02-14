@@ -1,5 +1,4 @@
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{io::BufRead, io::BufReader as StdBufReader};
 
@@ -18,6 +17,35 @@ use crate::core::launch;
 use crate::core::loaders;
 use crate::core::state::{AppState, JavaRuntimePreference, LauncherSettings};
 use crate::core::version::VersionManifest;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LaunchDiagnostic {
+    NeoForgeEarlyDisplayRendererFuture,
+    CorruptedLibraryArchive,
+}
+
+fn detect_launch_diagnostic(line: &str) -> Option<LaunchDiagnostic> {
+    if line.contains("rendererFuture") || line.contains("DisplayWindow.takeOverGlfwWindow") {
+        return Some(LaunchDiagnostic::NeoForgeEarlyDisplayRendererFuture);
+    }
+
+    if line.contains("ZipException: zip END header not found") {
+        return Some(LaunchDiagnostic::CorruptedLibraryArchive);
+    }
+
+    None
+}
+
+fn diagnostic_message(diagnostic: LaunchDiagnostic) -> &'static str {
+    match diagnostic {
+        LaunchDiagnostic::NeoForgeEarlyDisplayRendererFuture => {
+            "[DIAGNÓSTICO] NeoForge falló en early display (rendererFuture nulo). Prueba actualizar NeoForge, usar Java 17/21 x64 limpia y desactivar overlays de GPU antes de reiniciar la instancia."
+        }
+        LaunchDiagnostic::CorruptedLibraryArchive => {
+            "[DIAGNÓSTICO] Se detectó una librería dañada (zip END header not found). Cierra la instancia, borra la ruta `libraries/net/neoforged/neoform/...` indicada en el log y reinicia para forzar una descarga limpia."
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct CreateInstancePayload {
@@ -994,21 +1022,40 @@ pub async fn launch_instance(
     if let Some(stderr) = child.stderr.take() {
         let instance_id = id.clone();
         let app_handle = app_handle.clone();
-        let neoforge_hint_emitted = Arc::new(AtomicBool::new(false));
         tauri::async_runtime::spawn(async move {
-            let neoforge_hint_emitted = neoforge_hint_emitted.clone();
             let _ = tauri::async_runtime::spawn_blocking(move || {
+                let mut neoforge_hint_emitted = false;
+                let mut corrupted_zip_hint_emitted = false;
                 for line in StdBufReader::new(stderr).lines().map_while(Result::ok) {
                     emit_launch_log(&app_handle, &instance_id, "warn", line.clone());
-                    if (line.contains("rendererFuture") || line.contains("DisplayWindow.takeOverGlfwWindow"))
-                        && !neoforge_hint_emitted.swap(true, Ordering::Relaxed)
-                    {
-                        emit_launch_log(
-                            &app_handle,
-                            &instance_id,
-                            "error",
-                            "[DIAGNÓSTICO] NeoForge falló en early display (rendererFuture nulo). Prueba actualizar NeoForge, usar Java 17/21 x64 limpia y desactivar overlays de GPU antes de reiniciar la instancia.".into(),
-                        );
+                    if let Some(diagnostic) = detect_launch_diagnostic(&line) {
+                        let should_emit = match diagnostic {
+                            LaunchDiagnostic::NeoForgeEarlyDisplayRendererFuture => {
+                                if neoforge_hint_emitted {
+                                    false
+                                } else {
+                                    neoforge_hint_emitted = true;
+                                    true
+                                }
+                            }
+                            LaunchDiagnostic::CorruptedLibraryArchive => {
+                                if corrupted_zip_hint_emitted {
+                                    false
+                                } else {
+                                    corrupted_zip_hint_emitted = true;
+                                    true
+                                }
+                            }
+                        };
+
+                        if should_emit {
+                            emit_launch_log(
+                                &app_handle,
+                                &instance_id,
+                                "error",
+                                diagnostic_message(diagnostic).into(),
+                            );
+                        }
                     }
                     warn!("[mc:{}][stderr] {}", instance_id, line);
                 }
