@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import "./styles/app/base.css";
+import "./styles/app/layout.css";
+import "./styles/app/components.css";
+import "./styles/app/pages.css";
 
 type LoaderType = "vanilla" | "forge" | "fabric" | "neoforge" | "quilt";
 type TopSection = "menu" | "instances" | "news" | "explorer" | "servers" | "community" | "global-settings";
@@ -15,6 +19,19 @@ interface InstanceInfo {
   loader_type: LoaderType;
   loader_version: string | null;
   total_size_bytes: number;
+}
+
+interface LaunchProgressEvent {
+  id: string;
+  value: number;
+  stage: string;
+  state: "idle" | "running" | "done" | "error";
+}
+
+interface LaunchLogEvent {
+  id: string;
+  level: "info" | "warn" | "error";
+  message: string;
 }
 
 const SECTION_LABELS: { key: TopSection; label: string }[] = [
@@ -82,6 +99,9 @@ function App() {
   const [activeEditSection, setActiveEditSection] = useState<EditSection>("Ejecucion");
   const [appMode, setAppMode] = useState<AppMode>("main");
   const [activeCreateSection, setActiveCreateSection] = useState<(typeof CREATE_SECTIONS)[number]>("Base");
+  const [launchProgress, setLaunchProgress] = useState<LaunchProgressEvent | null>(null);
+  const [launchLogs, setLaunchLogs] = useState<LaunchLogEvent[]>([]);
+  const [launchError, setLaunchError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadInstances = async () => {
@@ -95,19 +115,35 @@ function App() {
     void loadInstances();
   }, []);
 
-  const instanceCards = useMemo(() => {
-    if (instances.length > 0) return instances;
-    return [
-      {
-        id: "demo-1",
-        name: "Survival Coop",
-        minecraft_version: "1.20.1",
-        loader_type: "fabric" as const,
-        loader_version: "0.16.5",
-        total_size_bytes: 3_742_314_496,
-      },
-    ];
-  }, [instances]);
+  useEffect(() => {
+    let mounted = true;
+    const listeners: UnlistenFn[] = [];
+
+    const setupListeners = async () => {
+      const unlistenProgress = await listen<LaunchProgressEvent>("instance-launch-progress", (event) => {
+        if (!mounted) return;
+        if (selectedInstance && event.payload.id !== selectedInstance.id) return;
+        setLaunchProgress(event.payload);
+      });
+
+      const unlistenLog = await listen<LaunchLogEvent>("instance-launch-log", (event) => {
+        if (!mounted) return;
+        if (selectedInstance && event.payload.id !== selectedInstance.id) return;
+        setLaunchLogs((prev) => [...prev.slice(-100), event.payload]);
+      });
+
+      listeners.push(unlistenProgress, unlistenLog);
+    };
+
+    void setupListeners();
+
+    return () => {
+      mounted = false;
+      listeners.forEach((unlisten) => unlisten());
+    };
+  }, [selectedInstance]);
+
+  const instanceCards = useMemo(() => instances, [instances]);
 
   const enterEditMode = () => {
     if (!selectedInstance) return;
@@ -115,15 +151,39 @@ function App() {
     setShowInstancePanel(false);
   };
 
-  const launchInstance = () => {
+  const launchInstance = async () => {
     if (!selectedInstance) return;
-    setEditingInstance(selectedInstance);
-    setActiveEditSection("Ejecucion");
-    setShowInstancePanel(false);
+    setLaunchError(null);
+    setLaunchLogs([]);
+    setLaunchProgress({
+      id: selectedInstance.id,
+      value: 0,
+      stage: "Solicitando lanzamiento",
+      state: "running",
+    });
+
+    try {
+      await invoke("launch_instance", { id: selectedInstance.id });
+      setEditingInstance(selectedInstance);
+      setActiveEditSection("Ejecucion");
+      setShowInstancePanel(false);
+    } catch (error) {
+      const errorMessage = typeof error === "string" ? error : "No se pudo iniciar la instancia.";
+      setLaunchError(errorMessage);
+      setLaunchProgress({
+        id: selectedInstance.id,
+        value: 100,
+        stage: "Error al iniciar",
+        state: "error",
+      });
+    }
   };
 
   const onSelectInstance = (instance: InstanceInfo) => {
     setSelectedInstance(instance);
+    setLaunchError(null);
+    setLaunchLogs([]);
+    setLaunchProgress(null);
     setShowInstancePanel(true);
   };
 
@@ -140,17 +200,11 @@ function App() {
 
     return (
       <section className="full-section-page instances-page" onClick={() => setShowInstancePanel(false)}>
-        <header className="section-header">
-          <h1>Mis Instancias</h1>
-          <p>Panel ampliado para visualizar todas las instancias y sus acciones.</p>
-        </header>
-
-        <div className="instances-compact-toolbar" onClick={(event) => event.stopPropagation()}>
-          <span>Gestion de Instancias</span>
+        <div className="instances-floating-create" onClick={(event) => event.stopPropagation()}>
           <button type="button" onClick={() => setAppMode("create")}>Crear instancia</button>
         </div>
 
-        <div className={`instances-workspace ${showInstancePanel ? "with-panel" : ""}`}>
+        <div className="instances-workspace">
           <div className="instance-grid" onClick={(event) => event.stopPropagation()}>
             {instanceCards.map((instance) => {
               const tooltipText = `Version MC: ${instance.minecraft_version}\nLoader: ${prettyLoader(instance.loader_type)} ${instance.loader_version ?? "N/A"}\nAutor: Usuario Local\nPeso: ${formatBytes(instance.total_size_bytes)}`;
@@ -171,6 +225,7 @@ function App() {
                 </article>
               );
             })}
+            {instanceCards.length === 0 && <p>No hay instancias todavía. Crea tu primera instancia.</p>}
           </div>
 
           {showInstancePanel && selectedInstance && (
@@ -181,7 +236,7 @@ function App() {
                   key={action}
                   type="button"
                   onClick={
-                    action === "Editar" ? enterEditMode : action === "Iniciar" ? launchInstance : undefined
+                    action === "Editar" ? enterEditMode : action === "Iniciar" ? () => void launchInstance() : undefined
                   }
                 >
                   {action}
@@ -206,7 +261,7 @@ function App() {
           <div className="topbar-info">Creando nueva instancia</div>
         </header>
         <div className="create-layout">
-          <aside className="create-left-sidebar">
+          <aside className="create-left-sidebar compact-sidebar">
             {CREATE_SECTIONS.map((section) => (
               <button
                 key={section}
@@ -222,7 +277,7 @@ function App() {
             <h2>Crear instancia - {activeCreateSection}</h2>
             <p>Esta vista ocupa la pantalla completa (excepto la barra principal superior).</p>
           </main>
-          <aside className="create-right-sidebar">
+          <aside className="create-right-sidebar compact-sidebar">
             <h3>Panel de {activeCreateSection}</h3>
             <button type="button" onClick={() => setAppMode("main")}>Cancelar</button>
             <button type="button">Guardar borrador</button>
@@ -245,7 +300,7 @@ function App() {
           <div className="topbar-info">Editando: {editingInstance.name}</div>
         </header>
         <div className="edit-layout" onClick={(event) => event.stopPropagation()}>
-          <aside className="edit-left-sidebar">
+          <aside className="edit-left-sidebar compact-sidebar">
             {EDIT_SECTIONS.map((section) => (
               <button
                 key={section}
@@ -261,18 +316,24 @@ function App() {
             <h2>{activeEditSection}</h2>
             {activeEditSection === "Ejecucion" ? (
               <div className="execution-log">
-                <p>[00:00] Preparando directorios de instancia...</p>
-                <p>[00:01] Descargando dependencias y librerías base...</p>
-                <p>[00:03] Instalando loader y verificando assets...</p>
-                <p>[00:04] Aplicando argumentos de JVM y de lanzamiento...</p>
-                <p>[00:06] Iniciando proceso del juego...</p>
-                <p>[00:07] [LIVE] Minecraft inicializado correctamente.</p>
+                <div className="execution-actions">
+                  <button type="button" onClick={() => void launchInstance()}>Iniciar</button>
+                  {launchProgress && <span>{launchProgress.stage} ({launchProgress.value}%)</span>}
+                </div>
+                {launchError && <p className="execution-error">{launchError}</p>}
+                {launchLogs.length === 0 ? (
+                  <p>Sin logs todavía. Pulsa iniciar para lanzar la instancia real desde backend.</p>
+                ) : (
+                  launchLogs.map((log, index) => (
+                    <p key={`${log.level}-${index}`}>[{log.level.toUpperCase()}] {log.message}</p>
+                  ))
+                )}
               </div>
             ) : (
               <p>Vista completa de la instancia. Todo lo demás está oculto, excepto la barra superior principal.</p>
             )}
           </main>
-          <aside className="edit-right-sidebar">
+          <aside className="edit-right-sidebar compact-sidebar">
             <h3>Acciones de {activeEditSection}</h3>
             <button type="button">Accion 1</button>
             <button type="button">Accion 2</button>

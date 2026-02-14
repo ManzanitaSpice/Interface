@@ -1,0 +1,18 @@
+.full-section-page {
+  min-height: calc(100vh - 126px);
+  border: 1px solid #2a3140;
+  border-radius: 16px;
+  padding: 24px;
+  background: rgba(16, 21, 33, 0.75);
+}
+
+.instances-page {
+  position: relative;
+}
+
+.instances-floating-create {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  z-index: 4;
+}
