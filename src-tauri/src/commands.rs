@@ -1,5 +1,6 @@
 use std::process::Command;
 use std::sync::Arc;
+use std::{fs, path::Path};
 use std::{io::BufRead, io::BufReader as StdBufReader};
 
 use chrono::Utc;
@@ -7,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 use crate::core::assets::AssetManager;
 use crate::core::auth::{AccountMode, AuthResearchInfo, LaunchAccountProfile};
@@ -242,9 +244,9 @@ async fn validate_or_resolve_java(instance: &mut Instance) -> Result<(), Launche
             .iter()
             .find(|candidate| candidate.path == *custom_path)
         {
-            if found.major < required_major {
+            if found.major != required_major {
                 return Err(LauncherError::Other(format!(
-                    "La Java configurada ({}) no cumple versión mínima {}",
+                    "La Java configurada ({}) no coincide con la versión requerida {}",
                     found.version, required_major
                 )));
             }
@@ -266,9 +268,9 @@ async fn validate_or_resolve_java(instance: &mut Instance) -> Result<(), Launche
     let resolved_info = detected.iter().find(|candidate| candidate.path == resolved);
 
     if let Some(info) = resolved_info {
-        if info.major < required_major {
+        if info.major != required_major {
             return Err(LauncherError::Other(format!(
-                "La Java resuelta ({}) no cumple versión mínima {}",
+                "La Java resuelta ({}) no coincide con la versión requerida {}",
                 info.version, required_major
             )));
         }
@@ -885,6 +887,28 @@ pub async fn delete_instance(
 }
 
 #[tauri::command]
+pub async fn clone_instance(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    id: String,
+) -> Result<InstanceInfo, LauncherError> {
+    let state = state.lock().await;
+    let source = state.instance_manager.load(&id).await?;
+
+    let mut cloned = source.clone();
+    cloned.id = Uuid::new_v4().to_string();
+    cloned.name = format!("{} (Copia)", source.name);
+    cloned.path = state.instances_dir().join(&cloned.id);
+    cloned.state = InstanceState::Ready;
+    cloned.last_played = None;
+    cloned.created_at = Utc::now();
+
+    copy_dir_recursive(&source.path, &cloned.path)?;
+    state.instance_manager.save(&cloned).await?;
+    info!("Cloned instance {} into {}", source.id, cloned.id);
+    Ok(InstanceInfo::from(&cloned))
+}
+
+#[tauri::command]
 pub async fn launch_instance(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
@@ -1278,6 +1302,41 @@ fn kill_process(pid: u32) -> Result<(), LauncherError> {
 
         Ok(())
     }
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), LauncherError> {
+    if destination.exists() {
+        return Err(LauncherError::InstanceAlreadyExists(
+            destination.to_string_lossy().to_string(),
+        ));
+    }
+
+    fs::create_dir_all(destination).map_err(|source_err| LauncherError::Io {
+        path: destination.to_path_buf(),
+        source: source_err,
+    })?;
+
+    for entry in fs::read_dir(source).map_err(|source_err| LauncherError::Io {
+        path: source.to_path_buf(),
+        source: source_err,
+    })? {
+        let entry = entry.map_err(|source_err| LauncherError::Io {
+            path: source.to_path_buf(),
+            source: source_err,
+        })?;
+        let src_path = entry.path();
+        let dst_path = destination.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path).map_err(|source_err| LauncherError::Io {
+                path: dst_path,
+                source: source_err,
+            })?;
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
