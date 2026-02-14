@@ -1,5 +1,6 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 type LoaderType = "vanilla" | "forge" | "fabric" | "neoforge" | "quilt";
@@ -7,6 +8,7 @@ type InstanceState = "created" | "installing" | "ready" | "running" | "error";
 type JavaRuntimePreference = "auto" | "embedded" | "system";
 type SettingsTab = "java" | "launcher";
 type InstanceConfigTab = "java" | "arguments";
+type View = "home" | "create-instance" | "settings" | "instance-detail";
 
 interface InstanceInfo {
   id: string;
@@ -72,6 +74,19 @@ interface LogEntry {
   timestamp: string;
   level: "info" | "error" | "warn";
   message: string;
+}
+
+interface DownloadProgressEvent {
+  url: string;
+  bytes_downloaded: number;
+  total_bytes?: number | null;
+  file_name: string;
+}
+
+interface InstanceLaunchProgress {
+  value: number;
+  stage: string;
+  state: "idle" | "running" | "done" | "error";
 }
 
 const LOADERS: { label: string; value: LoaderType }[] = [
@@ -265,7 +280,9 @@ function CreateInstancePage({
 
 function App() {
   const [isLoading, setIsLoading] = useState(true);
-  const [currentView, setCurrentView] = useState<"home" | "create-instance" | "settings" | "instance-detail">("home");
+  const [currentView, setCurrentView] = useState<View>("home");
+  const [backHistory, setBackHistory] = useState<View[]>([]);
+  const [forwardHistory, setForwardHistory] = useState<View[]>([]);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("java");
   const [minecraftVersions, setMinecraftVersions] = useState<string[]>([]);
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
@@ -293,6 +310,7 @@ function App() {
   const [instanceJvmArgsInput, setInstanceJvmArgsInput] = useState("");
   const [instanceGameArgsInput, setInstanceGameArgsInput] = useState("");
   const [isSavingInstanceConfig, setIsSavingInstanceConfig] = useState(false);
+  const [instanceLaunchProgress, setInstanceLaunchProgress] = useState<Record<string, InstanceLaunchProgress>>({});
 
   const selectedInstance = useMemo(
     () => instances.find((instance) => instance.id === selectedInstanceId) ?? null,
@@ -346,10 +364,87 @@ function App() {
     void loadData();
   }, []);
 
+  useEffect(() => {
+    if (!error) return;
+    const timeout = setTimeout(() => setError(""), 6500);
+    return () => clearTimeout(timeout);
+  }, [error]);
+
+  useEffect(() => {
+    const activeInstanceId = selectedInstanceId;
+    if (!activeInstanceId) return;
+
+    let isMounted = true;
+    const unlistenPromise = listen<DownloadProgressEvent>("download-progress", (event) => {
+      if (!isMounted) return;
+      const payload = event.payload;
+      const total = payload.total_bytes ?? payload.bytes_downloaded;
+      const ratio = total > 0 ? Math.min((payload.bytes_downloaded / total) * 100, 100) : 0;
+      addLog(
+        activeInstanceId,
+        "info",
+        `[DESCARGA] ${payload.file_name || "archivo"} · ${formatBytes(payload.bytes_downloaded)} / ${formatBytes(total)}`,
+      );
+      setInstanceLaunchProgress((prev) => {
+        const current = prev[activeInstanceId];
+        if (!current || current.state === "done") return prev;
+        return {
+          ...prev,
+          [activeInstanceId]: {
+            ...current,
+            value: Math.max(current.value, Math.round(Math.min(70, 20 + ratio * 0.5))),
+            stage: `Descargando ${payload.file_name || "recursos"}`,
+          },
+        };
+      });
+    });
+
+    return () => {
+      isMounted = false;
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, [selectedInstanceId]);
+
   const addLog = (id: string, level: LogEntry["level"], message: string) => {
     setInstanceLogs((prev) => ({
       ...prev,
       [id]: [...(prev[id] ?? []), { timestamp: new Date().toLocaleTimeString(), level, message }],
+    }));
+  };
+
+  const navigateToView = (nextView: View, options?: { fromHistory?: boolean }) => {
+    if (nextView === currentView) return;
+    if (!options?.fromHistory) {
+      setBackHistory((prev) => [...prev, currentView]);
+      setForwardHistory([]);
+    }
+    setCurrentView(nextView);
+  };
+
+  const handleNavigateBack = () => {
+    setBackHistory((prev) => {
+      const lastView = prev[prev.length - 1];
+      if (!lastView) return prev;
+      setForwardHistory((future) => [currentView, ...future]);
+      setCurrentView(lastView);
+      return prev.slice(0, -1);
+    });
+  };
+
+  const handleNavigateForward = () => {
+    setForwardHistory((prev) => {
+      const [nextView, ...rest] = prev;
+      if (!nextView) return prev;
+      setBackHistory((history) => [...history, currentView]);
+      setCurrentView(nextView);
+      return rest;
+    });
+  };
+
+  const updateLaunchProgress = (id: string, state: InstanceLaunchProgress["state"], value: number, stage: string) => {
+    setInstanceLaunchProgress((prev) => ({
+      ...prev,
+      [id]: { value, stage, state },
     }));
   };
 
@@ -425,15 +520,24 @@ function App() {
   const handleStartInstance = async (id: string) => {
     setError("");
     setSelectedInstanceId(id);
-    addLog(id, "info", "Solicitud de inicio recibida.");
+    updateLaunchProgress(id, "running", 8, "Validando instancia");
+    setInstances((prev) => prev.map((instance) => (instance.id === id ? { ...instance, state: "installing" } : instance)));
+    addLog(id, "info", "[PREPARACIÓN] Solicitud de inicio recibida.");
     try {
-      addLog(id, "info", "Validando instancia y preparando archivos...");
+      addLog(id, "info", "[PREPARACIÓN] Validando versión, Java, librerías y archivos base.");
+      updateLaunchProgress(id, "running", 22, "Preparando archivos base");
+      addLog(id, "info", "[DESCARGA] Iniciando descarga y verificación de recursos pendientes...");
+      updateLaunchProgress(id, "running", 36, "Descargando recursos");
       await invoke("launch_instance", { id });
       setInstances((prev) => prev.map((instance) => (instance.id === id ? { ...instance, state: "running" } : instance)));
-      addLog(id, "info", "Proceso iniciado. Revisa los logs de descarga y ejecución.");
+      updateLaunchProgress(id, "done", 100, "Instancia en ejecución");
+      addLog(id, "info", "[INICIALIZACIÓN] Proceso de Minecraft iniciado correctamente.");
+      addLog(id, "info", "[RUNTIME] La instancia está corriendo. Monitorea aquí errores, advertencias y eventos del proceso.");
     } catch (e) {
       const details = getErrorMessage(e);
-      addLog(id, "error", details);
+      updateLaunchProgress(id, "error", 100, "Error durante el inicio");
+      setInstances((prev) => prev.map((instance) => (instance.id === id ? { ...instance, state: "error" } : instance)));
+      addLog(id, "error", `[ERROR] ${details}`);
       setError(`No se pudo iniciar la instancia: ${details}`);
     }
   };
@@ -443,6 +547,7 @@ function App() {
     try {
       await invoke("force_close_instance", { id });
       setInstances((prev) => prev.map((instance) => (instance.id === id ? { ...instance, state: "ready" } : instance)));
+      updateLaunchProgress(id, "idle", 0, "Pendiente de inicio");
       addLog(id, "warn", "Instancia detenida de forma forzada por el usuario.");
     } catch (e) {
       setError(`No se pudo cerrar la instancia: ${getErrorMessage(e)}`);
@@ -474,7 +579,7 @@ function App() {
       });
       if (selectedInstanceId === id) {
         setSelectedInstanceId(null);
-        setCurrentView("home");
+        navigateToView("home");
       }
     } catch (e) {
       setError(`No se pudo eliminar la instancia: ${getErrorMessage(e)}`);
@@ -483,7 +588,7 @@ function App() {
 
   const openInstanceDetail = (id: string) => {
     setSelectedInstanceId(id);
-    setCurrentView("instance-detail");
+    navigateToView("instance-detail");
   };
 
   const handleInitializeInstallation = async () => {
@@ -571,7 +676,14 @@ function App() {
   return (
     <div className="app-root">
       <header className="global-topbar">
-        <div className="brand-zone"><div className="brand-logo-placeholder" /><span className="brand-title">INTERFACE</span></div>
+        <div className="brand-zone">
+          <div className="brand-logo-placeholder" />
+          <span className="brand-title">INTERFACE</span>
+          <div className="topbar-nav-arrows">
+            <button type="button" className="nav-arrow-btn" onClick={handleNavigateBack} disabled={backHistory.length === 0} aria-label="Navegar atrás">←</button>
+            <button type="button" className="nav-arrow-btn" onClick={handleNavigateForward} disabled={forwardHistory.length === 0} aria-label="Navegar adelante">→</button>
+          </div>
+        </div>
         <div className="profile-menu-container" ref={profileMenuRef}>
           <button className="profile-btn" onClick={() => setIsProfileMenuOpen((prev) => !prev)} type="button">Perfil ▾</button>
           {isProfileMenuOpen && <div className="profile-dropdown"><button type="button">Mi perfil (próximamente)</button></div>}
@@ -582,8 +694,8 @@ function App() {
         {currentView !== "instance-detail" && (<aside className="sidebar">
           <div className="sidebar-header">Launcher</div>
           <nav>
-            <button className={`sidebar-btn ${currentView === "home" ? "active" : ""}`} onClick={() => setCurrentView("home")}>Home</button>
-            <button className={`sidebar-btn ${currentView === "settings" ? "active" : ""}`} onClick={() => setCurrentView("settings")}>Configuración</button>
+            <button className={`sidebar-btn ${currentView === "home" ? "active" : ""}`} onClick={() => navigateToView("home")}>Instancias</button>
+            <button className={`sidebar-btn ${currentView === "settings" ? "active" : ""}`} onClick={() => navigateToView("settings")}>Configuración</button>
           </nav>
         </aside>)}
 
@@ -633,20 +745,26 @@ function App() {
           {!firstLaunchStatus?.first_launch && currentView === "home" && (
             <div>
               <div className="home-toolbar">
-                <div><h2>Instances</h2><p>Herramientas rápidas para tus instancias.</p></div>
-                <button className="generate-btn toolbar-btn" onClick={() => setCurrentView("create-instance")}>+ Crear instancia</button>
+                <div><h2>Instancias</h2><p>Gestiona estado, versión, loader y actividad reciente de forma más clara.</p></div>
+                <div className="home-toolbar-actions">
+                  <button className="generate-btn toolbar-btn" onClick={() => navigateToView("create-instance")}>+ Crear instancia</button>
+                </div>
               </div>
               <div className="instance-grid">
                 {instances.map((instance) => (
                   <article key={instance.id} className="instance-card clickable" onClick={() => openInstanceDetail(instance.id)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") openInstanceDetail(instance.id); }}>
-                    <h3>{instance.name}</h3>
-                    <p><strong>Minecraft:</strong> {instance.minecraft_version}</p>
-                    <p><strong>Loader:</strong> {instance.loader_type}</p>
-                    <p><strong>Java recomendada:</strong> {instance.required_java_major ? `Java ${instance.required_java_major}+` : "Auto"}</p>
-                    <p><strong>Status:</strong> {instance.state}</p>
-                    <p><strong>Tamaño total:</strong> {formatBytes(instance.total_size_bytes)}</p>
-                    <p><strong>Creada:</strong> {formatDateLabel(instance.created_at)}</p>
-                    <p><strong>Último juego:</strong> {formatDateLabel(instance.last_played)}</p>
+                    <div className="instance-card-header">
+                      <h3>{instance.name}</h3>
+                      <span className={`instance-state-chip state-${instance.state}`}>{instance.state}</span>
+                    </div>
+                    <div className="instance-card-details">
+                      <p><strong>Minecraft:</strong> {instance.minecraft_version}</p>
+                      <p><strong>Loader:</strong> {instance.loader_type}</p>
+                      <p><strong>Java recomendada:</strong> {instance.required_java_major ? `Java ${instance.required_java_major}+` : "Auto"}</p>
+                      <p><strong>Tamaño total:</strong> {formatBytes(instance.total_size_bytes)}</p>
+                      <p><strong>Creada:</strong> {formatDateLabel(instance.created_at)}</p>
+                      <p><strong>Último juego:</strong> {formatDateLabel(instance.last_played)}</p>
+                    </div>
 
                   </article>
                 ))}
@@ -654,7 +772,7 @@ function App() {
             </div>
           )}
 
-          {currentView === "create-instance" && <CreateInstancePage minecraftVersions={minecraftVersions} onInstanceCreated={(instance) => { setInstances((prev) => [instance, ...prev]); setCurrentView("home"); }} />}
+          {currentView === "create-instance" && <CreateInstancePage minecraftVersions={minecraftVersions} onInstanceCreated={(instance) => { setInstances((prev) => [instance, ...prev]); navigateToView("home"); }} />}
 
           {currentView === "instance-detail" && selectedInstance && (
             <section className="settings-page instance-detail-page">
@@ -663,8 +781,17 @@ function App() {
                   <h2>{selectedInstance.name}</h2>
                   <p>Minecraft {selectedInstance.minecraft_version} · {selectedInstance.loader_type}</p>
                 </div>
-                <button className="generate-btn toolbar-btn" onClick={() => setCurrentView("home")}>← Volver</button>
               </div>
+
+              <section className="instance-progress-wrap">
+                <div className="instance-progress-meta">
+                  <span>Progreso de arranque</span>
+                  <strong>{instanceLaunchProgress[selectedInstance.id]?.stage ?? "Pendiente de inicio"}</strong>
+                </div>
+                <div className={`instance-progress-bar ${instanceLaunchProgress[selectedInstance.id]?.state === "error" ? "error" : ""}`}>
+                  <div style={{ width: `${instanceLaunchProgress[selectedInstance.id]?.value ?? 0}%` }} />
+                </div>
+              </section>
 
               <div className="instance-detail-shell">
                 <section className="instance-log-stream">
@@ -672,7 +799,7 @@ function App() {
                     <p className="empty-logs">Sin logs todavía. Inicia la instancia para ver salida.</p>
                   ) : (
                     (instanceLogs[selectedInstance.id] ?? []).map((entry, idx) => (
-                      <div key={`${selectedInstance.id}-${idx}`} className={`log-entry ${entry.level}`}><span>[{entry.timestamp}]</span><span>{entry.message}</span></div>
+                      <div key={`${selectedInstance.id}-${idx}`} className={`log-entry ${entry.level}`}><span className="log-entry-time">[{entry.timestamp}]</span><span className="log-entry-message">{entry.message}</span></div>
                     ))
                   )}
                 </section>

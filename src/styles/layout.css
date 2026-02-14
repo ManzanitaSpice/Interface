@@ -23,6 +23,12 @@
   gap: 10px;
 }
 
+.topbar-nav-arrows {
+  display: flex;
+  gap: 6px;
+  margin-left: 10px;
+}
+
 .brand-logo-placeholder {
   width: 20px;
   height: 20px;
@@ -77,6 +83,13 @@
 .home-toolbar p {
   margin-top: -4px;
   color: #b3bad2;
+}
+
+.home-toolbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 220px;
 }
 
 

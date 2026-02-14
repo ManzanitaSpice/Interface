@@ -21,6 +21,18 @@
 .profile-dropdown button { width: 100%; border: none; background: transparent; color: #e2e2e2; text-align: left; padding: 10px 12px; }
 .profile-dropdown button:hover { background: #2d3550; }
 
+.nav-arrow-btn {
+  border: 1px solid #3c4664;
+  background: #1f2638;
+  color: #dbe2ff;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 700;
+}
+.nav-arrow-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
 .sidebar-btn {
   background: transparent;
   border: none;
@@ -51,7 +63,7 @@
   width: 100%;
   padding: 10px;
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   color: #fff;
   font-weight: 600;
   cursor: pointer;
@@ -62,7 +74,7 @@
 .start-instance-btn { background: linear-gradient(90deg, #5e66ff, #5460f0); }
 .danger-btn { background: #cf3e3e; }
 .danger-btn.secondary { background: #91354d; }
-.start-instance-btn:disabled, .danger-btn:disabled, .generate-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.start-instance-btn:disabled, .danger-btn:disabled, .generate-btn:disabled, .open-folder-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .error-message {
   color: #ffb2b2;
@@ -76,54 +88,95 @@
 
 .instance-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 16px;
 }
 .instance-card {
-  background: linear-gradient(160deg, #2a2a31, #24242b);
-  border: 1px solid #3c3f4f;
-  border-radius: 12px;
+  background: linear-gradient(160deg, #222a3c, #1b2233 75%);
+  border: 1px solid #323d58;
+  border-radius: 14px;
   padding: 16px;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
 }
-.instance-card.clickable { cursor: pointer; }
-.instance-card.clickable:hover { border-color: #7286ff; transform: translateY(-1px); }
-.instance-card h3 { margin: 0 0 12px; }
-.instance-card p { margin: 6px 0; color: #d0d9f5; }
-.instance-actions { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.instance-card.clickable { cursor: pointer; transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease; }
+.instance-card.clickable:hover { border-color: #7286ff; transform: translateY(-1px); box-shadow: 0 14px 28px rgba(36, 52, 102, 0.3); }
+.instance-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px; }
+.instance-card h3 { margin: 0; }
+.instance-card-details p { margin: 6px 0; color: #d0d9f5; }
+.instance-state-chip { text-transform: capitalize; font-size: .74rem; padding: 4px 9px; border-radius: 999px; border: 1px solid #4a5579; color: #d8def5; background: #2a3349; }
+.instance-state-chip.state-running { border-color: #1f8f65; color: #98ffda; background: rgba(30, 126, 84, 0.2); }
+.instance-state-chip.state-installing { border-color: #a8872b; color: #ffe099; background: rgba(169, 130, 35, 0.2); }
+.instance-state-chip.state-ready { border-color: #4f73d8; color: #b2c5ff; background: rgba(71, 99, 179, 0.2); }
+.instance-state-chip.state-error { border-color: #a73b3b; color: #ffb2b2; background: rgba(144, 40, 40, 0.25); }
 
-.instance-log-toolbar {
-  padding: 14px 18px;
-  border: 1px solid #39415a;
-  border-radius: 12px;
-  background: #1d2333;
-  display: flex;
-  justify-content: space-between;
-  gap: 14px;
-}
 .instance-log-actions { width: 320px; display: flex; flex-direction: column; gap: 8px; }
 .instance-log-stream {
-  margin-top: 14px;
-  min-height: 260px;
-  border: 1px solid #38405a;
-  border-radius: 10px;
+  margin-top: 10px;
+  min-height: 320px;
+  border: 1px solid #2e3854;
+  border-radius: 12px;
   overflow-y: auto;
-  padding: 12px 18px 20px;
+  padding: 14px 16px;
+  background: #101725;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
-.log-entry { display: flex; gap: 10px; color: #d6d6df; margin-bottom: 8px; }
-.log-entry.error { color: #ff9d9d; }
-.log-entry.warn { color: #ffd38c; }
+.log-entry {
+  display: grid;
+  grid-template-columns: 86px 1fr;
+  gap: 12px;
+  color: #d6d6df;
+  margin-bottom: 7px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.log-entry-time { color: #8ea0c8; font-size: .85rem; }
+.log-entry-message { white-space: pre-wrap; word-break: break-word; line-height: 1.35; }
+.log-entry.error { color: #ff9d9d; background: rgba(153, 44, 44, 0.2); }
+.log-entry.warn { color: #ffd38c; background: rgba(121, 89, 33, 0.18); }
 .empty-logs { color: #8f8f9d; }
 
 .settings-tabs { display: flex; gap: 10px; margin-bottom: 14px; }
 .settings-tab { padding: 8px 14px; border: 1px solid #46506d; background: #262d40; color: #d7def6; border-radius: 8px; }
 .settings-tab.active { border-color: #7186ff; color: #8ea0ff; }
-.settings-panel { border: 1px solid #3a445f; border-radius: 10px; padding: 16px; background: #1e2434; }
+.settings-panel { border: 1px solid #3a445f; border-radius: 12px; padding: 16px; background: #1e2434; }
 .radio-row { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
 .settings-separator { border: 0; border-top: 1px solid #404a66; margin: 20px 0; }
 
-
-.instance-detail-shell { display: grid; grid-template-columns: 1fr 340px; gap: 14px; align-items: start; }
-.instance-tools-sidebar { padding: 14px; border: 1px solid #39415a; border-radius: 12px; background: #1d2333; display: flex; flex-direction: column; gap: 8px; position: sticky; top: 14px; }
+.instance-detail-shell { display: grid; grid-template-columns: 1fr 330px; gap: 14px; align-items: start; }
+.instance-tools-sidebar {
+  padding: 14px;
+  border: 1px solid #39415a;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #1d2435, #181f2d);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: sticky;
+  top: 14px;
+}
+.instance-tools-sidebar h3 { margin: 0 0 6px; color: #e2e8ff; }
 .instance-config-tabs { margin-top: 8px; }
+
+.instance-progress-wrap {
+  margin: -6px 0 10px;
+  border: 1px solid #31405d;
+  background: #1a2336;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.instance-progress-meta { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 8px; color: #b8c3e8; font-size: .92rem; }
+.instance-progress-meta strong { color: #e0e8ff; font-weight: 600; }
+.instance-progress-bar {
+  height: 11px;
+  border-radius: 999px;
+  background: #0f1626;
+  border: 1px solid #324160;
+  overflow: hidden;
+}
+.instance-progress-bar > div {
+  height: 100%;
+  background: linear-gradient(90deg, #5f6cff, #40c6ff);
+  transition: width .25s ease;
+}
+.instance-progress-bar.error > div { background: linear-gradient(90deg, #cc4a4a, #df6b6b); }
