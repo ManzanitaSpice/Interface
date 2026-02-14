@@ -951,7 +951,7 @@ pub async fn launch_instance(
             "running",
         );
 
-        let child = match launch::launch(&instance, &classpath).await {
+        let child = match launch::launch(&instance, &classpath, &libs_dir).await {
             Ok(child) => child,
             Err(err) => {
                 emit_launch_progress(&app_handle, &id, 100, "Error al iniciar proceso", "error");
