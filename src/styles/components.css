@@ -34,7 +34,7 @@
   width: 100%;
 }
 .sidebar-btn:hover { background-color: #2b3246; color: white; }
-.sidebar-btn.active { background-color: #2d3550; color: #8aa0ff; border-left: 3px solid #6f86ff; }
+.sidebar-btn.active { background-color: #2d2f3a; color: #6f7dff; border-left: 3px solid #586dff; }
 
 .form-group { display: flex; flex-direction: column; gap: 8px; }
 .form-group label { font-weight: 500; color: #dfe5ff; }
@@ -56,10 +56,10 @@
   font-weight: 600;
   cursor: pointer;
 }
-.generate-btn { margin-top: 14px; background-color: #5c70ff; }
-.generate-btn:hover { background-color: #4f63ed; }
+.generate-btn { margin-top: 14px; background: linear-gradient(90deg, #5e66ff, #5460f0); }
+.generate-btn:hover { background: linear-gradient(90deg, #5059ef, #4a54de); }
 .open-folder-btn { background: #3c4c74; }
-.start-instance-btn { background: #5167f4; }
+.start-instance-btn { background: linear-gradient(90deg, #5e66ff, #5460f0); }
 .danger-btn { background: #cf3e3e; }
 .danger-btn.secondary { background: #91354d; }
 .start-instance-btn:disabled, .danger-btn:disabled, .generate-btn:disabled { opacity: 0.55; cursor: not-allowed; }
@@ -80,8 +80,8 @@
   gap: 16px;
 }
 .instance-card {
-  background: linear-gradient(160deg, #202637, #1a1f2f);
-  border: 1px solid #39415a;
+  background: linear-gradient(160deg, #2a2a31, #24242b);
+  border: 1px solid #3c3f4f;
   border-radius: 12px;
   padding: 16px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);

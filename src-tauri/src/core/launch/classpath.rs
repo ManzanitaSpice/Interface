@@ -25,13 +25,7 @@ pub fn build_classpath(
     let separator = if cfg!(windows) { ";" } else { ":" };
     let mut entries: Vec<String> = Vec::new();
 
-    // 1. client.jar
-    let client_jar = instance.path.join("client.jar");
-    if client_jar.exists() {
-        entries.push(safe_path_str(&client_jar));
-    }
-
-    // 2. All declared libraries (Vanilla + loader)
+    // 1. All declared libraries (Vanilla + loader)
     for coord in extra_lib_coords {
         match MavenArtifact::parse(coord) {
             Ok(artifact) => {
@@ -46,6 +40,12 @@ pub fn build_classpath(
                 debug!("Invalid library coordinate '{}': {}", coord, e);
             }
         }
+    }
+
+    // 2. Minecraft base client JAR
+    let client_jar = instance.path.join("client.jar");
+    if client_jar.exists() {
+        entries.push(safe_path_str(&client_jar));
     }
 
     if entries.is_empty() {
