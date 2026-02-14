@@ -31,12 +31,17 @@ pub enum DeleteInstanceResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LaunchDiagnostic {
     NeoForgeEarlyDisplayRendererFuture,
+    NeoForgeEarlyDisplayStillEnabled,
     CorruptedLibraryArchive,
 }
 
 fn detect_launch_diagnostic(line: &str) -> Option<LaunchDiagnostic> {
     if line.contains("rendererFuture") || line.contains("DisplayWindow.takeOverGlfwWindow") {
         return Some(LaunchDiagnostic::NeoForgeEarlyDisplayRendererFuture);
+    }
+
+    if line.contains("Loading ImmediateWindowProvider fmlearlywindow") {
+        return Some(LaunchDiagnostic::NeoForgeEarlyDisplayStillEnabled);
     }
 
     if line.contains("ZipException: zip END header not found") {
@@ -49,7 +54,10 @@ fn detect_launch_diagnostic(line: &str) -> Option<LaunchDiagnostic> {
 fn diagnostic_message(diagnostic: LaunchDiagnostic) -> &'static str {
     match diagnostic {
         LaunchDiagnostic::NeoForgeEarlyDisplayRendererFuture => {
-            "[DIAGNÓSTICO] NeoForge falló en early display (rendererFuture nulo). Prueba actualizar NeoForge, usar Java 17/21 x64 limpia y desactivar overlays de GPU antes de reiniciar la instancia."
+            "[DIAGNÓSTICO] NeoForge falló en early display (rendererFuture nulo). Usa JVM args (antes de -cp): -Dfml.earlyprogresswindow=false. Si el log muestra 'Loading ImmediateWindowProvider fmlearlywindow', el flag no está entrando."
+        }
+        LaunchDiagnostic::NeoForgeEarlyDisplayStillEnabled => {
+            "[DIAGNÓSTICO] El early window sigue activo ('Loading ImmediateWindowProvider fmlearlywindow'). Revisa que el JVM arg sea exactamente -Dfml.earlyprogresswindow=false y que se inyecte antes de -cp."
         }
         LaunchDiagnostic::CorruptedLibraryArchive => {
             "[DIAGNÓSTICO] Se detectó una librería dañada (zip END header not found). Cierra la instancia, borra la ruta `libraries/net/neoforged/neoform/...` indicada en el log y reinicia para forzar una descarga limpia."
