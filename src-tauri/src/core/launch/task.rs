@@ -49,11 +49,9 @@ pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std:
     cmd.arg("-Dminecraft.launcher.brand=InterfaceOficial");
     cmd.arg("-Dminecraft.launcher.version=0.1.0");
 
-    // Extra JVM args from instance config or loader
-    for arg in &instance.jvm_args {
-        if arg.contains("${") {
-            continue;
-        }
+    // Extra JVM args from instance config or loader (normalized to avoid
+    // dangling "-cp" without value and unresolved placeholders).
+    for arg in sanitize_jvm_args(&instance.jvm_args, &natives_dir) {
         cmd.arg(arg);
     }
 
@@ -139,6 +137,40 @@ fn determine_java_major(minecraft_version: &str) -> u32 {
     8
 }
 
+fn sanitize_jvm_args(raw_args: &[String], natives_dir: &std::path::Path) -> Vec<String> {
+    let mut sanitized = Vec::new();
+    let mut i = 0;
+    let natives = safe_path_str(natives_dir);
+
+    while i < raw_args.len() {
+        let arg = &raw_args[i];
+
+        // We always inject classpath ourselves later, so loader-provided
+        // classpath switches must be dropped together with their value.
+        if arg == "-cp" || arg == "-classpath" || arg == "--class-path" {
+            i += 2;
+            continue;
+        }
+
+        let resolved = arg
+            .replace("${natives_directory}", &natives)
+            .replace("${launcher_name}", "InterfaceOficial")
+            .replace("${launcher_version}", "0.1.0");
+
+        // Any remaining placeholders indicate data we cannot currently resolve.
+        // Skip to avoid passing invalid runtime arguments to Java.
+        if resolved.contains("${") {
+            i += 1;
+            continue;
+        }
+
+        sanitized.push(resolved);
+        i += 1;
+    }
+
+    sanitized
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,5 +182,25 @@ mod tests {
         assert_eq!(determine_java_major("1.20.4"), 17);
         assert_eq!(determine_java_major("1.16.5"), 8);
         assert_eq!(determine_java_major("1.8.9"), 8);
+    }
+
+    #[test]
+    fn sanitize_jvm_args_removes_external_classpath_and_unresolved_tokens() {
+        let natives = std::path::PathBuf::from("/tmp/natives");
+        let args = vec![
+            "-XX:+UseG1GC".to_string(),
+            "-cp".to_string(),
+            "${classpath}".to_string(),
+            "-Djava.library.path=${natives_directory}".to_string(),
+            "--class-path".to_string(),
+            "/tmp/wrong.jar".to_string(),
+            "-Dsomething=${unknown_placeholder}".to_string(),
+        ];
+
+        let sanitized = sanitize_jvm_args(&args, &natives);
+
+        assert_eq!(sanitized.len(), 2);
+        assert_eq!(sanitized[0], "-XX:+UseG1GC");
+        assert_eq!(sanitized[1], "-Djava.library.path=/tmp/natives");
     }
 }
