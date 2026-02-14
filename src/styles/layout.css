@@ -57,6 +57,21 @@
   padding: 20px 10px;
 }
 
+.instance-sidebar-tools {
+  margin-top: 18px;
+  border-top: 1px solid #3b3d45;
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.instance-sidebar-tools h4 {
+  margin: 0 0 4px;
+  color: #f2f3f5;
+  font-size: 0.92rem;
+}
+
 .sidebar-header {
   margin-bottom: 20px;
   text-align: center;
