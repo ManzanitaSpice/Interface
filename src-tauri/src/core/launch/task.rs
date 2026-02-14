@@ -42,14 +42,7 @@ pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std:
     // ── JVM Arguments ──
     cmd.arg(format!("-Xmx{}M", instance.max_memory_mb));
     cmd.arg("-Xms512M");
-    cmd.arg(format!(
-        "-Djava.library.path={}",
-        safe_path_str(&natives_dir)
-    ));
-    cmd.arg("-Dminecraft.launcher.brand=InterfaceOficial");
-    cmd.arg("-Dminecraft.launcher.version=0.1.0");
-
-    // Extra JVM args from instance config or loader (normalized to avoid
+    // Extra JVM args from version metadata/loader (normalized to avoid
     // dangling "-cp" without value and unresolved placeholders).
     for arg in sanitize_jvm_args(instance, &instance.jvm_args, &natives_dir, classpath) {
         cmd.arg(arg);
@@ -69,39 +62,8 @@ pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std:
     cmd.arg(main_class);
 
     // ── Game Arguments ──
-    let game_args = sanitize_game_args(instance, &instance.game_args, &game_dir, &assets_dir);
-    let mut final_game_args = game_args;
-
-    // Inject required arguments only if they were not already provided by
-    // version metadata/loader arguments.
-    push_option_if_missing(&mut final_game_args, "--gameDir", safe_path_str(&game_dir));
-    push_option_if_missing(
-        &mut final_game_args,
-        "--assetsDir",
-        safe_path_str(&assets_dir),
-    );
-
-    if let Some(asset_index) = instance.asset_index.clone() {
-        push_option_if_missing(&mut final_game_args, "--assetIndex", asset_index);
-    }
-
-    // Placeholder auth (offline mode)
-    push_option_if_missing(&mut final_game_args, "--username", "Player".into());
-    push_option_if_missing(
-        &mut final_game_args,
-        "--uuid",
-        "00000000-0000-0000-0000-000000000000".into(),
-    );
-    push_option_if_missing(
-        &mut final_game_args,
-        "--version",
-        instance.minecraft_version.clone(),
-    );
-    push_option_if_missing(&mut final_game_args, "--accessToken", "0".into());
-    push_option_if_missing(&mut final_game_args, "--userType", "legacy".into());
-    push_option_if_missing(&mut final_game_args, "--versionType", "release".into());
-
-    for arg in final_game_args {
+    // Pass exactly the resolved game args from version metadata.
+    for arg in sanitize_game_args(instance, &instance.game_args, &game_dir, &assets_dir) {
         cmd.arg(arg);
     }
 
@@ -208,6 +170,7 @@ fn sanitize_game_args(
                 instance.asset_index.as_deref().unwrap_or("legacy"),
             )
             .replace("${auth_uuid}", "00000000-0000-0000-0000-000000000000")
+            .replace("${access_token}", "0")
             .replace("${auth_access_token}", "0")
             .replace("${user_type}", "legacy")
             .replace("${version_type}", "release");
@@ -221,19 +184,6 @@ fn sanitize_game_args(
     }
 
     sanitized
-}
-
-fn push_option_if_missing(args: &mut Vec<String>, option: &str, value: String) {
-    if has_option(args, option) {
-        return;
-    }
-    args.push(option.to_string());
-    args.push(value);
-}
-
-fn has_option(args: &[String], option: &str) -> bool {
-    args.iter()
-        .any(|arg| arg == option || arg.starts_with(&format!("{}=", option)))
 }
 
 #[cfg(test)]
@@ -315,13 +265,25 @@ mod tests {
     }
 
     #[test]
-    fn push_option_if_missing_avoids_duplicate_version_argument() {
-        let mut args = vec!["--version".to_string(), "1.20.1".to_string()];
-        push_option_if_missing(&mut args, "--version", "1.20.1".into());
-        assert_eq!(args, vec!["--version", "1.20.1"]);
+    fn sanitize_game_args_supports_access_token_alias() {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::Vanilla,
+            None,
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
 
-        let mut args_equals = vec!["--version=1.20.1".to_string()];
-        push_option_if_missing(&mut args_equals, "--version", "1.20.1".into());
-        assert_eq!(args_equals, vec!["--version=1.20.1"]);
+        let args = vec!["--accessToken".into(), "${access_token}".into()];
+        let sanitized = sanitize_game_args(
+            &instance,
+            &args,
+            std::path::Path::new("/tmp/game"),
+            std::path::Path::new("/tmp/assets"),
+        );
+
+        assert_eq!(sanitized, vec!["--accessToken", "0"]);
     }
 }
