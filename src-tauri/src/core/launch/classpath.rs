@@ -27,7 +27,19 @@ pub fn build_classpath(
 
     // 1. All declared libraries (Vanilla + loader)
     for coord in extra_lib_coords {
-        match MavenArtifact::parse(coord) {
+        let trimmed = coord.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Allow direct JAR paths in addition to Maven coordinates.
+        let direct_path = Path::new(trimmed);
+        if direct_path.exists() {
+            entries.push(safe_path_str(direct_path));
+            continue;
+        }
+
+        match MavenArtifact::parse(trimmed) {
             Ok(artifact) => {
                 let lib_path = libs_dir.join(artifact.local_path());
                 if lib_path.exists() {
@@ -37,7 +49,7 @@ pub fn build_classpath(
                 }
             }
             Err(e) => {
-                debug!("Invalid library coordinate '{}': {}", coord, e);
+                debug!("Invalid library coordinate '{}': {}", trimmed, e);
             }
         }
     }
@@ -51,6 +63,13 @@ pub fn build_classpath(
     if entries.is_empty() {
         return Err(LauncherError::Other(
             "Classpath is empty — no libraries or client.jar found".into(),
+        ));
+    }
+
+    entries.retain(|entry| !entry.trim().is_empty());
+    if entries.is_empty() {
+        return Err(LauncherError::Other(
+            "Classpath is empty after filtering invalid entries".into(),
         ));
     }
 
@@ -144,5 +163,67 @@ pub fn safe_path_str(path: &Path) -> String {
     match std::fs::canonicalize(path) {
         Ok(p) => p.to_string_lossy().to_string(),
         Err(_) => path.to_string_lossy().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::instance::{Instance, LoaderType};
+
+    fn test_instance(base_dir: &Path) -> Instance {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.21.1".into(),
+            LoaderType::Vanilla,
+            None,
+            2048,
+            base_dir,
+        );
+        instance.path = base_dir.to_path_buf();
+        instance
+    }
+
+    #[test]
+    fn build_classpath_rejects_empty_entries() {
+        let temp =
+            std::env::temp_dir().join(format!("classpath-test-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let instance = test_instance(&temp);
+        let libs_dir = temp.join("libraries");
+        std::fs::create_dir_all(&libs_dir).unwrap();
+
+        let err = build_classpath(&instance, &libs_dir, &["   ".into()]).unwrap_err();
+        assert!(err.to_string().contains("Classpath is empty"));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn build_classpath_accepts_direct_library_paths() {
+        let temp =
+            std::env::temp_dir().join(format!("classpath-test-direct-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let instance_dir = temp.join("instance");
+        std::fs::create_dir_all(&instance_dir).unwrap();
+        std::fs::write(instance_dir.join("client.jar"), b"client").unwrap();
+        let instance = test_instance(&instance_dir);
+
+        let external_jar = temp.join("external-lib.jar");
+        std::fs::write(&external_jar, b"lib").unwrap();
+
+        let classpath = build_classpath(
+            &instance,
+            &temp.join("libraries"),
+            &[external_jar.to_string_lossy().to_string()],
+        )
+        .unwrap();
+
+        assert!(classpath.contains("external-lib.jar"));
+        assert!(classpath.contains("client.jar"));
+
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }
