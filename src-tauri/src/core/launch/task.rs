@@ -60,13 +60,16 @@ pub async fn launch(
 
     // Extra JVM args from instance config or loader (normalized to avoid
     // dangling "-cp" without value and unresolved placeholders).
-    for arg in sanitize_jvm_args(
+    let mut effective_jvm_args = sanitize_jvm_args(
         instance,
         &instance.jvm_args,
         &natives_dir,
         libraries_dir,
         classpath,
-    ) {
+    );
+    ensure_loader_jvm_workarounds(instance, &mut effective_jvm_args);
+
+    for arg in effective_jvm_args {
         cmd.arg(arg);
     }
 
@@ -325,6 +328,20 @@ fn drop_dangling_option(args: &mut Vec<String>) {
     }
 }
 
+fn ensure_loader_jvm_workarounds(instance: &Instance, args: &mut Vec<String>) {
+    if !matches!(instance.loader, crate::core::instance::LoaderType::NeoForge) {
+        return;
+    }
+
+    // Workaround for crashes in NeoForge Early Display (`rendererFuture` null)
+    // seen on some GPU/overlay setups. Disabling the early progress window lets
+    // the game continue with the normal LWJGL window initialization path.
+    let early_window_flag = "-Dfml.earlyprogresswindow=false";
+    if !args.iter().any(|arg| arg == early_window_flag) {
+        args.push(early_window_flag.to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -565,5 +582,24 @@ mod tests {
                 "47.1.79"
             ]
         );
+    }
+
+    #[test]
+    fn ensure_loader_jvm_workarounds_adds_neoforge_early_window_flag_once() {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::NeoForge,
+            Some("47.1.79".into()),
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+
+        let mut args = vec!["-Xmx2048M".to_string()];
+        ensure_loader_jvm_workarounds(&instance, &mut args);
+        ensure_loader_jvm_workarounds(&instance, &mut args);
+
+        assert_eq!(args, vec!["-Xmx2048M", "-Dfml.earlyprogresswindow=false"]);
     }
 }
