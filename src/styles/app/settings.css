@@ -1,12 +1,13 @@
 .execution-log {
-  border: 1px solid #2f476d;
+  border: 1px solid rgba(121, 169, 247, 0.38);
   border-radius: 12px;
-  background: #0d1626;
+  background: rgba(9, 16, 30, 0.9);
   padding: 14px;
   font-family: "JetBrains Mono", "Fira Code", monospace;
   color: var(--success);
   max-height: 65vh;
   overflow: auto;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .execution-actions {
@@ -54,12 +55,13 @@
 }
 
 .settings-card {
-  border: 1px solid #304b75;
-  border-radius: 12px;
-  background: #111d31;
+  border: 1px solid rgba(124, 168, 245, 0.34);
+  border-radius: 14px;
+  background: linear-gradient(170deg, rgba(16, 29, 50, 0.86), rgba(10, 18, 32, 0.95));
   padding: 12px;
   display: grid;
   gap: 8px;
+  box-shadow: var(--shadow-soft);
 }
 
 .settings-card h4 {
