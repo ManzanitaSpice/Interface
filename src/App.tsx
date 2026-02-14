@@ -329,6 +329,7 @@ function App() {
   const launcherDirInputRef = useRef<HTMLInputElement | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const [isDetectingJava, setIsDetectingJava] = useState(false);
+  const [javaSearchQuery, setJavaSearchQuery] = useState("");
   const [instanceConfigTab, setInstanceConfigTab] = useState<InstanceConfigTab>("java");
   const [instanceJavaPathInput, setInstanceJavaPathInput] = useState("");
   const [instanceMaxMemoryInput, setInstanceMaxMemoryInput] = useState("4096");
@@ -341,6 +342,32 @@ function App() {
     () => instances.find((instance) => instance.id === selectedInstanceId) ?? null,
     [instances, selectedInstanceId],
   );
+
+  const filteredJavaInstallations = useMemo(() => {
+    const query = javaSearchQuery.trim().toLowerCase();
+    const sorted = [...javaInstallations].sort((a, b) => b.major - a.major || b.version.localeCompare(a.version));
+    if (!query) return sorted;
+
+    return sorted.filter((java) => {
+      const arch = java.is_64bit ? "64-bit" : "32-bit";
+      const target = `${java.version} ${java.major} ${arch} ${java.path}`.toLowerCase();
+      return target.includes(query);
+    });
+  }, [javaInstallations, javaSearchQuery]);
+
+  const suggestedInstanceJava = useMemo(() => {
+    if (!selectedInstance || javaInstallations.length === 0) return null;
+    const required = selectedInstance.required_java_major ?? 8;
+    const compatible = javaInstallations
+      .filter((java) => java.major >= required)
+      .sort((a, b) => a.major - b.major || a.version.localeCompare(b.version));
+
+    if (compatible.length > 0) return compatible[0];
+
+    return [...javaInstallations].sort((a, b) => b.major - a.major || b.version.localeCompare(a.version))[0] ?? null;
+  }, [selectedInstance, javaInstallations]);
+
+  const showInstanceToolsOnly = currentView === "instance-detail" || currentView === "instance-execution";
 
   useEffect(() => {
     if (!selectedInstance) return;
@@ -711,6 +738,11 @@ function App() {
     }
   };
 
+  const handleApplyInstanceJavaSuggestion = () => {
+    if (!suggestedInstanceJava) return;
+    setInstanceJavaPathInput(suggestedInstanceJava.path);
+  };
+
   const handleReinstallLauncher = async () => {
     if (!confirm("Esto borrará completamente la instalación del launcher, cache e instancias locales. ¿Deseas continuar?")) {
       return;
@@ -752,17 +784,24 @@ function App() {
       </header>
 
       <div className="app-layout">
-        <aside className="sidebar">
-          <div className="sidebar-header">Launcher</div>
-          <nav>
-            <button className={`sidebar-btn ${currentView === "home" ? "active" : ""}`} onClick={() => navigateToView("home")}>Instancias</button>
-            <button className={`sidebar-btn ${currentView === "settings" ? "active" : ""}`} onClick={() => navigateToView("settings")}>Configuración</button>
-          </nav>
-          {selectedInstance && (
-            <div className="instance-sidebar-tools">
+        {!showInstanceToolsOnly && (
+          <aside className="sidebar">
+            <div className="sidebar-header">Launcher</div>
+            <nav>
+              <button className={`sidebar-btn ${currentView === "home" ? "active" : ""}`} onClick={() => navigateToView("home")}>Instancias</button>
+              <button className={`sidebar-btn ${currentView === "settings" ? "active" : ""}`} onClick={() => navigateToView("settings")}>Configuración</button>
+            </nav>
+          </aside>
+        )}
+
+        {showInstanceToolsOnly && selectedInstance && (
+          <aside className="sidebar instance-sidebar-only">
+            <div className="sidebar-header">Herramientas</div>
+            <div className="instance-sidebar-tools visible">
               <h4>{selectedInstance.name}</h4>
+              <button className="sidebar-btn" onClick={() => navigateToView("home")}>← Volver a instancias</button>
               <button className={`sidebar-btn ${(currentView === "instance-detail") ? "active" : ""}`} onClick={() => navigateToView("instance-detail")}>Configurar instancia</button>
-              <button className={`sidebar-btn ${(currentView === "instance-execution") ? "active" : ""}`} onClick={() => navigateToView("instance-execution")}>Ejecusion</button>
+              <button className={`sidebar-btn ${(currentView === "instance-execution") ? "active" : ""}`} onClick={() => navigateToView("instance-execution")}>Ejecusión</button>
               <button className="start-instance-btn" type="button" onClick={() => void handleStartInstance(selectedInstance.id)}>
                 {selectedInstance.state === "running" ? "En ejecución" : "Iniciar instancia"}
               </button>
@@ -776,8 +815,8 @@ function App() {
                 Eliminar instancia
               </button>
             </div>
-          )}
-        </aside>
+          </aside>
+        )}
 
         <main className={`content-area ${currentView === "instance-detail" ? "instance-detail-open" : ""}`}>
           {firstLaunchStatus?.first_launch && (
@@ -877,6 +916,20 @@ function App() {
                       <input value={instanceJavaPathInput} onChange={(e) => setInstanceJavaPathInput(e.target.value)} placeholder="Auto por compatibilidad" />
                     </div>
                     <div className="form-group">
+                      <label>Javas detectadas</label>
+                      <select value={instanceJavaPathInput} onChange={(e) => setInstanceJavaPathInput(e.target.value)}>
+                        <option value="">Auto por compatibilidad de versión</option>
+                        {filteredJavaInstallations.map((java) => (
+                          <option key={java.path} value={java.path}>{`Java ${java.major} (${java.version}) ${java.is_64bit ? "64-bit" : "32-bit"} - ${java.path}`}</option>
+                        ))}
+                      </select>
+                      {suggestedInstanceJava && (
+                        <button className="open-folder-btn" type="button" onClick={handleApplyInstanceJavaSuggestion}>
+                          Sugerir Java {suggestedInstanceJava.major}+ para esta instancia
+                        </button>
+                      )}
+                    </div>
+                    <div className="form-group">
                       <label>Memoria máxima (MB)</label>
                       <input type="number" min={512} step={256} value={instanceMaxMemoryInput} onChange={(e) => setInstanceMaxMemoryInput(e.target.value)} />
                     </div>
@@ -944,29 +997,66 @@ function App() {
 
               {settingsTab === "java" && settings && (
                 <div className="settings-panel">
-                  <h3>Motor de Java para instancias nuevas</h3>
-                  <label className="radio-row"><input type="radio" checked={settings.java_runtime === "auto"} onChange={() => setSettings({ ...settings, java_runtime: "auto" })} />Auto (detectar por versión)</label>
-                  <label className="radio-row"><input type="radio" checked={settings.java_runtime === "system"} onChange={() => setSettings({ ...settings, java_runtime: "system" })} />Java del sistema</label>
-                  <label className="radio-row"><input type="radio" checked={settings.java_runtime === "embedded"} disabled={!settings.embedded_java_available} onChange={() => setSettings({ ...settings, java_runtime: "embedded" })} />Java embebido del launcher {settings.embedded_java_available ? "(disponible)" : "(no encontrado)"}</label>
-                  {!settings.embedded_java_available && <small>Coloca un runtime Java en <code>{settings.data_dir}/runtime</code> para habilitarlo.</small>}
-
-                  <div className="form-group">
-                    <label>Ruta Java del sistema</label>
-                    <select
-                      value={settings.selected_java_path ?? ""}
-                      onChange={(e) => setSettings({ ...settings, selected_java_path: e.target.value || null })}
-                      disabled={settings.java_runtime !== "system"}
-                    >
-                      <option value="">Selecciona una instalación detectada</option>
-                      {javaInstallations.map((java) => (
-                        <option key={java.path} value={java.path}>{`Java ${java.major} (${java.version}) ${java.is_64bit ? "64-bit" : "32-bit"} - ${java.path}`}</option>
-                      ))}
-                    </select>
+                  <h3>Configurador de Java</h3>
+                  <div className="java-runtime-mode-grid">
+                    <button type="button" className={`settings-tab ${settings.java_runtime === "auto" ? "active" : ""}`} onClick={() => setSettings({ ...settings, java_runtime: "auto" })}>Auto (recomendada)</button>
+                    <button type="button" className={`settings-tab ${settings.java_runtime === "system" ? "active" : ""}`} onClick={() => setSettings({ ...settings, java_runtime: "system" })}>Fijar Java manual</button>
+                    <button type="button" className={`settings-tab ${settings.java_runtime === "embedded" ? "active" : ""}`} onClick={() => setSettings({ ...settings, java_runtime: "embedded" })} disabled={!settings.embedded_java_available}>Java embebido</button>
                   </div>
 
-                  <button className="open-folder-btn" type="button" onClick={() => void handleDetectJavaInstallations()} disabled={isDetectingJava}>
-                    {isDetectingJava ? "Detectando instalaciones..." : "Detectar instalaciones Java"}
-                  </button>
+                  {!settings.embedded_java_available && <small>Coloca un runtime Java en <code>{settings.data_dir}/runtime</code> para habilitar el modo embebido.</small>}
+
+                  <div className="java-detector-toolbar">
+                    <input
+                      value={javaSearchQuery}
+                      onChange={(e) => setJavaSearchQuery(e.target.value)}
+                      placeholder="Buscar por versión, arquitectura o ruta..."
+                    />
+                    <button className="open-folder-btn" type="button" onClick={() => void handleDetectJavaInstallations()} disabled={isDetectingJava}>
+                      {isDetectingJava ? "Detectando..." : "Refrescar detección"}
+                    </button>
+                  </div>
+
+                  <div className="java-installation-table-wrap">
+                    <table className="java-installation-table">
+                      <thead>
+                        <tr>
+                          <th>Versión</th>
+                          <th>Arquitectura</th>
+                          <th>Ruta</th>
+                          <th>Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredJavaInstallations.length === 0 ? (
+                          <tr>
+                            <td colSpan={4}>No hay instalaciones Java que coincidan con la búsqueda.</td>
+                          </tr>
+                        ) : (
+                          filteredJavaInstallations.map((java) => (
+                            <tr key={java.path} className={settings.selected_java_path === java.path ? "selected" : ""}>
+                              <td>{`Java ${java.major} (${java.version})`}</td>
+                              <td>{java.is_64bit ? "64-bit" : "32-bit"}</td>
+                              <td title={java.path}>{java.path}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="open-folder-btn java-use-btn"
+                                  onClick={() => setSettings({ ...settings, java_runtime: "system", selected_java_path: java.path })}
+                                >
+                                  Usar
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {settings.selected_java_path && (
+                    <p><strong>Java seleccionada:</strong> <code>{settings.selected_java_path}</code></p>
+                  )}
 
                   <button className="generate-btn" type="button" onClick={() => void handleSaveJavaSettings()}>Guardar configuración Java</button>
                 </div>

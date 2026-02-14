@@ -57,6 +57,10 @@
   padding: 20px 10px;
 }
 
+.sidebar.instance-sidebar-only {
+  background: #26282d;
+}
+
 .instance-sidebar-tools {
   margin-top: 18px;
   border-top: 1px solid #3b3d45;
@@ -64,6 +68,12 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.instance-sidebar-tools.visible {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 0;
 }
 
 .instance-sidebar-tools h4 {
