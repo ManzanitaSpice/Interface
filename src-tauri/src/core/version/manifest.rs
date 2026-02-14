@@ -21,6 +21,7 @@ pub struct VersionEntry {
     pub id: String,
     #[serde(rename = "type")]
     pub version_type: String,
+    #[serde(rename = "releaseTime")]
     pub release_time: String,
     pub url: String,
     #[serde(default)]

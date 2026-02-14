@@ -118,13 +118,23 @@ const CREATE_SECTIONS = [
   "Revision",
 ] as const;
 
-const LOADER_CHOICES: { value: LoaderType | "liteloader"; label: string; supported: boolean }[] = [
-  { value: "vanilla", label: "Vanilla", supported: true },
-  { value: "neoforge", label: "NeoForge", supported: true },
-  { value: "forge", label: "Forge", supported: true },
-  { value: "fabric", label: "Fabric", supported: true },
-  { value: "quilt", label: "Quilt", supported: true },
-  { value: "liteloader", label: "LiteLoader", supported: false },
+const CREATE_SECTION_TITLES: Record<(typeof CREATE_SECTIONS)[number], string> = {
+  Base: "Personalizado",
+  Version: "Versión de Minecraft",
+  Loader: "Loader",
+  Java: "Java",
+  Memoria: "Memoria",
+  Mods: "Mods",
+  Recursos: "Recursos",
+  Revision: "Revisión",
+};
+
+const LOADER_CHOICES: { value: LoaderType; label: string }[] = [
+  { value: "vanilla", label: "Vanilla" },
+  { value: "neoforge", label: "NeoForge" },
+  { value: "forge", label: "Forge" },
+  { value: "fabric", label: "Fabric" },
+  { value: "quilt", label: "Quilt" },
 ];
 
 const INSTANCE_CONFIG_TABS: InstanceConfigTab[] = [
@@ -688,8 +698,8 @@ function App() {
     }
   };
 
-  const shouldShowMinecraftBlock = ["Base", "Version"].includes(activeCreateSection);
-  const shouldShowLoaderBlock = ["Base", "Loader"].includes(activeCreateSection);
+  const shouldShowMinecraftBlock = activeCreateSection === "Version";
+  const shouldShowLoaderBlock = activeCreateSection === "Loader";
 
   const onSelectInstance = (instance: InstanceInfo) => {
     setSelectedInstance(instance);
@@ -881,7 +891,7 @@ function App() {
             {/* Main Content Sections */}
             <div className="create-content-scrollable">
                 <div className="create-section-header">
-                    <h2>Personalizado</h2>
+                    <h2>{CREATE_SECTION_TITLES[activeCreateSection]}</h2>
                 </div>
 
                 {createError && (
@@ -903,6 +913,24 @@ function App() {
                   <div className="create-error-banner" role="alert">
                     {minecraftVersionsError}
                   </div>
+                )}
+
+                {activeCreateSection === "Base" && (
+                  <section className="create-block-advanced single-pane-block">
+                    <div className="single-pane-content">
+                      <p>
+                        Configuración personalizada de la instancia. Usa el menú lateral para abrir
+                        cada sección (Versión, Loader, Java, etc.) por separado.
+                      </p>
+                      <p>
+                        Versión actual: <strong>{selectedMinecraftVersion ?? "No seleccionada"}</strong>
+                      </p>
+                      <p>
+                        Loader actual: <strong>{selectedLoaderType ? prettyLoader(selectedLoaderType) : "No seleccionado"}</strong>
+                        {selectedLoaderVersion ? ` · ${selectedLoaderVersion}` : ""}
+                      </p>
+                    </div>
+                  </section>
                 )}
 
                 {/* VERSION LIST & FILTERS BLOCK */}
@@ -940,6 +968,7 @@ function App() {
                 )}
                 
                 {/* SEARCH BAR UNDER LIST */}
+                {shouldShowMinecraftBlock && (
                 <div className="create-search-bar">
                      <input 
                         type="text" 
@@ -948,6 +977,7 @@ function App() {
                         onChange={(e) => setMinecraftVersionSearch(e.target.value)}
                      />
                 </div>
+                )}
 
                 {/* LOADER BLOCK */}
                 {shouldShowLoaderBlock && (
@@ -960,21 +990,31 @@ function App() {
                         ) : (
                              <div className="loader-version-list">
                                  <h3>{prettyLoader(selectedLoaderType)} Seleccionado</h3>
-                                 <p>Versión: {selectedLoaderVersion ?? "Automática"}</p>
+                                 <p>Versión seleccionada: {selectedLoaderVersion ?? "Automática"}</p>
                                  {loaderVersionsError && <p className="execution-error">{loaderVersionsError}</p>}
                                  {loaderVersionsLoading ? (
                                    <p>Cargando versiones de loader...</p>
                                  ) : (
-                                   <select
-                                     value={selectedLoaderVersion ?? ""}
-                                     onChange={(event) => setSelectedLoaderVersion(event.target.value || null)}
-                                   >
-                                     {loaderVersions.map((version) => (
-                                       <option key={version.version} value={version.version}>
-                                         {version.version} {version.stable ? "(estable)" : ""}
-                                       </option>
-                                     ))}
-                                   </select>
+                                  <table className="version-table sticky-header">
+                                    <thead>
+                                      <tr>
+                                        <th>Versión</th>
+                                        <th>Estado</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {loaderVersions.map((version) => (
+                                        <tr
+                                          key={version.version}
+                                          className={selectedLoaderVersion === version.version ? "selected" : ""}
+                                          onClick={() => setSelectedLoaderVersion(version.version)}
+                                        >
+                                          <td>{version.version}</td>
+                                          <td>{version.stable ? "Recomendada" : "Disponible"}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
                                  )}
                              </div>
                         )}
@@ -988,9 +1028,8 @@ function App() {
                                     <input 
                                         type="radio" 
                                         name="modloader" 
-                                        checked={selectedLoaderType === loader.value} 
-                                        disabled={!loader.supported}
-                                        onChange={() => loader.supported && setSelectedLoaderType(loader.value as LoaderType)}
+                                        checked={selectedLoaderType === loader.value}
+                                        onChange={() => setSelectedLoaderType(loader.value)}
                                     />
                                     {loader.label}
                                 </label>
@@ -1000,15 +1039,16 @@ function App() {
                 </section>
                 )}
 
-                 {/* SEARCH BAR UNDER LOADER (As per image layout consistency, usually one global or per section) */}
-                 {/* Image shows a search bar at the very bottom too? "Buscar" */}
-                 <div className="create-search-bar" style={{ marginTop: 8 }}>
-                     <input type="text" placeholder="Buscar" /> 
-                     {/* The text in image "Refrescar" is a button on the right of the search bar? No, it's above. */}
-                     <div style={{ marginLeft: "auto" }}>
-                        <button type="button" onClick={() => void reloadInstances()}>Refrescar instancias</button>
-                     </div>
-                </div>
+                {!["Base", "Version", "Loader"].includes(activeCreateSection) && (
+                  <section className="create-block-advanced single-pane-block">
+                    <div className="single-pane-content">
+                      <p>
+                        Esta sección es exclusiva de <strong>{CREATE_SECTION_TITLES[activeCreateSection]}</strong>.
+                        Aquí va su contenido específico sin mezclar opciones de otras pestañas.
+                      </p>
+                    </div>
+                  </section>
+                )}
 
                 {createLogs.length > 0 && (
                   <div className="create-log-box">
