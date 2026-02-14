@@ -34,9 +34,9 @@ pub async fn launch(
         Some(p) if p.exists() => p.clone(),
         _ => {
             // Auto-detect based on version JSON requirements
-            let java_major = instance
-                .required_java_major
-                .unwrap_or_else(|| determine_java_major(&instance.minecraft_version));
+            let java_major = instance.required_java_major.unwrap_or_else(|| {
+                java::required_java_for_minecraft_version(&instance.minecraft_version)
+            });
             java::resolve_java_binary(java_major).await?
         }
     };
@@ -117,27 +117,6 @@ pub async fn launch(
         .map_err(|e| LauncherError::JavaExecution(e.to_string()))?;
 
     Ok(child)
-}
-
-/// Determine the required Java major version based on Minecraft version string.
-fn determine_java_major(minecraft_version: &str) -> u32 {
-    let parts: Vec<&str> = minecraft_version.split('.').collect();
-    if parts.len() < 2 {
-        return 17;
-    }
-
-    let major = parts[0].parse::<u32>().unwrap_or(1);
-    let minor = parts[1].parse::<u32>().unwrap_or(20);
-
-    if major > 1 || minor >= 21 {
-        return 21;
-    }
-
-    if minor >= 17 {
-        return 17;
-    }
-
-    8
 }
 
 fn sanitize_jvm_args(
@@ -344,7 +323,7 @@ fn ensure_loader_jvm_workarounds(instance: &Instance, args: &mut Vec<String>) {
         return;
     }
 
-    if determine_java_major(&instance.minecraft_version) >= 17 {
+    if java::required_java_for_minecraft_version(&instance.minecraft_version) >= 17 {
         ensure_modern_forge_jvm_args(args);
     }
 
@@ -505,11 +484,11 @@ mod tests {
 
     #[test]
     fn java_major_detection() {
-        assert_eq!(determine_java_major("1.21.4"), 21);
-        assert_eq!(determine_java_major("1.21"), 21);
-        assert_eq!(determine_java_major("1.20.4"), 17);
-        assert_eq!(determine_java_major("1.16.5"), 8);
-        assert_eq!(determine_java_major("1.8.9"), 8);
+        assert_eq!(java::required_java_for_minecraft_version("1.21.4"), 21);
+        assert_eq!(java::required_java_for_minecraft_version("1.21"), 21);
+        assert_eq!(java::required_java_for_minecraft_version("1.20.4"), 17);
+        assert_eq!(java::required_java_for_minecraft_version("1.16.5"), 8);
+        assert_eq!(java::required_java_for_minecraft_version("1.8.9"), 8);
     }
 
     #[test]

@@ -104,7 +104,8 @@ impl LoaderInstaller for ForgeInstaller {
             serde_json::from_reader(file)?
         };
 
-        let required_java = required_java_for_minecraft(ctx.minecraft_version);
+        let required_java =
+            crate::core::java::required_java_for_minecraft_version(ctx.minecraft_version);
         let java_bin = crate::core::java::resolve_java_binary(required_java).await?;
 
         let minecraft_dir = ctx.instance_dir.join("minecraft");
@@ -512,24 +513,4 @@ fn resolve_version_with_inheritance(
     }
 
     serde_json::from_value(current_json).map_err(LauncherError::from)
-}
-
-fn required_java_for_minecraft(version: &str) -> u32 {
-    let mut parts = version.split('.');
-    let major = parts
-        .next()
-        .and_then(|p| p.parse::<u32>().ok())
-        .unwrap_or(1);
-    let minor = parts
-        .next()
-        .and_then(|p| p.parse::<u32>().ok())
-        .unwrap_or(20);
-
-    if major > 1 || minor >= 21 {
-        21
-    } else if minor >= 17 {
-        17
-    } else {
-        8
-    }
 }
