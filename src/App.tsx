@@ -7,7 +7,7 @@ type LoaderType = "vanilla" | "forge" | "fabric" | "neoforge" | "quilt";
 type InstanceState = "created" | "installing" | "ready" | "running" | "error";
 type JavaRuntimePreference = "auto" | "embedded" | "system";
 type SettingsTab = "java" | "launcher";
-type InstanceConfigTab = "overview" | "java";
+type InstanceConfigTab = "tools" | "java" | "args";
 type View = "home" | "create-instance" | "settings" | "instance-detail";
 
 interface InstanceInfo {
@@ -329,7 +329,7 @@ function App() {
   const launcherDirInputRef = useRef<HTMLInputElement | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const [isDetectingJava, setIsDetectingJava] = useState(false);
-  const [instanceConfigTab, setInstanceConfigTab] = useState<InstanceConfigTab>("overview");
+  const [instanceConfigTab, setInstanceConfigTab] = useState<InstanceConfigTab>("tools");
   const [instanceJavaPathInput, setInstanceJavaPathInput] = useState("");
   const [instanceMaxMemoryInput, setInstanceMaxMemoryInput] = useState("4096");
   const [instanceJvmArgsInput, setInstanceJvmArgsInput] = useState("");
@@ -590,7 +590,7 @@ function App() {
   const handleStartInstance = async (id: string) => {
     setError("");
     setSelectedInstanceId(id);
-    setInstanceConfigTab("overview");
+    setInstanceConfigTab("tools");
     updateLaunchProgress(id, "running", 4, "Solicitando inicio al backend");
     setInstances((prev) => prev.map((instance) => (instance.id === id ? { ...instance, state: "installing" } : instance)));
     try {
@@ -650,7 +650,7 @@ function App() {
 
   const openInstanceDetail = (id: string) => {
     setSelectedInstanceId(id);
-    setInstanceConfigTab("overview");
+    setInstanceConfigTab("tools");
     navigateToView("instance-detail");
   };
 
@@ -866,28 +866,39 @@ function App() {
                 </section>
 
                 <aside className="instance-tools-sidebar">
-                  <div className="settings-tabs instance-detail-tabs">
-                    <button className={`settings-tab ${instanceConfigTab === "overview" ? "active" : ""}`} onClick={() => setInstanceConfigTab("overview")}>Ejecución</button>
-                    <button className={`settings-tab ${instanceConfigTab === "java" ? "active" : ""}`} onClick={() => setInstanceConfigTab("java")}>Configurar</button>
+                  <h3>Herramientas de instancia</h3>
+                  <div className="instance-tool-group">
+                    <button className="start-instance-btn" type="button" onClick={() => void handleStartInstance(selectedInstance.id)}>
+                      {selectedInstance.state === "running" ? "En ejecución" : "Iniciar instancia"}
+                    </button>
+                    <button className="open-folder-btn" type="button" onClick={() => void handleOpenInstanceFolder(selectedInstance.id)}>
+                      Abrir carpeta
+                    </button>
                   </div>
+                  <div className="instance-tool-group secondary">
+                    <button className="generate-btn" type="button" onClick={() => setInstanceConfigTab("java")}>
+                      Configurar instancia
+                    </button>
+                    <button className="danger-btn secondary" type="button" onClick={() => void handleForceCloseInstance(selectedInstance.id)} disabled={selectedInstance.state !== "running"}>
+                      Parar ejecución
+                    </button>
+                    <button className="danger-btn" type="button" onClick={() => void handleDeleteInstance(selectedInstance.id)}>
+                      Eliminar instancia
+                    </button>
+                  </div>
+                </aside>
+              </div>
 
-                  {instanceConfigTab === "overview" && (
-                    <>
-                      <h3>Herramientas de ejecución</h3>
-                      <button className="start-instance-btn" type="button" onClick={() => void handleStartInstance(selectedInstance.id)}>
-                        {selectedInstance.state === "running" ? "En ejecución" : "Iniciar instancia"}
-                      </button>
-                      <button className="danger-btn secondary" type="button" onClick={() => void handleForceCloseInstance(selectedInstance.id)} disabled={selectedInstance.state !== "running"}>
-                        Parar ejecución
-                      </button>
-                      <button className="open-folder-btn" type="button" onClick={() => void handleOpenInstanceFolder(selectedInstance.id)}>
-                        Abrir carpeta
-                      </button>
-                      <button className="danger-btn" type="button" onClick={() => void handleDeleteInstance(selectedInstance.id)}>
-                        Eliminar instancia
-                      </button>
-                    </>
-                  )}
+              {instanceConfigTab !== "tools" && (
+                <section className="settings-panel instance-full-config">
+                  <div className="instance-config-header">
+                    <h3>Configuración avanzada de instancia</h3>
+                    <button className="open-folder-btn" type="button" onClick={() => setInstanceConfigTab("tools")}>Cerrar configuración</button>
+                  </div>
+                  <div className="settings-tabs">
+                    <button className={`settings-tab ${instanceConfigTab === "java" ? "active" : ""}`} onClick={() => setInstanceConfigTab("java")}>Java y memoria</button>
+                    <button className={`settings-tab ${instanceConfigTab === "args" ? "active" : ""}`} onClick={() => setInstanceConfigTab("args")}>Argumentos</button>
+                  </div>
 
                   {instanceConfigTab === "java" && (
                     <section className="instance-config-panel">
@@ -899,13 +910,27 @@ function App() {
                         <label>Memoria máxima (MB)</label>
                         <input type="number" min={512} step={256} value={instanceMaxMemoryInput} onChange={(e) => setInstanceMaxMemoryInput(e.target.value)} />
                       </div>
-                      <button className="generate-btn" type="button" onClick={() => void handleSaveInstanceConfig()} disabled={isSavingInstanceConfig}>
-                        {isSavingInstanceConfig ? "Guardando..." : "Guardar configuración"}
-                      </button>
                     </section>
                   )}
-                </aside>
-              </div>
+
+                  {instanceConfigTab === "args" && (
+                    <section className="instance-config-panel">
+                      <div className="form-group">
+                        <label>Argumentos JVM (uno por línea)</label>
+                        <textarea value={instanceJvmArgsInput} onChange={(e) => setInstanceJvmArgsInput(e.target.value)} rows={6} />
+                      </div>
+                      <div className="form-group">
+                        <label>Argumentos del juego (uno por línea)</label>
+                        <textarea value={instanceGameArgsInput} onChange={(e) => setInstanceGameArgsInput(e.target.value)} rows={6} />
+                      </div>
+                    </section>
+                  )}
+
+                  <button className="generate-btn" type="button" onClick={() => void handleSaveInstanceConfig()} disabled={isSavingInstanceConfig}>
+                    {isSavingInstanceConfig ? "Guardando..." : "Guardar configuración"}
+                  </button>
+                </section>
+              )}
 
             </section>
           )}
