@@ -88,7 +88,7 @@ fn resolve_library_entry(instance: &Instance, libs_dir: &Path, raw: &str) -> Opt
     let direct_path = Path::new(raw);
 
     // Absolute path as-is.
-    if direct_path.exists() {
+    if direct_path.exists() && is_allowed_classpath_path(direct_path) {
         return Some(safe_path_str(direct_path));
     }
 
@@ -100,7 +100,7 @@ fn resolve_library_entry(instance: &Instance, libs_dir: &Path, raw: &str) -> Opt
         instance.game_dir().join("libraries").join(raw),
     ];
     for candidate in relative_candidates {
-        if candidate.exists() {
+        if candidate.exists() && is_allowed_classpath_path(&candidate) {
             return Some(safe_path_str(&candidate));
         }
     }
@@ -116,12 +116,18 @@ fn resolve_library_entry(instance: &Instance, libs_dir: &Path, raw: &str) -> Opt
             .join(artifact.local_path()),
     ];
     for candidate in repo_candidates {
-        if candidate.exists() {
+        if candidate.exists() && is_allowed_classpath_path(&candidate) {
             return Some(safe_path_str(&candidate));
         }
     }
 
     None
+}
+
+fn is_allowed_classpath_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("jar"))
 }
 
 fn collect_local_library_jars(instance: &Instance) -> Vec<PathBuf> {
@@ -397,6 +403,35 @@ mod tests {
         .unwrap();
 
         assert!(classpath.contains("external-lib.jar"));
+        assert!(classpath.contains("client.jar"));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn build_classpath_ignores_non_jar_entries() {
+        let temp = std::env::temp_dir().join(format!(
+            "classpath-test-ignore-non-jar-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let instance_dir = temp.join("instance");
+        std::fs::create_dir_all(&instance_dir).unwrap();
+        std::fs::write(instance_dir.join("client.jar"), b"client").unwrap();
+        let instance = test_instance(&instance_dir);
+
+        let mappings = temp.join("neoform-mappings.tsrg.lzma");
+        std::fs::write(&mappings, b"not-a-jar").unwrap();
+
+        let classpath = build_classpath(
+            &instance,
+            &temp.join("libraries"),
+            &[mappings.to_string_lossy().to_string()],
+        )
+        .unwrap();
+
+        assert!(!classpath.contains("neoform-mappings.tsrg.lzma"));
         assert!(classpath.contains("client.jar"));
 
         let _ = std::fs::remove_dir_all(&temp);
