@@ -604,6 +604,32 @@ fn version_sort_key(version: &str) -> Vec<u64> {
         .collect()
 }
 
+fn is_neoforge_compatible(version: &str, minecraft_version: &str) -> bool {
+    let mut mc_parts = minecraft_version
+        .trim_start_matches("1.")
+        .split('.')
+        .filter_map(|part| part.parse::<u64>().ok());
+
+    let Some(mc_major) = mc_parts.next() else {
+        return false;
+    };
+    let Some(mc_minor) = mc_parts.next() else {
+        return false;
+    };
+
+    let mut loader_parts = version
+        .split('.')
+        .filter_map(|part| part.parse::<u64>().ok());
+    let Some(loader_major) = loader_parts.next() else {
+        return false;
+    };
+    let Some(loader_minor) = loader_parts.next() else {
+        return false;
+    };
+
+    loader_major == mc_major && loader_minor == mc_minor
+}
+
 #[tauri::command]
 pub async fn get_loader_versions(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
@@ -623,6 +649,8 @@ pub async fn get_loader_versions(
             #[derive(Deserialize)]
             struct FabricLoaderVersion {
                 version: String,
+                #[serde(default)]
+                stable: bool,
             }
 
             let url = format!(
@@ -642,6 +670,7 @@ pub async fn get_loader_versions(
 
             entries
                 .into_iter()
+                .filter(|entry| entry.loader.stable)
                 .map(|entry| entry.loader.version)
                 .collect()
         }
@@ -681,19 +710,12 @@ pub async fn get_loader_versions(
                 LauncherError::LoaderApi(format!("Unable to parse NeoForge metadata: {e}"))
             })?;
 
-            let version_prefix = minecraft_version
-                .trim_start_matches("1.")
-                .split('.')
-                .take(2)
-                .collect::<Vec<_>>()
-                .join(".");
-
             let mut resolved: Vec<String> = metadata
                 .versioning
                 .versions
                 .version
                 .into_iter()
-                .filter(|v| v.starts_with(&version_prefix))
+                .filter(|v| is_neoforge_compatible(v, &minecraft_version))
                 .collect();
 
             if minecraft_version == "1.20.1" {
@@ -726,6 +748,24 @@ pub async fn get_loader_versions(
     versions.dedup();
 
     Ok(versions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_neoforge_compatible;
+
+    #[test]
+    fn neoforge_compatibility_matches_same_minor_line() {
+        assert!(is_neoforge_compatible("21.1.127", "1.21.1"));
+        assert!(is_neoforge_compatible("20.6.95-beta", "1.20.6"));
+    }
+
+    #[test]
+    fn neoforge_compatibility_rejects_other_minor_lines() {
+        assert!(!is_neoforge_compatible("21.10.4", "1.21.1"));
+        assert!(!is_neoforge_compatible("20.5.12", "1.20.1"));
+        assert!(!is_neoforge_compatible("invalid", "1.20.1"));
+    }
 }
 
 #[tauri::command]
