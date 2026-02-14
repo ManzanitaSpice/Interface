@@ -910,6 +910,13 @@ function App() {
                     <div className="create-progress-track">
                       <span style={{ width: `${Math.max(0, Math.min(100, createProgress.value))}%` }} />
                     </div>
+                    {createLogs.length > 0 && (
+                      <div className="create-log-box">
+                        {createLogs.map((log, index) => (
+                          <p key={`${log.level}-${index}`}>[{log.level.toUpperCase()}] {log.message}</p>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1046,14 +1053,6 @@ function App() {
                       </p>
                     </div>
                   </section>
-                )}
-
-                {createLogs.length > 0 && (
-                  <div className="create-log-box">
-                    {createLogs.slice(-8).map((log, index) => (
-                      <p key={`${log.level}-${index}`}>[{log.level.toUpperCase()}] {log.message}</p>
-                    ))}
-                  </div>
                 )}
 
             </div>

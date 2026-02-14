@@ -434,15 +434,19 @@
 }
 
 .create-log-box {
+  margin-top: 8px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   background: rgba(17, 23, 35, 0.82);
-  padding: 8px;
+  padding: 6px 8px;
   font-family: "JetBrains Mono", "Fira Code", monospace;
-  font-size: 0.72rem;
+  font-size: 0.7rem;
+  line-height: 1.35;
   color: var(--text-muted);
   display: grid;
-  gap: 4px;
+  gap: 2px;
+  max-height: calc(1.35em * 2 + 14px);
+  overflow-y: auto;
 }
 
 .create-log-box p {
