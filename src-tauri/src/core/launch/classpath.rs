@@ -91,6 +91,7 @@ fn resolve_library_entry(instance: &Instance, libs_dir: &Path, raw: &str) -> Opt
     let relative_candidates = [
         instance.path.join(raw),
         instance.game_dir().join(raw),
+        libs_dir.join(raw),
         instance.game_dir().join("libraries").join(raw),
     ];
     for candidate in relative_candidates {

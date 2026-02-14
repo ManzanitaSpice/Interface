@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use serde::Deserialize;
 use tracing::info;
@@ -155,7 +156,10 @@ impl LoaderInstaller for ForgeInstaller {
                     path: installed_version_path.clone(),
                     source: e,
                 })?;
-            let installed_version: VersionJson = serde_json::from_str(&raw_version)?;
+            let installed_version = resolve_version_with_inheritance(
+                &raw_version,
+                installed_version_path.parent().unwrap_or(ctx.instance_dir),
+            )?;
 
             resolved_main_class = installed_version.main_class.clone();
             extra_jvm_args = installed_version.simple_jvm_args();
@@ -171,7 +175,13 @@ impl LoaderInstaller for ForgeInstaller {
         }
 
         for lib_name in &libraries {
-            let artifact = MavenArtifact::parse(lib_name)?;
+            let Ok(artifact) = MavenArtifact::parse(lib_name) else {
+                // Some metadata entries are direct artifact paths already resolved
+                // from `downloads.artifact.path`; those are handled by classpath
+                // resolution and do not need Maven coordinate downloads.
+                continue;
+            };
+
             let dest = ctx.libs_dir.join(artifact.local_path());
             if !dest.exists() {
                 let primary = artifact.url(FORGE_MAVEN);
@@ -201,6 +211,40 @@ impl LoaderInstaller for ForgeInstaller {
             java_major,
         })
     }
+}
+
+fn resolve_version_with_inheritance(
+    raw_json: &str,
+    current_version_dir: &Path,
+) -> LauncherResult<VersionJson> {
+    let mut current_json: serde_json::Value = serde_json::from_str(raw_json)?;
+    let versions_root = current_version_dir
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| current_version_dir.to_path_buf());
+
+    for _ in 0..8 {
+        let Some(parent_id) = current_json
+            .get("inheritsFrom")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        else {
+            break;
+        };
+
+        let parent_path = versions_root
+            .join(parent_id)
+            .join(format!("{}.json", parent_id));
+        let parent_raw = std::fs::read_to_string(&parent_path).map_err(|e| LauncherError::Io {
+            path: parent_path.clone(),
+            source: e,
+        })?;
+        let parent_json: serde_json::Value = serde_json::from_str(&parent_raw)?;
+        current_json = VersionJson::merge_with_parent_json(&current_json, &parent_json);
+    }
+
+    serde_json::from_value(current_json).map_err(LauncherError::from)
 }
 
 fn required_java_for_minecraft(version: &str) -> u32 {

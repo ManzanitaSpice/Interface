@@ -16,6 +16,8 @@ pub struct VersionJson {
     pub id: Option<String>,
     pub main_class: String,
     #[serde(default)]
+    pub inherits_from: Option<String>,
+    #[serde(default)]
     pub libraries: Vec<LibraryEntry>,
     pub downloads: Option<VersionDownloads>,
     #[serde(default)]
@@ -241,6 +243,8 @@ impl VersionJson {
             }
 
             // ── Download main artifact ──
+            let mut classpath_entry = lib.name.clone();
+
             if let Some(ref downloads) = lib.downloads {
                 if let Some(ref artifact) = downloads.artifact {
                     let dest = libs_dir.join(&artifact.path);
@@ -249,6 +253,9 @@ impl VersionJson {
                             .download_file(&artifact.url, &dest, Some(&artifact.sha1))
                             .await?;
                     }
+
+                    // Prefer concrete artifact path for classpath resolution.
+                    classpath_entry = artifact.path.clone();
                 }
 
                 // ── Download native classifiers ──
@@ -270,7 +277,7 @@ impl VersionJson {
                 }
             }
 
-            lib_coords.push(lib.name.clone());
+            lib_coords.push(classpath_entry);
         }
 
         info!(
@@ -292,11 +299,7 @@ impl VersionJson {
     /// Extract simple game arguments (string-only, no conditional rules).
     pub fn simple_game_args(&self) -> Vec<String> {
         match &self.arguments {
-            Some(args) => args
-                .game
-                .iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect(),
+            Some(args) => args.game.iter().flat_map(extract_argument_values).collect(),
             None => {
                 // Legacy minecraftArguments (space-separated)
                 match &self.minecraft_arguments {
@@ -310,14 +313,79 @@ impl VersionJson {
     /// Extract simple JVM arguments (string-only, no conditional rules).
     pub fn simple_jvm_args(&self) -> Vec<String> {
         match &self.arguments {
-            Some(args) => args
-                .jvm
-                .iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect(),
+            Some(args) => args.jvm.iter().flat_map(extract_argument_values).collect(),
             None => vec![],
         }
     }
+
+    /// Build a merged version JSON with `parent_json` as base and this version
+    /// overriding matching keys.
+    pub fn merge_with_parent_json(
+        current_json: &serde_json::Value,
+        parent_json: &serde_json::Value,
+    ) -> serde_json::Value {
+        let mut merged = parent_json.clone();
+
+        if let Some(obj) = current_json.as_object() {
+            for (k, v) in obj {
+                merged[k] = v.clone();
+            }
+        }
+
+        merged
+    }
+}
+
+fn extract_argument_values(value: &serde_json::Value) -> Vec<String> {
+    if let Some(arg) = value.as_str() {
+        return vec![arg.to_string()];
+    }
+
+    let Some(obj) = value.as_object() else {
+        return vec![];
+    };
+
+    if let Some(rules) = obj.get("rules").and_then(|r| r.as_array()) {
+        if !rules_allow_current_os(rules) {
+            return vec![];
+        }
+    }
+
+    match obj.get("value") {
+        Some(serde_json::Value::String(s)) => vec![s.clone()],
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(ToString::to_string))
+            .collect(),
+        _ => vec![],
+    }
+}
+
+fn rules_allow_current_os(rules: &[serde_json::Value]) -> bool {
+    let mut allowed = false;
+    let current_os = current_os_name();
+
+    for rule in rules {
+        let action = rule
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("disallow");
+
+        let os_matches = match rule
+            .get("os")
+            .and_then(|os| os.get("name"))
+            .and_then(|name| name.as_str())
+        {
+            None => true,
+            Some(name) => name == current_os,
+        };
+
+        if os_matches {
+            allowed = action == "allow";
+        }
+    }
+
+    allowed
 }
 
 #[cfg(test)]
@@ -375,5 +443,56 @@ mod tests {
             natives: None,
         };
         assert!(!lib.is_allowed_for_current_os());
+    }
+
+    #[test]
+    fn argument_object_rules_apply_to_current_os() {
+        let parsed: VersionJson = serde_json::from_value(serde_json::json!({
+            "id": "test",
+            "mainClass": "net.minecraft.client.main.Main",
+            "arguments": {
+                "game": [
+                    "--username",
+                    "Player",
+                    {
+                        "rules": [{"action": "allow", "os": {"name": "linux"}}],
+                        "value": ["--demo"]
+                    },
+                    {
+                        "rules": [{"action": "allow", "os": {"name": "windows"}}],
+                        "value": "--should-not-appear"
+                    }
+                ]
+            }
+        }))
+        .unwrap();
+
+        let game_args = parsed.simple_game_args();
+        assert!(game_args.contains(&"--username".to_string()));
+        assert!(game_args.contains(&"Player".to_string()));
+        if cfg!(target_os = "linux") {
+            assert!(game_args.contains(&"--demo".to_string()));
+            assert!(!game_args.contains(&"--should-not-appear".to_string()));
+        }
+    }
+
+    #[test]
+    fn merge_with_parent_json_overrides_parent_fields() {
+        let parent = serde_json::json!({
+            "mainClass": "parent.Main",
+            "libraries": [{"name": "a:b:1.0"}],
+            "arguments": { "game": ["--parent"] }
+        });
+        let current = serde_json::json!({
+            "inheritsFrom": "1.20.1",
+            "mainClass": "child.Main",
+            "arguments": { "game": ["--child"] }
+        });
+
+        let merged = VersionJson::merge_with_parent_json(&current, &parent);
+
+        assert_eq!(merged["mainClass"], "child.Main");
+        assert_eq!(merged["libraries"][0]["name"], "a:b:1.0");
+        assert_eq!(merged["arguments"]["game"][0], "--child");
     }
 }
