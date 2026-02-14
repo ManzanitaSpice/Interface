@@ -324,16 +324,88 @@ impl VersionJson {
         current_json: &serde_json::Value,
         parent_json: &serde_json::Value,
     ) -> serde_json::Value {
-        let mut merged = parent_json.clone();
+        merge_json_values(parent_json, current_json)
+    }
+}
 
-        if let Some(obj) = current_json.as_object() {
-            for (k, v) in obj {
-                merged[k] = v.clone();
+fn merge_json_values(parent: &serde_json::Value, child: &serde_json::Value) -> serde_json::Value {
+    match (parent, child) {
+        (serde_json::Value::Object(parent_obj), serde_json::Value::Object(child_obj)) => {
+            let mut merged = parent_obj.clone();
+            for (key, child_value) in child_obj {
+                let value = match key.as_str() {
+                    "libraries" => merge_libraries(merged.get(key), child_value),
+                    "arguments" => merge_arguments(merged.get(key), child_value),
+                    _ => merged
+                        .get(key)
+                        .map(|parent_value| merge_json_values(parent_value, child_value))
+                        .unwrap_or_else(|| child_value.clone()),
+                };
+                merged.insert(key.clone(), value);
+            }
+            serde_json::Value::Object(merged)
+        }
+        (_, child_value) => child_value.clone(),
+    }
+}
+
+fn merge_libraries(
+    parent_libraries: Option<&serde_json::Value>,
+    child_libraries: &serde_json::Value,
+) -> serde_json::Value {
+    let mut merged = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for source in [parent_libraries, Some(child_libraries)]
+        .into_iter()
+        .flatten()
+    {
+        let Some(arr) = source.as_array() else {
+            continue;
+        };
+
+        for entry in arr {
+            let key = entry
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| entry.to_string());
+
+            if seen.insert(key) {
+                merged.push(entry.clone());
             }
         }
-
-        merged
     }
+
+    serde_json::Value::Array(merged)
+}
+
+fn merge_arguments(
+    parent_arguments: Option<&serde_json::Value>,
+    child_arguments: &serde_json::Value,
+) -> serde_json::Value {
+    let mut merged = parent_arguments
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+
+    let Some(child_obj) = child_arguments.as_object() else {
+        return child_arguments.clone();
+    };
+
+    for (key, value) in child_obj {
+        let merged_value = match (merged.get(key), value) {
+            (Some(serde_json::Value::Array(parent_arr)), serde_json::Value::Array(child_arr)) => {
+                let mut args = parent_arr.clone();
+                args.extend(child_arr.clone());
+                serde_json::Value::Array(args)
+            }
+            _ => value.clone(),
+        };
+
+        merged.insert(key.clone(), merged_value);
+    }
+
+    serde_json::Value::Object(merged)
 }
 
 fn extract_argument_values(value: &serde_json::Value) -> Vec<String> {
@@ -481,14 +553,15 @@ mod tests {
         let parent = serde_json::json!({
             "id": "1.20.1",
             "mainClass": "parent.Main",
-            "libraries": [{"name": "a:b:1.0"}],
-            "arguments": { "game": ["--parent"] }
+            "libraries": [{"name": "a:b:1.0"}, {"name": "shared:lib:1.0"}],
+            "arguments": { "game": ["--parent"], "jvm": ["-Dparent=true"] }
         });
         let current = serde_json::json!({
             "id": "1.20.1-forge-47.2.0",
             "inheritsFrom": "1.20.1",
             "mainClass": "child.Main",
-            "arguments": { "game": ["--child"] }
+            "libraries": [{"name": "shared:lib:1.0"}, {"name": "child:lib:2.0"}],
+            "arguments": { "game": ["--child"], "jvm": ["-Dchild=true"] }
         });
 
         let merged = VersionJson::merge_with_parent_json(&current, &parent);
@@ -496,7 +569,12 @@ mod tests {
         assert_eq!(merged["mainClass"], "child.Main");
         assert_eq!(merged["id"], "1.20.1-forge-47.2.0");
         assert_eq!(merged["libraries"][0]["name"], "a:b:1.0");
-        assert_eq!(merged["arguments"]["game"][0], "--child");
+        assert_eq!(merged["libraries"][1]["name"], "shared:lib:1.0");
+        assert_eq!(merged["libraries"][2]["name"], "child:lib:2.0");
+        assert_eq!(merged["arguments"]["game"][0], "--parent");
+        assert_eq!(merged["arguments"]["game"][1], "--child");
+        assert_eq!(merged["arguments"]["jvm"][0], "-Dparent=true");
+        assert_eq!(merged["arguments"]["jvm"][1], "-Dchild=true");
     }
 
     #[test]

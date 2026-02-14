@@ -16,7 +16,11 @@ use super::classpath::safe_path_str;
 ///
 /// Returns immediately after spawning. The caller is responsible for monitoring
 /// the child process and setting state back to `Ready` when it exits.
-pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std::process::Child> {
+pub async fn launch(
+    instance: &Instance,
+    classpath: &str,
+    libraries_dir: &std::path::Path,
+) -> LauncherResult<std::process::Child> {
     let main_class = instance
         .main_class
         .as_deref()
@@ -47,12 +51,22 @@ pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std:
         "-Djava.library.path={}",
         safe_path_str(&natives_dir)
     ));
+    cmd.arg(format!(
+        "-DlibraryDirectory={}",
+        safe_path_str(libraries_dir)
+    ));
     cmd.arg("-Dminecraft.launcher.brand=InterfaceOficial");
     cmd.arg("-Dminecraft.launcher.version=0.1.0");
 
     // Extra JVM args from instance config or loader (normalized to avoid
     // dangling "-cp" without value and unresolved placeholders).
-    for arg in sanitize_jvm_args(instance, &instance.jvm_args, &natives_dir, classpath) {
+    for arg in sanitize_jvm_args(
+        instance,
+        &instance.jvm_args,
+        &natives_dir,
+        libraries_dir,
+        classpath,
+    ) {
         cmd.arg(arg);
     }
 
@@ -121,13 +135,14 @@ fn sanitize_jvm_args(
     instance: &Instance,
     raw_args: &[String],
     natives_dir: &std::path::Path,
+    libraries_dir: &std::path::Path,
     classpath: &str,
 ) -> Vec<String> {
     let mut sanitized = Vec::new();
     let mut i = 0;
     let natives = safe_path_str(natives_dir);
     let game_dir = safe_path_str(&instance.game_dir());
-    let library_dir = safe_path_str(&instance.game_dir().join("libraries"));
+    let library_dir = safe_path_str(libraries_dir);
     let classpath_separator = super::classpath::get_classpath_separator();
     let launch_version_name = launch_version_name(instance);
     let loader_version = instance.loader_version.as_deref().unwrap_or("");
@@ -216,6 +231,36 @@ fn sanitize_game_args(
         i += 1;
     }
 
+    sanitize_numeric_window_args(sanitized)
+}
+
+fn sanitize_numeric_window_args(args: Vec<String>) -> Vec<String> {
+    let mut sanitized = Vec::with_capacity(args.len());
+    let mut i = 0;
+
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--width" || arg == "--height" {
+            let Some(value) = args.get(i + 1) else {
+                i += 1;
+                continue;
+            };
+
+            if value.starts_with('-') || value.parse::<u32>().is_err() {
+                i += 1;
+                continue;
+            }
+
+            sanitized.push(arg.clone());
+            sanitized.push(value.clone());
+            i += 2;
+            continue;
+        }
+
+        sanitized.push(arg.clone());
+        i += 1;
+    }
+
     sanitized
 }
 
@@ -270,7 +315,13 @@ mod tests {
         );
         instance.path = std::path::PathBuf::from("/tmp/test-instance");
 
-        let sanitized = sanitize_jvm_args(&instance, &args, &natives, "/tmp/classpath.jar");
+        let sanitized = sanitize_jvm_args(
+            &instance,
+            &args,
+            &natives,
+            std::path::Path::new("/tmp/libraries"),
+            "/tmp/classpath.jar",
+        );
 
         assert_eq!(sanitized.len(), 2);
         assert_eq!(sanitized[0], "-XX:+UseG1GC");
@@ -365,5 +416,37 @@ mod tests {
         );
 
         assert_eq!(sanitized, vec!["--fml.mcVersion", "1.20.1"]);
+    }
+
+    #[test]
+    fn sanitize_game_args_drops_invalid_window_size_pairs() {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::NeoForge,
+            Some("20.4.1-beta".into()),
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+        instance.account = LaunchAccountProfile::offline("Alex").sanitized();
+
+        let args = vec![
+            "--width".into(),
+            "--height".into(),
+            "480".into(),
+            "--height".into(),
+            "720".into(),
+        ];
+
+        let sanitized = sanitize_game_args(
+            &instance,
+            &args,
+            std::path::Path::new("/tmp/game"),
+            std::path::Path::new("/tmp/assets"),
+            &instance.account,
+        );
+
+        assert_eq!(sanitized, vec!["--height", "720"]);
     }
 }
