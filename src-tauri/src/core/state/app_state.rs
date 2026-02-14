@@ -259,8 +259,8 @@ fn save_bootstrap_config(data_dir: &PathBuf) -> std::io::Result<()> {
 }
 
 fn create_desktop_shortcut(
-    app_handle: &tauri::AppHandle,
-    data_dir: &PathBuf,
+    _app_handle: &tauri::AppHandle,
+    _data_dir: &PathBuf,
 ) -> std::io::Result<()> {
     let desktop_dir = dirs::desktop_dir()
         .or_else(dirs::home_dir)
@@ -281,7 +281,7 @@ fn create_desktop_shortcut(
         let content = format!(
             "[Desktop Entry]\nType=Application\nName=Interface Launcher\nExec={}\nPath={}\nTerminal=false\n",
             launcher_exe.display(),
-            data_dir.display()
+            _data_dir.display()
         );
         std::fs::write(&shortcut_path, content)?;
     }

@@ -244,7 +244,7 @@ fn run_processors(
     installer_path: &Path,
     install_profile: &ForgeInstallProfile,
 ) -> LauncherResult<()> {
-    let mut variables = build_processor_variables(ctx, installer_path, installer_bytes)?;
+    let mut variables = build_processor_variables(&ctx, installer_path, installer_bytes)?;
     merge_profile_data_variables(&mut variables, &install_profile.data);
 
     for processor in &install_profile.processors {
@@ -309,7 +309,7 @@ fn run_processors(
 }
 
 fn build_processor_variables(
-    ctx: InstallContext<'_>,
+    ctx: &InstallContext<'_>,
     installer_path: &Path,
     installer_bytes: &[u8],
 ) -> LauncherResult<HashMap<String, String>> {
@@ -346,7 +346,7 @@ fn build_processor_variables(
 }
 
 fn extract_client_binpatch(
-    ctx: InstallContext<'_>,
+    ctx: &InstallContext<'_>,
     installer_bytes: &[u8],
 ) -> LauncherResult<Option<std::path::PathBuf>> {
     let cursor = std::io::Cursor::new(installer_bytes);
