@@ -438,6 +438,21 @@ struct InstanceLaunchLogEvent {
     message: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct InstanceCreationProgressEvent {
+    id: String,
+    value: u8,
+    stage: String,
+    state: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct InstanceCreationLogEvent {
+    id: String,
+    level: String,
+    message: String,
+}
+
 fn emit_launch_progress(
     app_handle: &tauri::AppHandle,
     id: &str,
@@ -460,6 +475,35 @@ fn emit_launch_log(app_handle: &tauri::AppHandle, id: &str, level: &str, message
     let _ = app_handle.emit(
         "instance-launch-log",
         InstanceLaunchLogEvent {
+            id: id.to_string(),
+            level: level.to_string(),
+            message,
+        },
+    );
+}
+
+fn emit_create_progress(
+    app_handle: &tauri::AppHandle,
+    id: &str,
+    value: u8,
+    stage: &str,
+    state: &str,
+) {
+    let _ = app_handle.emit(
+        "instance-create-progress",
+        InstanceCreationProgressEvent {
+            id: id.to_string(),
+            value,
+            stage: stage.to_string(),
+            state: state.to_string(),
+        },
+    );
+}
+
+fn emit_create_log(app_handle: &tauri::AppHandle, id: &str, level: &str, message: String) {
+    let _ = app_handle.emit(
+        "instance-create-log",
+        InstanceCreationLogEvent {
             id: id.to_string(),
             level: level.to_string(),
             message,
@@ -626,6 +670,7 @@ pub async fn get_loader_versions(
 
 #[tauri::command]
 pub async fn create_instance(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     payload: CreateInstancePayload,
 ) -> Result<InstanceInfo, LauncherError> {
@@ -643,6 +688,14 @@ pub async fn create_instance(
         ))
         .await?;
 
+    emit_create_progress(&app, &instance.id, 8, "Estructura creada", "running");
+    emit_create_log(
+        &app,
+        &instance.id,
+        "info",
+        "Instancia creada en disco, iniciando instalación base...".into(),
+    );
+
     let libs_dir = state.libraries_dir();
     let client = state.http_client.clone();
     let vanilla_installer = loaders::Installer::new(&LoaderType::Vanilla, client.clone());
@@ -657,6 +710,7 @@ pub async fn create_instance(
             instance.id, err
         );
     }
+    emit_create_progress(&app, &instance.id, 16, "Preparando Vanilla", "running");
 
     let install_result: Result<(), LauncherError> = async {
         let vanilla_result = vanilla_installer
@@ -670,6 +724,14 @@ pub async fn create_instance(
             })
             .await?;
 
+        emit_create_progress(&app, &instance.id, 42, "Vanilla instalado", "running");
+        emit_create_log(
+            &app,
+            &instance.id,
+            "info",
+            "Runtime Vanilla preparado.".into(),
+        );
+
         instance.main_class = Some(vanilla_result.main_class.clone());
         instance.asset_index = vanilla_result.asset_index_id.clone();
         instance.libraries = vanilla_result.libraries.clone();
@@ -679,6 +741,7 @@ pub async fn create_instance(
 
         if instance.loader != LoaderType::Vanilla {
             if let Some(ref loader_version) = instance.loader_version {
+                emit_create_progress(&app, &instance.id, 56, "Instalando loader", "running");
                 let installer = loaders::Installer::new(&instance.loader, client.clone());
                 let loader_result = installer
                     .install(loaders::InstallContext {
@@ -690,6 +753,13 @@ pub async fn create_instance(
                         http_client: &client,
                     })
                     .await?;
+
+                emit_create_log(
+                    &app,
+                    &instance.id,
+                    "info",
+                    format!("Loader {} {} instalado.", instance.loader, loader_version),
+                );
 
                 instance.main_class = Some(loader_result.main_class);
                 instance.jvm_args.extend(loader_result.extra_jvm_args);
@@ -710,6 +780,7 @@ pub async fn create_instance(
             })?;
 
         if let Some(url) = vanilla_result.asset_index_url {
+            emit_create_progress(&app, &instance.id, 72, "Descargando assets", "running");
             AssetManager::download_assets(&url, &assets_dir, state.downloader.as_ref()).await?;
         }
 
@@ -736,6 +807,13 @@ pub async fn create_instance(
     .await;
 
     if let Err(err) = install_result {
+        emit_create_progress(&app, &instance.id, 100, "Error en creación", "error");
+        emit_create_log(
+            &app,
+            &instance.id,
+            "error",
+            format!("Falló la creación: {err}"),
+        );
         instance.state = InstanceState::Error;
         if let Err(save_err) = state.instance_manager.save(&instance).await {
             error!(
@@ -747,7 +825,15 @@ pub async fn create_instance(
     }
 
     instance.state = InstanceState::Ready;
+    state.instance_manager.verify_structure(&instance).await?;
     state.instance_manager.save(&instance).await?;
+    emit_create_progress(&app, &instance.id, 100, "Instancia lista", "done");
+    emit_create_log(
+        &app,
+        &instance.id,
+        "info",
+        "Instancia creada correctamente y verificada.".into(),
+    );
 
     info!("Instance '{}' created and ready", instance.name);
     Ok(InstanceInfo::from(&instance))

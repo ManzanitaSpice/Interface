@@ -34,21 +34,48 @@ impl InstanceManager {
         }
 
         // Create directory structure eagerly to reduce first-launch failures.
-        for subdir in &["minecraft", "minecraft/assets", "mods", "config", "logs"] {
-            let dir = instance.path.join(subdir);
-            tokio::fs::create_dir_all(&dir)
-                .await
-                .map_err(|e| LauncherError::Io {
-                    path: dir,
-                    source: e,
-                })?;
-        }
+        let minecraft_dir = instance.path.join("minecraft");
+        let assets_dir = minecraft_dir.join("assets");
+        let mods_dir = instance.path.join("mods");
+        let config_dir = instance.path.join("config");
+        let logs_dir = instance.path.join("logs");
+
+        tokio::try_join!(
+            create_dir_safe(&minecraft_dir),
+            create_dir_safe(&assets_dir),
+            create_dir_safe(&mods_dir),
+            create_dir_safe(&config_dir),
+            create_dir_safe(&logs_dir),
+        )?;
+
+        self.verify_structure(&instance).await?;
 
         // Persist instance.json
         self.save(&instance).await?;
 
         info!("Created instance '{}' ({})", instance.name, instance.id);
         Ok(instance)
+    }
+
+    pub async fn verify_structure(&self, instance: &Instance) -> LauncherResult<()> {
+        for subdir in ["minecraft", "minecraft/assets", "mods", "config", "logs"] {
+            let path = instance.path.join(subdir);
+            let metadata =
+                tokio::fs::metadata(&path)
+                    .await
+                    .map_err(|source| LauncherError::Io {
+                        path: path.clone(),
+                        source,
+                    })?;
+            if !metadata.is_dir() {
+                return Err(LauncherError::Other(format!(
+                    "Estructura inválida: {:?} no es un directorio",
+                    path
+                )));
+            }
+        }
+
+        Ok(())
     }
 
     /// Save instance metadata to disk.
@@ -170,4 +197,13 @@ impl InstanceManager {
             Err(_) => path.to_path_buf(),
         }
     }
+}
+
+async fn create_dir_safe(path: &Path) -> LauncherResult<()> {
+    tokio::fs::create_dir_all(path)
+        .await
+        .map_err(|source| LauncherError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
 }

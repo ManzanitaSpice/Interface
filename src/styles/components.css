@@ -191,6 +191,22 @@
 }
 .instance-progress-bar.error > div { background: linear-gradient(90deg, #cc4a4a, #df6b6b); }
 
+.create-progress-wrap {
+  margin-top: 8px;
+}
+
+.create-log-preview {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.create-log-preview small {
+  color: #b5bac1;
+  font-size: .78rem;
+}
+
 .java-runtime-mode-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
