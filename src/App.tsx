@@ -59,8 +59,10 @@ interface CreateLogEvent {
 
 interface MinecraftVersionEntry {
   id: string;
-  release_time: string;
-  version_type: string;
+  release_time?: string;
+  releaseTime?: string;
+  version_type?: string;
+  type?: string;
 }
 
 interface LoaderVersionEntry {
@@ -179,6 +181,7 @@ function App() {
   const [minecraftVersionsLoading, setMinecraftVersionsLoading] = useState(false);
   const [minecraftVersionsError, setMinecraftVersionsError] = useState<string | null>(null);
   const [minecraftFilter, setMinecraftFilter] = useState<MinecraftVersionFilter>("all");
+  const [minecraftVersionSearch, setMinecraftVersionSearch] = useState("");
   const [selectedMinecraftVersion, setSelectedMinecraftVersion] = useState<string | null>(null);
   const [selectedLoaderType, setSelectedLoaderType] = useState<LoaderType | null>("vanilla");
   const [loaderVersions, setLoaderVersions] = useState<LoaderVersionEntry[]>([]);
@@ -214,9 +217,14 @@ function App() {
       setMinecraftVersionsError(null);
       try {
         const versions = await invoke<MinecraftVersionEntry[]>("get_minecraft_versions_detailed");
-        setMinecraftVersions(
-          versions.sort((a, b) => new Date(b.release_time).getTime() - new Date(a.release_time).getTime()),
-        );
+        const normalized = versions
+          .map((entry) => ({
+            id: entry.id,
+            release_time: entry.release_time ?? entry.releaseTime ?? "",
+            version_type: entry.version_type ?? entry.type ?? "unknown",
+          }))
+          .sort((a, b) => new Date(b.release_time).getTime() - new Date(a.release_time).getTime());
+        setMinecraftVersions(normalized);
       } catch {
         try {
           const response = await fetch(MOJANG_VERSION_MANIFEST_URL);
@@ -225,6 +233,11 @@ function App() {
           }
           const data = await response.json() as { versions?: MinecraftVersionEntry[] };
           const officialVersions = (data.versions ?? [])
+            .map((entry) => ({
+              id: entry.id,
+              release_time: entry.release_time ?? entry.releaseTime ?? "",
+              version_type: entry.version_type ?? entry.type ?? "unknown",
+            }))
             .filter((entry) => !entry.id.toLowerCase().includes("demo"))
             .sort((a, b) => new Date(b.release_time).getTime() - new Date(a.release_time).getTime());
           setMinecraftVersions(officialVersions);
@@ -591,9 +604,22 @@ function App() {
   };
 
   const filteredMinecraftVersions = useMemo(() => {
-    if (minecraftFilter === "all") return minecraftVersions;
-    return minecraftVersions.filter((entry) => ["release", "snapshot"].includes(entry.version_type));
-  }, [minecraftFilter, minecraftVersions]);
+    const query = minecraftVersionSearch.trim().toLowerCase();
+
+    return minecraftVersions.filter((entry) => {
+      const versionType = (entry.version_type ?? "").toLowerCase();
+      const matchesFilter = minecraftFilter === "all" || ["release", "snapshot"].includes(versionType);
+      const matchesSearch = !query || entry.id.toLowerCase().includes(query);
+      return matchesFilter && matchesSearch;
+    });
+  }, [minecraftFilter, minecraftVersionSearch, minecraftVersions]);
+
+  const formatReleaseDate = (releaseTime?: string) => {
+    if (!releaseTime) return "-";
+    const parsedDate = new Date(releaseTime);
+    if (Number.isNaN(parsedDate.getTime())) return "-";
+    return parsedDate.toLocaleDateString("es-ES");
+  };
 
   const createInstanceNow = async () => {
     if (!selectedMinecraftVersion || !selectedLoaderType) {
@@ -618,9 +644,9 @@ function App() {
       const created = await invoke<InstanceInfo>("create_instance", {
         payload: {
           name,
-          minecraftVersion: selectedMinecraftVersion,
-          loaderType: selectedLoaderType,
-          loaderVersion: selectedLoaderType === "vanilla" ? null : selectedLoaderVersion,
+          minecraft_version: selectedMinecraftVersion,
+          loader_type: selectedLoaderType,
+          loader_version: selectedLoaderType === "vanilla" ? null : selectedLoaderVersion,
         },
       });
       await reloadInstances();
@@ -803,6 +829,18 @@ function App() {
               <header><h2>Bloque 1 · Versiones Minecraft</h2></header>
               <div className="create-block-body">
                 <div className="create-list-wrap">
+                  <div className="block-inline-filters">
+                    <input
+                      type="search"
+                      value={minecraftVersionSearch}
+                      onChange={(event) => setMinecraftVersionSearch(event.target.value)}
+                      placeholder="Filtrar versión..."
+                      aria-label="Filtrar versiones de Minecraft"
+                    />
+                    {[ ["all", "Todas"], ["playable", "Versiones jugables"] ].map(([value, label]) => (
+                      <button key={value} type="button" className={minecraftFilter === value ? "active" : ""} onClick={() => setMinecraftFilter(value as MinecraftVersionFilter)}>{label}</button>
+                    ))}
+                  </div>
                   <table className="version-table">
                     <thead><tr><th>Version</th><th>Fecha de lanzado</th><th>Tipo</th></tr></thead>
                     <tbody>
@@ -811,19 +849,13 @@ function App() {
                       {filteredMinecraftVersions.map((entry) => (
                         <tr key={entry.id} className={selectedMinecraftVersion === entry.id ? "selected" : ""} onClick={() => setSelectedMinecraftVersion(entry.id)}>
                           <td>{entry.id}</td>
-                          <td>{new Date(entry.release_time).toLocaleDateString("es-ES")}</td>
-                          <td>{entry.version_type}</td>
+                          <td>{formatReleaseDate(entry.release_time)}</td>
+                          <td>{entry.version_type ?? "unknown"}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                <aside className="block-sidebar">
-                  <h3>Filtro</h3>
-                  {[["all","Todas"],["playable","Versiones jugables"]].map(([value, label]) => (
-                    <button key={value} type="button" className={minecraftFilter === value ? "active" : ""} onClick={() => setMinecraftFilter(value as MinecraftVersionFilter)}>{label}</button>
-                  ))}
-                </aside>
               </div>
             </section>
             )}

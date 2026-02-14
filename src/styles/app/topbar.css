@@ -1,12 +1,13 @@
 .brand {
   font-weight: 700;
-  margin-left: 6px;
+  margin-left: 4px;
   letter-spacing: 0.01em;
+  font-size: 0.92rem;
 }
 
 .topbar-info {
   color: var(--text-muted);
-  font-size: 0.9rem;
+  font-size: 0.82rem;
 }
 
 .topbar-profile {
@@ -17,13 +18,13 @@
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  width: 190px;
-  border: 1px solid rgba(129, 179, 255, 0.4);
-  border-radius: 12px;
-  background: linear-gradient(170deg, rgba(15, 27, 46, 0.94), rgba(9, 17, 31, 0.98));
-  padding: 10px;
+  width: 182px;
+  border: 1px solid rgba(117, 150, 205, 0.42);
+  border-radius: 10px;
+  background: linear-gradient(170deg, rgba(26, 35, 50, 0.95), rgba(17, 24, 36, 0.98));
+  padding: 8px;
   display: grid;
-  gap: 8px;
+  gap: 7px;
   z-index: 40;
   box-shadow: var(--shadow-lg);
 }

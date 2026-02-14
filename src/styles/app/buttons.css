@@ -1,26 +1,26 @@
 button {
-  border: 1px solid #4A5158;
-  background: #3A3F45;
+  border: 1px solid rgba(115, 144, 196, 0.42);
+  background: linear-gradient(180deg, rgba(44, 58, 82, 0.95), rgba(31, 43, 63, 0.95));
   color: var(--text-main);
-  border-radius: 12px;
-  padding: 8px 14px;
+  border-radius: 10px;
+  padding: 7px 11px;
   cursor: pointer;
-  font-size: 0.84rem;
+  font-size: 0.8rem;
   letter-spacing: 0.01em;
-  box-shadow: 0 10px 20px #00000080;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.36);
   transition: transform 0.2s ease, border-color 0.24s ease, box-shadow 0.24s ease, background-color 0.24s ease;
 }
 
 button:hover:not(:disabled) {
-  background: #4A5158;
-  border-color: #3399FF;
-  box-shadow: 0 12px 24px #00000080, 0 0 0 1px #2C7BE580;
+  background: linear-gradient(180deg, rgba(59, 77, 108, 0.98), rgba(39, 55, 81, 0.98));
+  border-color: var(--accent-strong);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(109, 145, 205, 0.35);
   transform: translateY(-1px);
 }
 
 button:active:not(:disabled) {
   transform: translateY(0);
-  box-shadow: 0 6px 14px #00000080;
+  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.4);
 }
 
 button:disabled {
@@ -30,15 +30,15 @@ button:disabled {
 }
 
 button.active {
-  border-color: #3399FF;
-  background: #2C7BE5;
-  box-shadow: 0 0 0 1px #2C7BE580, 0 14px 24px #00000080;
+  border-color: var(--accent-strong);
+  background: linear-gradient(180deg, rgba(86, 122, 194, 0.95), rgba(66, 100, 168, 0.95));
+  box-shadow: 0 0 0 1px rgba(109, 145, 205, 0.45), 0 12px 22px rgba(4, 8, 18, 0.4);
 }
 
 .arrow-button {
-  width: 35px;
-  height: 35px;
-  border-radius: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -47,12 +47,12 @@ button.active {
 }
 
 .delete-modal-actions .danger {
-  border-color: #E74C3C;
-  background: #E74C3C;
+  border-color: #d95c6c;
+  background: #d95c6c;
 }
 
 .delete-modal-actions .warning {
-  border-color: #F1C40F;
-  background: #F1C40F;
+  border-color: #f1c46b;
+  background: #f1c46b;
   color: #111;
 }
