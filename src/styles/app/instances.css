@@ -1,6 +1,6 @@
 .instances-toolbar {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   gap: 18px;
   flex-wrap: wrap;
@@ -13,11 +13,6 @@
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-}
-
-.instances-toolbar-right {
-  margin-left: auto;
-  padding-right: 8px;
 }
 
 .instances-toolbar input {
@@ -34,8 +29,14 @@
 }
 
 .instances-workspace {
-  position: relative;
+  position: static;
   width: 100%;
+}
+
+.instances-workspace.with-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 14px;
 }
 
 .instance-grid {
@@ -122,14 +123,15 @@
 }
 
 .create-layout-wide {
-  grid-template-columns: 170px 1fr 260px;
+  grid-template-columns: 180px 1fr 290px;
 }
 
 .create-main-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  padding: 16px;
+  gap: 12px;
+  padding: 12px;
+  min-height: 0;
 }
 
 .create-block {
@@ -138,7 +140,7 @@
   background: #1a1d22;
   display: grid;
   grid-template-rows: auto 1fr;
-  min-height: 0;
+  min-height: calc(100vh - 92px);
 }
 
 .create-block > header {
@@ -153,13 +155,13 @@
 
 .create-block-body {
   display: grid;
-  grid-template-columns: 1fr 150px;
+  grid-template-columns: 1fr 170px;
   min-height: 0;
 }
 
 .create-list-wrap {
   overflow: auto;
-  max-height: calc(100vh - 180px);
+  max-height: calc(100vh - 165px);
 }
 
 .version-table {
@@ -188,12 +190,82 @@
   padding: 10px;
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: 6px;
 }
 
 .block-sidebar button {
   width: 100%;
+  text-align: center;
+  padding: 6px 8px;
+  font-size: 0.78rem;
+}
+
+.toolbar-menu {
+  position: relative;
+}
+
+.toolbar-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 140px;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #414752;
+  border-radius: 10px;
+  background: #181b20;
+  box-shadow: var(--shadow-lg);
+  z-index: 25;
+}
+
+.toolbar-dropdown button {
+  width: 100%;
   text-align: left;
+}
+
+.toolbar-dropdown button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.delete-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 13, 0.62);
+  display: grid;
+  place-items: center;
+  z-index: 80;
+}
+
+.delete-modal {
+  width: min(520px, 92vw);
+  border: 1px solid #4b525e;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #232830 0%, #171b20 100%);
+  padding: 18px;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.5);
+}
+
+.delete-modal h3 {
+  margin: 0 0 10px;
+}
+
+.delete-modal p {
+  margin: 0;
+  color: #cfd4db;
+}
+
+.delete-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.delete-modal-actions .danger {
+  border-color: #8e3f4c;
+  background: linear-gradient(180deg, #7e2f3c 0%, #642631 100%);
 }
 
 .create-right-sidebar input {
