@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tracing::debug;
 
 use crate::core::error::{LauncherError, LauncherResult};
-use crate::core::instance::Instance;
+use crate::core::instance::{Instance, LoaderType};
 use crate::core::maven::MavenArtifact;
 
 /// Builds the full classpath string for launching the game.
@@ -46,6 +46,12 @@ pub fn build_classpath(
         entries.push(safe_path_str(&discovered_jar));
     }
 
+    // 1.2 Loader/vanilla version JARs generated under `minecraft/versions`.
+    // Forge/NeoForge bootstrap classes are provided by these jars, not by Maven libs.
+    for version_jar in collect_required_version_jars(instance) {
+        entries.push(safe_path_str(&version_jar));
+    }
+
     // 2. Minecraft base client JAR
     let client_jar = instance.path.join("client.jar");
     if client_jar.exists() {
@@ -59,8 +65,7 @@ pub fn build_classpath(
     }
 
     entries.retain(|entry| !entry.trim().is_empty());
-    entries.sort();
-    entries.dedup();
+    dedup_preserving_order(&mut entries);
     if entries.is_empty() {
         return Err(LauncherError::Other(
             "Classpath is empty after filtering invalid entries".into(),
@@ -153,6 +158,41 @@ fn collect_local_library_jars(instance: &Instance) -> Vec<PathBuf> {
     }
 
     jars
+}
+
+fn collect_required_version_jars(instance: &Instance) -> Vec<PathBuf> {
+    let versions_dir = instance.game_dir().join("versions");
+    let mut ids = vec![instance.minecraft_version.clone()];
+
+    if let Some(loader_version) = &instance.loader_version {
+        match instance.loader {
+            LoaderType::Forge => {
+                ids.push(format!("{}-{}", instance.minecraft_version, loader_version))
+            }
+            LoaderType::NeoForge => {
+                ids.push(format!("{}-{}", instance.minecraft_version, loader_version));
+                ids.push(loader_version.clone());
+            }
+            _ => {}
+        }
+    }
+
+    let mut jars = Vec::new();
+    for version_id in ids {
+        let jar = versions_dir
+            .join(&version_id)
+            .join(format!("{}.jar", version_id));
+        if jar.exists() {
+            jars.push(jar);
+        }
+    }
+
+    jars
+}
+
+fn dedup_preserving_order(entries: &mut Vec<String>) {
+    let mut seen = std::collections::HashSet::new();
+    entries.retain(|entry| seen.insert(entry.clone()));
 }
 
 /// Extract native libraries from JARs that contain `.dll`, `.so`, or `.dylib`.
@@ -348,6 +388,46 @@ mod tests {
 
         assert!(classpath.contains("external-lib.jar"));
         assert!(classpath.contains("client.jar"));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn build_classpath_includes_forge_and_vanilla_version_jars() {
+        let temp = std::env::temp_dir().join(format!(
+            "classpath-test-version-jars-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+        let instance_dir = temp.join("instance");
+        std::fs::create_dir_all(&instance_dir).unwrap();
+        std::fs::write(instance_dir.join("client.jar"), b"client").unwrap();
+
+        let mut instance = test_instance(&instance_dir);
+        instance.loader = LoaderType::Forge;
+        instance.loader_version = Some("47.2.0".into());
+        instance.minecraft_version = "1.20.1".into();
+
+        let vanilla_jar = instance
+            .game_dir()
+            .join("versions")
+            .join("1.20.1")
+            .join("1.20.1.jar");
+        let forge_jar = instance
+            .game_dir()
+            .join("versions")
+            .join("1.20.1-47.2.0")
+            .join("1.20.1-47.2.0.jar");
+
+        std::fs::create_dir_all(vanilla_jar.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(forge_jar.parent().unwrap()).unwrap();
+        std::fs::write(&vanilla_jar, b"vanilla").unwrap();
+        std::fs::write(&forge_jar, b"forge").unwrap();
+
+        let classpath = build_classpath(&instance, &temp.join("libraries"), &[]).unwrap();
+
+        assert!(classpath.contains("1.20.1/1.20.1.jar"));
+        assert!(classpath.contains("1.20.1-47.2.0/1.20.1-47.2.0.jar"));
 
         let _ = std::fs::remove_dir_all(&temp);
     }
