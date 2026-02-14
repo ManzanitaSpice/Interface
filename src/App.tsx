@@ -102,6 +102,7 @@ function App() {
   const [launchProgress, setLaunchProgress] = useState<LaunchProgressEvent | null>(null);
   const [launchLogs, setLaunchLogs] = useState<LaunchLogEvent[]>([]);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [instanceSearch, setInstanceSearch] = useState("");
 
   useEffect(() => {
     const loadInstances = async () => {
@@ -143,7 +144,17 @@ function App() {
     };
   }, [selectedInstance]);
 
-  const instanceCards = useMemo(() => instances, [instances]);
+  const instanceCards = useMemo(() => {
+    const query = instanceSearch.trim().toLowerCase();
+    if (!query) return instances;
+
+    return instances.filter((instance) =>
+      [instance.name, instance.minecraft_version, prettyLoader(instance.loader_type)]
+        .join(" ")
+        .toLowerCase()
+        .includes(query),
+    );
+  }, [instances, instanceSearch]);
 
   const enterEditMode = () => {
     if (!selectedInstance) return;
@@ -200,8 +211,26 @@ function App() {
 
     return (
       <section className="full-section-page instances-page" onClick={() => setShowInstancePanel(false)}>
-        <div className="instances-floating-create" onClick={(event) => event.stopPropagation()}>
-          <button type="button" onClick={() => setAppMode("create")}>Crear instancia</button>
+        <div className="instances-toolbar" onClick={(event) => event.stopPropagation()}>
+          <div className="instances-toolbar-left">
+            <button type="button" onClick={() => setAppMode("create")}>Crear instancia</button>
+            <button type="button">Importar</button>
+            <button type="button">Crear grupo</button>
+          </div>
+          <div className="instances-toolbar-right">
+            <label htmlFor="instances-search" className="sr-only">Buscar instancias</label>
+            <input
+              id="instances-search"
+              type="search"
+              placeholder="Buscar instancias"
+              value={instanceSearch}
+              onChange={(event) => setInstanceSearch(event.target.value)}
+            />
+            <button type="button" aria-label="Filtro rapido">Filtros</button>
+            <button type="button" aria-label="Ordenar instancias">Ordenar</button>
+            <button type="button" aria-label="Vista en cuadricula">Vista</button>
+            <button type="button" aria-label="Acciones masivas">Mas</button>
+          </div>
         </div>
 
         <div className="instances-workspace">
@@ -225,7 +254,7 @@ function App() {
                 </article>
               );
             })}
-            {instanceCards.length === 0 && <p>No hay instancias todavía. Crea tu primera instancia.</p>}
+            {instanceCards.length === 0 && <p>No hay resultados para la búsqueda actual.</p>}
           </div>
 
           {showInstancePanel && selectedInstance && (
@@ -254,8 +283,8 @@ function App() {
       <div className="app-shell">
         <header className="topbar-primary">
           <div className="topbar-left-controls">
-            <button type="button" aria-label="Atras">←</button>
-            <button type="button" aria-label="Adelante">→</button>
+            <button type="button" aria-label="Atras" className="arrow-button">←</button>
+            <button type="button" aria-label="Adelante" className="arrow-button">→</button>
             <div className="brand">Launcher Principal</div>
           </div>
           <div className="topbar-info">Creando nueva instancia</div>
@@ -293,8 +322,8 @@ function App() {
       <div className="app-shell" onClick={() => setEditingInstance(null)}>
         <header className="topbar-primary">
           <div className="topbar-left-controls">
-            <button type="button" aria-label="Atras">←</button>
-            <button type="button" aria-label="Adelante">→</button>
+            <button type="button" aria-label="Atras" className="arrow-button">←</button>
+            <button type="button" aria-label="Adelante" className="arrow-button">→</button>
             <div className="brand">Launcher Principal</div>
           </div>
           <div className="topbar-info">Editando: {editingInstance.name}</div>
@@ -348,11 +377,11 @@ function App() {
     <div className="app-shell" onClick={() => setShowInstancePanel(false)}>
       <header className="topbar-primary">
         <div className="topbar-left-controls">
-          <button type="button" aria-label="Atras">←</button>
-          <button type="button" aria-label="Adelante">→</button>
+          <button type="button" aria-label="Atras" className="arrow-button">←</button>
+          <button type="button" aria-label="Adelante" className="arrow-button">→</button>
           <div className="brand">Launcher Principal</div>
         </div>
-        <div className="topbar-info">Barra principal superior</div>
+        <div className="topbar-info" />
       </header>
 
       <nav className="topbar-secondary" onClick={(event) => event.stopPropagation()}>
