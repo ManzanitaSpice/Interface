@@ -1,25 +1,26 @@
 button {
-  border: 1px solid rgba(148, 163, 184, 0.32);
-  background: linear-gradient(180deg, rgba(51, 65, 85, 0.7) 0%, rgba(30, 41, 59, 0.92) 100%);
-  color: #e5e7eb;
+  border: 1px solid #4A5158;
+  background: #3A3F45;
+  color: var(--text-main);
   border-radius: 12px;
   padding: 8px 14px;
   cursor: pointer;
   font-size: 0.84rem;
   letter-spacing: 0.01em;
-  box-shadow: 0 8px 20px rgba(2, 8, 23, 0.28);
+  box-shadow: 0 10px 20px #00000080;
   transition: transform 0.2s ease, border-color 0.24s ease, box-shadow 0.24s ease, background-color 0.24s ease;
 }
 
 button:hover:not(:disabled) {
-  border-color: rgba(125, 211, 252, 0.55);
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.34), 0 0 0 1px rgba(56, 189, 248, 0.16);
+  background: #4A5158;
+  border-color: #3399FF;
+  box-shadow: 0 12px 24px #00000080, 0 0 0 1px #2C7BE580;
   transform: translateY(-1px);
 }
 
 button:active:not(:disabled) {
   transform: translateY(0);
-  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.35);
+  box-shadow: 0 6px 14px #00000080;
 }
 
 button:disabled {
@@ -29,9 +30,9 @@ button:disabled {
 }
 
 button.active {
-  border-color: rgba(125, 211, 252, 0.78);
-  background: linear-gradient(180deg, rgba(37, 99, 235, 0.65) 0%, rgba(30, 64, 175, 0.7) 100%);
-  box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.24), 0 14px 24px rgba(30, 64, 175, 0.28);
+  border-color: #3399FF;
+  background: #2C7BE5;
+  box-shadow: 0 0 0 1px #2C7BE580, 0 14px 24px #00000080;
 }
 
 .arrow-button {
@@ -46,11 +47,12 @@ button.active {
 }
 
 .delete-modal-actions .danger {
-  border-color: rgba(251, 113, 133, 0.72);
-  background: linear-gradient(180deg, rgba(190, 24, 93, 0.86) 0%, rgba(136, 19, 55, 0.92) 100%);
+  border-color: #E74C3C;
+  background: #E74C3C;
 }
 
 .delete-modal-actions .warning {
-  border-color: rgba(250, 204, 21, 0.55);
-  background: linear-gradient(180deg, rgba(120, 90, 20, 0.75) 0%, rgba(96, 72, 16, 0.9) 100%);
+  border-color: #F1C40F;
+  background: #F1C40F;
+  color: #111;
 }

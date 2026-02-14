@@ -1,19 +1,19 @@
 :root {
   color-scheme: dark;
   font-family: Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --bg-0: #0d1117;
-  --bg-1: #111827;
-  --bg-2: #1f2937;
-  --bg-3: #243244;
-  --line: rgba(131, 173, 255, 0.24);
-  --line-soft: rgba(131, 173, 255, 0.14);
-  --text-main: #eef4ff;
-  --text-muted: #9eb2d8;
-  --accent: #60a5fa;
-  --accent-strong: #8ec7ff;
+  --bg-0: #0B0C10;
+  --bg-1: #16181D;
+  --bg-2: #1C1E22;
+  --bg-3: #3A3F45;
+  --line: rgba(51, 153, 255, 0.36);
+  --line-soft: rgba(51, 153, 255, 0.2);
+  --text-main: #FFFFFF;
+  --text-muted: #C0C0C0;
+  --accent: #2C7BE5;
+  --accent-strong: #3399FF;
   --accent-violet: #8f7dff;
-  --success: #87d6ad;
-  --danger: #ff9ab2;
+  --success: #27AE60;
+  --danger: #E74C3C;
   --shadow-lg: 0 22px 42px rgba(2, 8, 19, 0.5);
   --shadow-soft: 0 10px 24px rgba(3, 10, 24, 0.35);
   --radius-md: 14px;
@@ -39,9 +39,7 @@ body,
 body {
   margin: 0;
   background:
-    radial-gradient(circle at 14% -10%, rgba(96, 165, 250, 0.18), transparent 48%),
-    radial-gradient(circle at 100% 0, rgba(148, 163, 184, 0.14), transparent 36%),
-    linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 42%, var(--bg-0) 100%);
+    var(--bg-0);
   color: var(--text-main);
 }
 
@@ -55,8 +53,8 @@ textarea {
 input,
 textarea,
 select {
-  border: 1px solid rgba(137, 176, 255, 0.32);
-  background: linear-gradient(160deg, rgba(21, 33, 57, 0.9), rgba(11, 18, 34, 0.96));
+  border: 1px solid var(--line);
+  background: #1C1E22;
   color: var(--text-main);
   border-radius: 12px;
   padding: 10px 12px;
@@ -65,13 +63,13 @@ select {
 
 input::placeholder,
 textarea::placeholder {
-  color: #88a5d6;
+  color: var(--text-muted);
 }
 
 input:hover,
 textarea:hover,
 select:hover {
-  border-color: rgba(137, 176, 255, 0.52);
+  border-color: #3399FF;
 }
 
 button:focus-visible,
@@ -80,8 +78,8 @@ textarea:focus-visible,
 select:focus-visible,
 .instances-toolbar input:focus-visible {
   outline: none;
-  border-color: rgba(156, 206, 255, 0.92);
-  box-shadow: 0 0 0 2px rgba(120, 170, 255, 0.35), 0 0 20px rgba(86, 154, 255, 0.2);
+  border-color: #3399FF;
+  box-shadow: 0 0 0 2px #2C7BE580, 0 0 20px #2C7BE580;
 }
 
 .sr-only {
