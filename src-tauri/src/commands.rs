@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 use crate::core::assets::AssetManager;
+use crate::core::auth::{AccountMode, AuthResearchInfo, LaunchAccountProfile};
 use crate::core::error::LauncherError;
 use crate::core::instance::{Instance, InstanceState, LoaderType};
 use crate::core::java::{self, JavaInstallation};
@@ -26,6 +27,53 @@ pub struct CreateInstancePayload {
     pub memory_max_mb: Option<u32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountProfilePayload {
+    pub mode: AccountMode,
+    pub username: String,
+    pub uuid: Option<String>,
+    pub access_token: Option<String>,
+    pub xuid: Option<String>,
+    pub user_type: Option<String>,
+    pub client_id: Option<String>,
+}
+
+impl AccountProfilePayload {
+    fn into_profile(self) -> LaunchAccountProfile {
+        match self.mode {
+            AccountMode::Offline => LaunchAccountProfile::offline(&self.username).sanitized(),
+            AccountMode::Microsoft => LaunchAccountProfile {
+                mode: AccountMode::Microsoft,
+                username: self.username,
+                uuid: self.uuid.unwrap_or_default(),
+                access_token: self.access_token.unwrap_or_default(),
+                xuid: self.xuid.unwrap_or_default(),
+                user_type: self.user_type.unwrap_or_else(|| "msa".into()),
+                client_id: self.client_id.unwrap_or_default(),
+            }
+            .sanitized(),
+        }
+    }
+
+    fn from_profile(profile: &LaunchAccountProfile) -> Self {
+        Self {
+            mode: profile.mode.clone(),
+            username: profile.username.clone(),
+            uuid: Some(profile.uuid.clone()),
+            access_token: Some(profile.access_token.clone()),
+            xuid: Some(profile.xuid.clone()),
+            user_type: Some(profile.user_type.clone()),
+            client_id: Some(profile.client_id.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateInstanceAccountPayload {
+    pub id: String,
+    pub account: AccountProfilePayload,
+}
+
 #[derive(Debug, Serialize)]
 pub struct InstanceInfo {
     pub id: String,
@@ -38,6 +86,7 @@ pub struct InstanceInfo {
     pub required_java_major: Option<u32>,
     pub java_path: Option<String>,
     pub max_memory_mb: u32,
+    pub account: AccountProfilePayload,
     pub jvm_args: Vec<String>,
     pub game_args: Vec<String>,
     pub total_size_bytes: u64,
@@ -95,6 +144,7 @@ impl From<&Instance> for InstanceInfo {
                 .as_ref()
                 .map(|p| p.to_string_lossy().to_string()),
             max_memory_mb: inst.max_memory_mb,
+            account: AccountProfilePayload::from_profile(&inst.account),
             jvm_args: inst.jvm_args.clone(),
             game_args: inst.game_args.clone(),
             total_size_bytes: directory_size_bytes(&inst.path),
@@ -1086,6 +1136,23 @@ fn kill_process(pid: u32) -> Result<(), LauncherError> {
 
         Ok(())
     }
+}
+
+#[tauri::command]
+pub async fn get_auth_research_info() -> Result<AuthResearchInfo, LauncherError> {
+    Ok(AuthResearchInfo::default())
+}
+
+#[tauri::command]
+pub async fn update_instance_account(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    payload: UpdateInstanceAccountPayload,
+) -> Result<InstanceInfo, LauncherError> {
+    let state = state.lock().await;
+    let mut instance = state.instance_manager.load(&payload.id).await?;
+    instance.account = payload.account.into_profile();
+    state.instance_manager.save(&instance).await?;
+    Ok(InstanceInfo::from(&instance))
 }
 
 #[tauri::command]

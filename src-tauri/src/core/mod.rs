@@ -14,6 +14,7 @@
 //     state/      — Global application state
 
 pub mod assets;
+pub mod auth;
 pub mod downloader;
 pub mod error;
 pub mod instance;

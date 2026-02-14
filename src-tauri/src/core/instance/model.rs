@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+use crate::core::auth::LaunchAccountProfile;
+
 /// Supported mod loaders — strongly typed, no magic strings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -76,6 +78,9 @@ pub struct Instance {
     pub game_args: Vec<String>,
     /// Java major version required/recommended for this instance.
     pub required_java_major: Option<u32>,
+    /// Account profile used to resolve launch placeholders for premium/offline modes.
+    #[serde(default)]
+    pub account: LaunchAccountProfile,
 }
 
 impl Instance {
@@ -109,6 +114,7 @@ impl Instance {
             jvm_args: Vec::new(),
             game_args: Vec::new(),
             required_java_major: None,
+            account: LaunchAccountProfile::default(),
         }
     }
 
