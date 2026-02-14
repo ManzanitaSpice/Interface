@@ -279,10 +279,20 @@ pub async fn cleanup_natives(instance: &Instance) {
 
 /// Convert path to string, using `\\?\` prefix on Windows for long path support.
 pub fn safe_path_str(path: &Path) -> String {
-    match std::fs::canonicalize(path) {
-        Ok(p) => p.to_string_lossy().to_string(),
-        Err(_) => path.to_string_lossy().to_string(),
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let text = resolved.to_string_lossy().to_string();
+
+    #[cfg(target_os = "windows")]
+    {
+        // Java classpath handling can fail for Windows extended-length paths
+        // (e.g. `\\?\C:\...`) and report `ClassNotFoundException` even when
+        // jars exist. Strip the prefix before building launch arguments.
+        if let Some(stripped) = text.strip_prefix(r"\\?\") {
+            return stripped.to_string();
+        }
     }
+
+    text
 }
 
 #[cfg(test)]
