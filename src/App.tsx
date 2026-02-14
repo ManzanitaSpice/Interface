@@ -160,6 +160,7 @@ function App() {
   const [activeSection, setActiveSection] = useState<TopSection>("instances");
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
   const [selectedInstance, setSelectedInstance] = useState<InstanceInfo | null>(null);
+  const [selectedInstanceIds, setSelectedInstanceIds] = useState<string[]>([]);
   const [showInstancePanel, setShowInstancePanel] = useState(false);
   const [editingInstance, setEditingInstance] = useState<InstanceInfo | null>(null);
   const [activeEditSection, setActiveEditSection] = useState<EditSection>("Ejecucion");
@@ -176,7 +177,7 @@ function App() {
   const [showSearchInput, setShowSearchInput] = useState(false);
   const [expandedInstanceId, setExpandedInstanceId] = useState<string | null>(null);
   const [optimizingInstanceId, setOptimizingInstanceId] = useState<string | null>(null);
-  const [pendingDeleteInstance, setPendingDeleteInstance] = useState<InstanceInfo | null>(null);
+  const [pendingDeleteInstances, setPendingDeleteInstances] = useState<InstanceInfo[] | null>(null);
   const [deleteInProgress, setDeleteInProgress] = useState(false);
   const [deleteFeedback, setDeleteFeedback] = useState<{ type: "idle" | "progress" | "success" | "error"; message: string; needsElevation?: boolean }>({
     type: "idle",
@@ -430,6 +431,7 @@ function App() {
   const reloadInstances = async () => {
     const saved = await invoke<InstanceInfo[]>("list_instances");
     setInstances(saved);
+    setSelectedInstanceIds((prev) => prev.filter((id) => saved.some((instance) => instance.id === id)));
     if (selectedInstance) {
       const updated = saved.find((instance) => instance.id === selectedInstance.id) ?? null;
       setSelectedInstance(updated);
@@ -446,42 +448,50 @@ function App() {
     await reloadInstances();
   };
 
-  const deleteInstanceById = async (instanceToDelete: InstanceInfo, requestElevation = false) => {
-    if (!instanceToDelete) return;
+  const deleteInstances = async (instancesToDelete: InstanceInfo[], requestElevation = false) => {
+    if (!instancesToDelete.length) return;
+    const deletingLabel = instancesToDelete.length > 1 ? `Eliminando ${instancesToDelete.length} instancias...` : "Eliminando instancia...";
 
     setDeleteInProgress(true);
-    setDeleteFeedback({ type: "progress", message: requestElevation ? "Solicitando permisos de administrador..." : "Eliminando instancia..." });
+    setDeleteFeedback({ type: "progress", message: requestElevation ? "Solicitando permisos de administrador..." : deletingLabel });
 
     try {
-      const response = await invoke<DeleteInstanceResponse>("delete_instance_with_elevation", {
-        id: instanceToDelete.id,
-        requestElevation,
-      });
-
-      if (response.status === "needs_elevation") {
-        setDeleteFeedback({
-          type: "error",
-          message: "El sistema bloqueó la eliminación. Puedes solicitar permisos de administrador para completar el borrado.",
-          needsElevation: true,
+      for (const instanceToDelete of instancesToDelete) {
+        const response = await invoke<DeleteInstanceResponse>("delete_instance_with_elevation", {
+          id: instanceToDelete.id,
+          requestElevation,
         });
-        return;
+
+        if (response.status === "needs_elevation") {
+          setDeleteFeedback({
+            type: "error",
+            message: `No se pudo eliminar ${instanceToDelete.name}. Puedes solicitar permisos de administrador para intentar de nuevo.`,
+            needsElevation: instancesToDelete.length === 1,
+          });
+          return;
+        }
+
+        if (response.status === "elevation_requested") {
+          setDeleteFeedback({
+            type: "progress",
+            message: "Solicitud UAC enviada. Confirma el permiso para eliminar completamente los archivos protegidos.",
+          });
+          await reloadInstances();
+          return;
+        }
       }
 
-      if (response.status === "elevation_requested") {
-        setDeleteFeedback({
-          type: "progress",
-          message: "Solicitud UAC enviada. Confirma el permiso para eliminar completamente los archivos protegidos.",
-        });
-        await reloadInstances();
-        return;
-      }
-
-      setInstances((prev) => prev.filter((instance) => instance.id !== instanceToDelete.id));
+      const deletedIds = new Set(instancesToDelete.map((instance) => instance.id));
+      setInstances((prev) => prev.filter((instance) => !deletedIds.has(instance.id)));
+      setSelectedInstanceIds((prev) => prev.filter((id) => !deletedIds.has(id)));
       setSelectedInstance(null);
       setShowInstancePanel(false);
-      setDeleteFeedback({ type: "success", message: "Instancia eliminada correctamente." });
+      setDeleteFeedback({
+        type: "success",
+        message: instancesToDelete.length > 1 ? `${instancesToDelete.length} instancias eliminadas correctamente.` : "Instancia eliminada correctamente.",
+      });
       setTimeout(() => {
-        setPendingDeleteInstance(null);
+        setPendingDeleteInstances(null);
         setDeleteFeedback({ type: "idle", message: "" });
       }, 900);
       await reloadInstances();
@@ -518,7 +528,7 @@ function App() {
     }
     if (action === "Borrar") {
       setDeleteFeedback({ type: "idle", message: "" });
-      setPendingDeleteInstance(selectedInstance);
+      setPendingDeleteInstances([selectedInstance]);
     }
   };
 
@@ -664,12 +674,39 @@ function App() {
 
   const shouldShowVersionLoaderPanels = activeCreateSection === "Base";
 
-  const onSelectInstance = (instance: InstanceInfo) => {
+  const onSelectInstance = (instance: InstanceInfo, multiSelect = false) => {
+    if (multiSelect) {
+      const alreadySelected = selectedInstanceIds.includes(instance.id);
+      if (alreadySelected) {
+        const updatedIds = selectedInstanceIds.filter((id) => id !== instance.id);
+        setSelectedInstanceIds(updatedIds);
+        const nextFocused = updatedIds.length > 0 ? instances.find((entry) => entry.id === updatedIds[updatedIds.length - 1]) ?? null : null;
+        setSelectedInstance(nextFocused);
+        setShowInstancePanel(Boolean(nextFocused));
+        return;
+      }
+
+      setSelectedInstanceIds((prev) => [...prev, instance.id]);
+    } else {
+      setSelectedInstanceIds([instance.id]);
+    }
+
     setSelectedInstance(instance);
     setLaunchError(null);
     setLaunchLogs([]);
     setLaunchProgress(null);
     setShowInstancePanel(true);
+  };
+
+  const selectedInstances = useMemo(
+    () => instances.filter((instance) => selectedInstanceIds.includes(instance.id)),
+    [instances, selectedInstanceIds],
+  );
+
+  const openDeleteSelectedModal = () => {
+    if (selectedInstances.length === 0) return;
+    setDeleteFeedback({ type: "idle", message: "" });
+    setPendingDeleteInstances(selectedInstances);
   };
 
   const toggleExpandedCard = (instanceId: string) => {
@@ -717,6 +754,9 @@ function App() {
           <div className="instances-toolbar-left">
             <button type="button" onClick={() => setAppMode("create")}>Crear instancia</button>
             <button type="button" onClick={() => setShowSearchInput((prev) => !prev)}>Buscar instancias</button>
+            <button type="button" className="danger" disabled={selectedInstances.length === 0} onClick={openDeleteSelectedModal}>
+              Eliminar seleccionadas ({selectedInstances.length})
+            </button>
             <div className="toolbar-menu" ref={sortMenuRef}>
               <button type="button" aria-label="Ordenar instancias" onClick={() => setShowSortMenu((prev) => !prev)}>Ordenar</button>
               {showSortMenu && (
@@ -759,16 +799,16 @@ function App() {
               return (
                 <article
                   key={instance.id}
-                  className={`instance-card ${selectedInstance?.id === instance.id ? "active" : ""} ${expandedInstanceId === instance.id ? "expanded" : ""}`}
-                  onClick={() => onSelectInstance(instance)}
+                  className={`instance-card ${selectedInstanceIds.includes(instance.id) ? "active" : ""} ${expandedInstanceId === instance.id ? "expanded" : ""}`}
+                  onClick={(event) => onSelectInstance(instance, event.ctrlKey || event.metaKey)}
                 >
                   <div className="instance-cover" aria-hidden="true">{instance.name.slice(0, 3).toUpperCase()}</div>
                   <div className="instance-meta">
                     <h3>{instance.name}</h3>
                   </div>
                   <div className="instance-details">
-                    <span className={`instance-state ${selectedInstance?.id === instance.id ? "online" : "idle"}`}>
-                      {instance.state === "running" ? "En ejecución" : selectedInstance?.id === instance.id ? "Seleccionada" : "Disponible"}
+                    <span className={`instance-state ${selectedInstanceIds.includes(instance.id) ? "online" : "idle"}`}>
+                      {instance.state === "running" ? "En ejecución" : selectedInstanceIds.includes(instance.id) ? "Seleccionada" : "Disponible"}
                     </span>
                     <span>MC {instance.minecraft_version}</span>
                     <span>{prettyLoader(instance.loader_type)} {instance.loader_version ?? "Integrado"}</span>
@@ -1244,26 +1284,27 @@ function App() {
 
       <main className="content-wrap">{renderSectionPage()}</main>
 
-      {pendingDeleteInstance && (
-        <div className="delete-modal-backdrop" onClick={() => !deleteInProgress && setPendingDeleteInstance(null)}>
+      {pendingDeleteInstances && (
+        <div className="delete-modal-backdrop" onClick={() => !deleteInProgress && setPendingDeleteInstances(null)}>
           <div className="delete-modal" onClick={(event) => event.stopPropagation()}>
             <h3>Eliminar instancia</h3>
             <p>
-              ¿Seguro que quieres eliminar <strong>{pendingDeleteInstance.name}</strong>? Esta accion borrara
-              todos sus archivos y no se puede deshacer.
+              {pendingDeleteInstances.length === 1
+                ? <>¿Seguro que quieres eliminar <strong>{pendingDeleteInstances[0].name}</strong>? Esta accion borrara todos sus archivos y no se puede deshacer.</>
+                : <>¿Seguro que quieres eliminar <strong>{pendingDeleteInstances.length} instancias</strong>? Esta accion borrara todos sus archivos y no se puede deshacer.</>}
             </p>
             {deleteFeedback.type !== "idle" && (
               <p className={`delete-feedback ${deleteFeedback.type}`}>{deleteFeedback.message}</p>
             )}
             <div className="delete-modal-actions">
-              <button type="button" disabled={deleteInProgress} onClick={() => setPendingDeleteInstance(null)}>Cancelar</button>
+              <button type="button" disabled={deleteInProgress} onClick={() => setPendingDeleteInstances(null)}>Cancelar</button>
               {deleteFeedback.needsElevation && (
-                <button type="button" className="warning" disabled={deleteInProgress} onClick={() => void deleteInstanceById(pendingDeleteInstance, true)}>
+                <button type="button" className="warning" disabled={deleteInProgress} onClick={() => void deleteInstances(pendingDeleteInstances, true)}>
                   Solicitar permisos de administrador
                 </button>
               )}
-              <button type="button" className="danger" disabled={deleteInProgress} onClick={() => void deleteInstanceById(pendingDeleteInstance)}>
-                {deleteInProgress ? "Procesando..." : "Eliminar instancia"}
+              <button type="button" className="danger" disabled={deleteInProgress} onClick={() => void deleteInstances(pendingDeleteInstances)}>
+                {deleteInProgress ? "Procesando..." : pendingDeleteInstances.length > 1 ? "Eliminar instancias" : "Eliminar instancia"}
               </button>
             </div>
           </div>
