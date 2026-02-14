@@ -152,9 +152,8 @@ async fn validate_instance_state_before_launch(
     }
 
     let game_dir = instance.game_dir();
-    let assets_dir = game_dir.join("assets");
     let libraries_dir = state.libraries_dir();
-    for required in [&game_dir, &assets_dir, &libraries_dir] {
+    for required in [&game_dir, &libraries_dir] {
         if !required.exists() {
             return Err(LauncherError::Other(format!(
                 "Instancia incompleta: no existe el directorio requerido {}",
@@ -564,64 +563,100 @@ pub async fn create_instance(
     let client = state.http_client.clone();
     let vanilla_installer = loaders::Installer::new(&LoaderType::Vanilla, client.clone());
 
-    let vanilla_result = vanilla_installer
-        .install(loaders::InstallContext {
-            minecraft_version: &instance.minecraft_version,
-            loader_version: "",
-            instance_dir: &instance.path,
-            libs_dir: &libs_dir,
-            downloader: state.downloader.as_ref(),
-            http_client: &client,
-        })
-        .await?;
-
-    instance.main_class = Some(vanilla_result.main_class.clone());
-    instance.asset_index = vanilla_result.asset_index_id.clone();
-    instance.libraries = vanilla_result.libraries.clone();
-    instance.jvm_args = vanilla_result.extra_jvm_args.clone();
-    instance.game_args = vanilla_result.extra_game_args.clone();
-    instance.required_java_major = vanilla_result.java_major;
-
-    if instance.loader != LoaderType::Vanilla {
-        if let Some(ref loader_version) = instance.loader_version {
-            let installer = loaders::Installer::new(&instance.loader, client.clone());
-            let loader_result = installer
-                .install(loaders::InstallContext {
-                    minecraft_version: &instance.minecraft_version,
-                    loader_version,
-                    instance_dir: &instance.path,
-                    libs_dir: &libs_dir,
-                    downloader: state.downloader.as_ref(),
-                    http_client: &client,
-                })
-                .await?;
-
-            instance.main_class = Some(loader_result.main_class);
-            instance.jvm_args.extend(loader_result.extra_jvm_args);
-            instance.game_args.extend(loader_result.extra_game_args);
-            instance.libraries.extend(loader_result.libraries);
-            if loader_result.asset_index_id.is_some() {
-                instance.asset_index = loader_result.asset_index_id;
-            }
-        }
+    if let Err(err) = state
+        .instance_manager
+        .set_state(&mut instance, InstanceState::Installing)
+        .await
+    {
+        error!("Cannot persist installing state for {}: {}", instance.id, err);
     }
 
-    instance.libraries.sort();
-    instance.libraries.dedup();
+    let install_result: Result<(), LauncherError> = async {
+        let vanilla_result = vanilla_installer
+            .install(loaders::InstallContext {
+                minecraft_version: &instance.minecraft_version,
+                loader_version: "",
+                instance_dir: &instance.path,
+                libs_dir: &libs_dir,
+                downloader: state.downloader.as_ref(),
+                http_client: &client,
+            })
+            .await?;
 
-    match state.launcher_settings.java_runtime {
-        JavaRuntimePreference::System => {
-            if let Some(ref selected) = state.launcher_settings.selected_java_path {
-                instance.java_path = Some(selected.clone());
+        instance.main_class = Some(vanilla_result.main_class.clone());
+        instance.asset_index = vanilla_result.asset_index_id.clone();
+        instance.libraries = vanilla_result.libraries.clone();
+        instance.jvm_args = vanilla_result.extra_jvm_args.clone();
+        instance.game_args = vanilla_result.extra_game_args.clone();
+        instance.required_java_major = vanilla_result.java_major;
+
+        if instance.loader != LoaderType::Vanilla {
+            if let Some(ref loader_version) = instance.loader_version {
+                let installer = loaders::Installer::new(&instance.loader, client.clone());
+                let loader_result = installer
+                    .install(loaders::InstallContext {
+                        minecraft_version: &instance.minecraft_version,
+                        loader_version,
+                        instance_dir: &instance.path,
+                        libs_dir: &libs_dir,
+                        downloader: state.downloader.as_ref(),
+                        http_client: &client,
+                    })
+                    .await?;
+
+                instance.main_class = Some(loader_result.main_class);
+                instance.jvm_args.extend(loader_result.extra_jvm_args);
+                instance.game_args.extend(loader_result.extra_game_args);
+                instance.libraries.extend(loader_result.libraries);
+                if loader_result.asset_index_id.is_some() {
+                    instance.asset_index = loader_result.asset_index_id;
+                }
             }
         }
-        JavaRuntimePreference::Embedded => {
-            let embedded = state.embedded_java_path();
-            if crate::core::java::runtime::is_usable_java_binary(&embedded) {
-                instance.java_path = Some(embedded);
-            }
+
+        let assets_dir = instance.game_dir().join("assets");
+        tokio::fs::create_dir_all(&assets_dir)
+            .await
+            .map_err(|source| LauncherError::Io {
+                path: assets_dir.clone(),
+                source,
+            })?;
+
+        if let Some(url) = vanilla_result.asset_index_url {
+            AssetManager::download_assets(&url, &assets_dir, state.downloader.as_ref()).await?;
         }
-        JavaRuntimePreference::Auto => {}
+
+        instance.libraries.sort();
+        instance.libraries.dedup();
+
+        match state.launcher_settings.java_runtime {
+            JavaRuntimePreference::System => {
+                if let Some(ref selected) = state.launcher_settings.selected_java_path {
+                    instance.java_path = Some(selected.clone());
+                }
+            }
+            JavaRuntimePreference::Embedded => {
+                let embedded = state.embedded_java_path();
+                if crate::core::java::runtime::is_usable_java_binary(&embedded) {
+                    instance.java_path = Some(embedded);
+                }
+            }
+            JavaRuntimePreference::Auto => {}
+        }
+
+        Ok(())
+    }
+    .await;
+
+    if let Err(err) = install_result {
+        instance.state = InstanceState::Error;
+        if let Err(save_err) = state.instance_manager.save(&instance).await {
+            error!(
+                "Cannot persist failed instance state for {}: {}",
+                instance.id, save_err
+            );
+        }
+        return Err(err);
     }
 
     instance.state = InstanceState::Ready;

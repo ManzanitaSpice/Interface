@@ -20,6 +20,7 @@ impl InstanceManager {
     ///
     /// Creates:
     /// - `<instance>/minecraft/`
+    /// - `<instance>/minecraft/assets/`
     /// - `<instance>/mods/`
     /// - `<instance>/config/`
     /// - `<instance>/instance.json`
@@ -32,8 +33,8 @@ impl InstanceManager {
             return Err(LauncherError::InstanceAlreadyExists(instance.id.clone()));
         }
 
-        // Create directory structure: minecraft/, mods/, config/
-        for subdir in &["minecraft", "mods", "config"] {
+        // Create directory structure eagerly to reduce first-launch failures.
+        for subdir in &["minecraft", "minecraft/assets", "mods", "config", "logs"] {
             let dir = instance.path.join(subdir);
             tokio::fs::create_dir_all(&dir)
                 .await
