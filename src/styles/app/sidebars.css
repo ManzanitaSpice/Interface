@@ -3,7 +3,7 @@
 .create-left-sidebar,
 .create-right-sidebar {
   border-right: 1px solid var(--line-soft);
-  background: #181a1d;
+  background: linear-gradient(180deg, #101c30 0%, #0d1627 100%);
   padding: 12px;
   display: grid;
   align-content: start;
@@ -25,12 +25,13 @@
 
 .instance-right-panel {
   position: sticky;
-  top: 116px;
+  top: 120px;
   align-self: start;
   width: 100%;
-  min-height: calc(100vh - 130px);
-  border: 1px solid var(--line);
-  background: linear-gradient(180deg, #20242b 0%, #171a20 100%);
+  max-height: calc(100vh - 132px);
+  overflow: auto;
+  border: 1px solid #35527d;
+  background: linear-gradient(180deg, #182b48 0%, #0f1a2e 100%);
   border-radius: 14px;
   padding: 14px;
   display: grid;
@@ -39,12 +40,16 @@
   box-shadow: var(--shadow-lg);
 }
 
+.instance-right-panel h3 {
+  margin: 0 0 6px;
+}
+
 .create-right-sidebar {
   position: sticky;
   top: 60px;
   align-self: start;
   min-height: calc(100vh - 72px);
-  border-left: 1px solid #333a44;
-  background: linear-gradient(180deg, #1f2329 0%, #171a1f 100%);
+  border-left: 1px solid #2d4368;
+  background: linear-gradient(180deg, #13223b 0%, #0e182c 100%);
   border-radius: 12px 0 0 12px;
 }

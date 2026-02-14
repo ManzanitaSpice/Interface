@@ -38,6 +38,19 @@ interface LaunchLogEvent {
   message: string;
 }
 
+interface CreateProgressEvent {
+  id: string;
+  value: number;
+  stage: string;
+  state: "idle" | "running" | "done" | "error";
+}
+
+interface CreateLogEvent {
+  id: string;
+  level: "info" | "warn" | "error";
+  message: string;
+}
+
 interface MinecraftVersionEntry {
   id: string;
   release_time: string;
@@ -147,6 +160,8 @@ function App() {
   const [newInstanceName, setNewInstanceName] = useState("");
   const [createInProgress, setCreateInProgress] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [createProgress, setCreateProgress] = useState<CreateProgressEvent | null>(null);
+  const [createLogs, setCreateLogs] = useState<CreateLogEvent[]>([]);
   const executionLogRef = useRef<HTMLDivElement | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
@@ -177,6 +192,12 @@ function App() {
 
     void loadMinecraftVersions();
   }, []);
+
+  useEffect(() => {
+    if (!selectedMinecraftVersion && minecraftVersions.length > 0) {
+      setSelectedMinecraftVersion(minecraftVersions[0].id);
+    }
+  }, [minecraftVersions, selectedMinecraftVersion]);
 
   useEffect(() => {
     if (!selectedMinecraftVersion || !selectedLoaderType || selectedLoaderType === "vanilla") {
@@ -219,7 +240,17 @@ function App() {
         setLaunchLogs((prev) => [...prev.slice(-100), event.payload]);
       });
 
-      listeners.push(unlistenProgress, unlistenLog);
+      const unlistenCreateProgress = await listen<CreateProgressEvent>("instance-create-progress", (event) => {
+        if (!mounted) return;
+        setCreateProgress(event.payload);
+      });
+
+      const unlistenCreateLog = await listen<CreateLogEvent>("instance-create-log", (event) => {
+        if (!mounted) return;
+        setCreateLogs((prev) => [...prev.slice(-100), event.payload]);
+      });
+
+      listeners.push(unlistenProgress, unlistenLog, unlistenCreateProgress, unlistenCreateLog);
     };
 
     void setupListeners();
@@ -437,8 +468,10 @@ function App() {
 
     setCreateInProgress(true);
     setCreateError(null);
+    setCreateProgress(null);
+    setCreateLogs([]);
     try {
-      await invoke("create_instance", {
+      const created = await invoke<InstanceInfo>("create_instance", {
         payload: {
           name,
           minecraftVersion: selectedMinecraftVersion,
@@ -447,8 +480,11 @@ function App() {
         },
       });
       await reloadInstances();
+      setSelectedInstance(created);
+      setShowInstancePanel(true);
       setAppMode("main");
       setActiveSection("instances");
+      setNewInstanceName("");
     } catch (error) {
       setCreateError(typeof error === "string" ? error : "No se pudo crear la instancia.");
     } finally {
@@ -643,7 +679,19 @@ function App() {
             <p>MC: {selectedMinecraftVersion ?? "Sin seleccionar"}</p>
             <p>Loader: {selectedLoaderType ? prettyLoader(selectedLoaderType) : "Sin seleccionar"}</p>
             <p>Version loader: {selectedLoaderType === "vanilla" ? "Integrado" : (selectedLoaderVersion ?? "Sin seleccionar")}</p>
+            {createProgress && (
+              <p>
+                Progreso: {createProgress.stage} ({createProgress.value}%)
+              </p>
+            )}
             {createError && <p className="execution-error">{createError}</p>}
+            {createLogs.length > 0 && (
+              <div className="create-log-box" aria-live="polite">
+                {createLogs.slice(-4).map((entry, index) => (
+                  <p key={`${entry.id}-${index}`}>[{entry.level.toUpperCase()}] {entry.message}</p>
+                ))}
+              </div>
+            )}
             <button type="button" onClick={() => void createInstanceNow()} disabled={createInProgress}>{createInProgress ? "Creando..." : "Crear instancia"}</button>
             <button type="button" onClick={() => setAppMode("main")}>Cancelar</button>
           </aside>

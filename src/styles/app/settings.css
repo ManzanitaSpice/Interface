@@ -1,7 +1,7 @@
 .execution-log {
-  border: 1px solid #363b45;
-  border-radius: 10px;
-  background: #14161a;
+  border: 1px solid #2f476d;
+  border-radius: 12px;
+  background: #0d1626;
   padding: 14px;
   font-family: "JetBrains Mono", "Fira Code", monospace;
   color: var(--success);
@@ -54,10 +54,10 @@
 }
 
 .settings-card {
-  border: 1px solid #3b414b;
-  border-radius: 10px;
-  background: #1a1d22;
-  padding: 10px;
+  border: 1px solid #304b75;
+  border-radius: 12px;
+  background: #111d31;
+  padding: 12px;
   display: grid;
   gap: 8px;
 }
@@ -69,8 +69,8 @@
 
 .settings-card p {
   margin: 0;
-  color: #b2b8c0;
-  font-size: 0.8rem;
+  color: #b0c8ef;
+  font-size: 0.82rem;
 }
 
 .settings-java-layout {
@@ -87,11 +87,6 @@
 .settings-inline-field input,
 .settings-card textarea {
   width: 100%;
-  border: 1px solid #3f4550;
-  background: #131519;
-  color: #e9edf5;
-  border-radius: 8px;
-  padding: 7px 9px;
   font-size: 0.8rem;
 }
 

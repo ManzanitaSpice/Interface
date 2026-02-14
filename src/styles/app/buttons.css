@@ -1,63 +1,57 @@
-.topbar-primary button,
-.topbar-secondary button,
-.instance-right-panel button,
-.edit-left-sidebar button,
-.edit-right-sidebar button,
-.create-left-sidebar button,
-.create-right-sidebar button,
-.instances-toolbar button,
-.instance-settings-tabs button {
-  border: 1px solid #454a52;
-  background: linear-gradient(180deg, #353940 0%, #2a2e34 100%);
+button {
+  border: 1px solid #3b5378;
+  background: linear-gradient(180deg, #24395e 0%, #1a2c49 100%);
   color: var(--text-main);
-  border-radius: 10px;
-  padding: 7px 12px;
+  border-radius: 12px;
+  padding: 8px 14px;
   cursor: pointer;
-  font-size: 0.83rem;
-  transition: transform 0.14s ease, border-color 0.16s ease, box-shadow 0.16s ease, background 0.18s ease;
+  font-size: 0.84rem;
+  transition: transform 0.14s ease, border-color 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
 }
 
-.topbar-primary button:hover,
-.topbar-secondary button:hover,
-.instance-right-panel button:hover,
-.edit-left-sidebar button:hover,
-.edit-right-sidebar button:hover,
-.create-left-sidebar button:hover,
-.create-right-sidebar button:hover,
-.instances-toolbar button:hover,
-.instance-settings-tabs button:hover {
-  border-color: #5f6670;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+button:hover:not(:disabled) {
+  border-color: #5d84be;
+  box-shadow: 0 12px 24px rgba(4, 12, 24, 0.38);
   transform: translateY(-1px);
+  filter: brightness(1.06);
 }
 
-.topbar-primary button:focus-visible,
-.topbar-secondary button:focus-visible,
-.instance-right-panel button:focus-visible,
-.edit-left-sidebar button:focus-visible,
-.edit-right-sidebar button:focus-visible,
-.create-left-sidebar button:focus-visible,
-.create-right-sidebar button:focus-visible,
-.instances-toolbar button:focus-visible,
-.instance-settings-tabs button:focus-visible,
+button:active:not(:disabled) {
+  transform: translateY(0);
+  filter: brightness(0.96);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
 .instances-toolbar input:focus-visible {
-  outline: 2px solid #7f8792;
+  outline: 2px solid #7bb8ff;
   outline-offset: 1px;
 }
 
 button.active {
-  background: linear-gradient(180deg, #5b626c 0%, #4a5058 100%);
-  border-color: #7a828d;
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.3);
+  background: linear-gradient(180deg, #4f7fbf 0%, #2f5f9f 100%);
+  border-color: #90bcff;
+  box-shadow: 0 8px 20px rgba(10, 39, 86, 0.5);
 }
 
 .arrow-button {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   line-height: 1;
+}
+
+.delete-modal-actions .danger {
+  border-color: #8f3f51;
+  background: linear-gradient(180deg, #843041 0%, #672433 100%);
 }

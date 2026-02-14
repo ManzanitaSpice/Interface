@@ -17,14 +17,15 @@
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  width: 180px;
-  border: 1px solid #424750;
-  border-radius: 10px;
-  background: #1c1f24;
+  width: 190px;
+  border: 1px solid #385987;
+  border-radius: 12px;
+  background: #0f1a2d;
   padding: 10px;
   display: grid;
   gap: 8px;
   z-index: 40;
+  box-shadow: var(--shadow-lg);
 }
 
 .profile-menu button {
