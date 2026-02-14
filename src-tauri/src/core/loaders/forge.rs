@@ -1,4 +1,5 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::io::Read;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -27,11 +28,26 @@ const FORGE_MAVEN: &str = "https://maven.minecraftforge.net";
 pub struct ForgeInstallProfile {
     #[serde(default)]
     pub libraries: Vec<ForgeLibrary>,
+    #[serde(default)]
+    pub processors: Vec<ForgeProcessor>,
+    #[serde(default)]
+    pub data: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ForgeLibrary {
     pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ForgeProcessor {
+    #[serde(default)]
+    pub sides: Option<Vec<String>>,
+    pub jar: String,
+    #[serde(default)]
+    pub classpath: Vec<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 /// Subset of the Forge version JSON (inside the installer as `version.json`).
@@ -197,6 +213,14 @@ impl LoaderInstaller for ForgeInstaller {
             }
         }
 
+        run_processors(
+            ctx,
+            &java_bin,
+            &installer_bytes,
+            &installer_path,
+            &install_profile,
+        )?;
+
         let _ = tokio::fs::remove_file(&installer_path).await;
 
         info!("Forge {} installed successfully", forge_id);
@@ -211,6 +235,236 @@ impl LoaderInstaller for ForgeInstaller {
             java_major,
         })
     }
+}
+
+fn run_processors(
+    ctx: InstallContext<'_>,
+    java_bin: &Path,
+    installer_bytes: &[u8],
+    installer_path: &Path,
+    install_profile: &ForgeInstallProfile,
+) -> LauncherResult<()> {
+    let mut variables = build_processor_variables(ctx, installer_path, installer_bytes)?;
+    merge_profile_data_variables(&mut variables, &install_profile.data);
+
+    for processor in &install_profile.processors {
+        if let Some(sides) = &processor.sides {
+            if !sides.iter().any(|s| s == "client") {
+                continue;
+            }
+        }
+
+        let processor_artifact = MavenArtifact::parse(&processor.jar)?;
+        let processor_jar_path = ctx.libs_dir.join(processor_artifact.local_path());
+        if !processor_jar_path.exists() {
+            return Err(LauncherError::Loader(format!(
+                "Missing Forge processor JAR: {}",
+                processor_jar_path.display()
+            )));
+        }
+
+        let mut classpath_entries = vec![processor_jar_path.to_string_lossy().to_string()];
+        for cp in &processor.classpath {
+            let cp_artifact = MavenArtifact::parse(cp)?;
+            let cp_path = ctx.libs_dir.join(cp_artifact.local_path());
+            if cp_path.exists() {
+                classpath_entries.push(cp_path.to_string_lossy().to_string());
+            }
+        }
+
+        let classpath = classpath_entries.join(if cfg!(windows) { ";" } else { ":" });
+        let main_class = read_main_class_from_jar(&processor_jar_path)?;
+        let args = processor
+            .args
+            .iter()
+            .map(|arg| resolve_processor_arg(arg, &variables, ctx.libs_dir))
+            .collect::<LauncherResult<Vec<_>>>()?;
+
+        info!(
+            "Running Forge processor {} with main class {}",
+            processor.jar, main_class
+        );
+
+        let output = std::process::Command::new(java_bin)
+            .arg("-cp")
+            .arg(&classpath)
+            .arg(&main_class)
+            .args(&args)
+            .current_dir(ctx.instance_dir)
+            .output()
+            .map_err(|e| LauncherError::JavaExecution(e.to_string()))?;
+
+        if !output.status.success() {
+            return Err(LauncherError::Loader(format!(
+                "Forge processor {} failed (code {:?})\nSTDOUT:\n{}\nSTDERR:\n{}",
+                processor.jar,
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn build_processor_variables(
+    ctx: InstallContext<'_>,
+    installer_path: &Path,
+    installer_bytes: &[u8],
+) -> LauncherResult<HashMap<String, String>> {
+    let mut vars = HashMap::new();
+    vars.insert("SIDE".to_string(), "client".to_string());
+    vars.insert(
+        "MINECRAFT_JAR".to_string(),
+        ctx.instance_dir
+            .join("client.jar")
+            .to_string_lossy()
+            .to_string(),
+    );
+    vars.insert(
+        "LIBRARY_DIR".to_string(),
+        ctx.libs_dir.to_string_lossy().to_string(),
+    );
+    vars.insert(
+        "INSTALLER".to_string(),
+        installer_path.to_string_lossy().to_string(),
+    );
+    vars.insert(
+        "ROOT".to_string(),
+        ctx.instance_dir.to_string_lossy().to_string(),
+    );
+
+    if let Some(binpatch_path) = extract_client_binpatch(ctx, installer_bytes)? {
+        vars.insert(
+            "BINPATCH".to_string(),
+            binpatch_path.to_string_lossy().to_string(),
+        );
+    }
+
+    Ok(vars)
+}
+
+fn extract_client_binpatch(
+    ctx: InstallContext<'_>,
+    installer_bytes: &[u8],
+) -> LauncherResult<Option<std::path::PathBuf>> {
+    let cursor = std::io::Cursor::new(installer_bytes);
+    let mut archive = zip::ZipArchive::new(cursor)?;
+
+    let mut source = None;
+    for i in 0..archive.len() {
+        let Ok(file) = archive.by_index(i) else {
+            continue;
+        };
+        let name = file.name().to_string();
+        if name.ends_with("client.lzma") || name.ends_with("client-binpatches.lzma") {
+            source = Some(name);
+            break;
+        }
+    }
+
+    let Some(source_name) = source else {
+        return Ok(None);
+    };
+
+    let mut source_file = archive.by_name(&source_name).map_err(|e| {
+        LauncherError::Loader(format!(
+            "Failed to access Forge binpatch from installer: {}",
+            e
+        ))
+    })?;
+    let mut bytes = Vec::new();
+    source_file.read_to_end(&mut bytes)?;
+
+    let target = ctx.instance_dir.join("client-binpatches.lzma");
+    std::fs::write(&target, bytes).map_err(|e| LauncherError::Io {
+        path: target.clone(),
+        source: e,
+    })?;
+
+    Ok(Some(target))
+}
+
+fn merge_profile_data_variables(vars: &mut HashMap<String, String>, data: &serde_json::Value) {
+    let Some(obj) = data.as_object() else {
+        return;
+    };
+
+    for (key, value) in obj {
+        let resolved = value
+            .get("client")
+            .and_then(|v| v.as_str())
+            .or_else(|| value.get("value").and_then(|v| v.as_str()))
+            .or_else(|| value.as_str());
+
+        if let Some(v) = resolved {
+            vars.insert(key.clone(), v.to_string());
+        }
+    }
+}
+
+fn resolve_processor_arg(
+    arg: &str,
+    vars: &HashMap<String, String>,
+    libs_dir: &Path,
+) -> LauncherResult<String> {
+    let mut out = arg.to_string();
+
+    for (key, value) in vars {
+        out = out.replace(&format!("{{{}}}", key), value);
+    }
+
+    if let Some(coord) = out.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        let artifact = MavenArtifact::parse(coord)?;
+        out = libs_dir
+            .join(artifact.local_path())
+            .to_string_lossy()
+            .to_string();
+    }
+
+    Ok(out)
+}
+
+fn read_main_class_from_jar(path: &Path) -> LauncherResult<String> {
+    let file = std::fs::File::open(path).map_err(|e| LauncherError::Io {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut manifest = archive.by_name("META-INF/MANIFEST.MF").map_err(|e| {
+        LauncherError::Loader(format!("Manifest not found in {}: {}", path.display(), e))
+    })?;
+
+    let mut text = String::new();
+    manifest.read_to_string(&mut text)?;
+
+    let mut main_class: Option<String> = None;
+    let mut current_key: Option<String> = None;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix(' ') {
+            if current_key.as_deref() == Some("Main-Class") {
+                if let Some(value) = &mut main_class {
+                    value.push_str(rest.trim());
+                }
+            }
+            continue;
+        }
+
+        if let Some((key, value)) = line.split_once(':') {
+            current_key = Some(key.trim().to_string());
+            if key.trim() == "Main-Class" {
+                main_class = Some(value.trim().to_string());
+            }
+        }
+    }
+
+    main_class.ok_or_else(|| {
+        LauncherError::Loader(format!(
+            "Main-Class missing in processor jar {}",
+            path.display()
+        ))
+    })
 }
 
 fn resolve_version_with_inheritance(
