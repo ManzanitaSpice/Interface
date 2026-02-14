@@ -20,6 +20,14 @@ use crate::core::loaders;
 use crate::core::state::{AppState, JavaRuntimePreference, LauncherSettings};
 use crate::core::version::VersionManifest;
 
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum DeleteInstanceResponse {
+    Deleted,
+    NeedsElevation,
+    ElevationRequested,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LaunchDiagnostic {
     NeoForgeEarlyDisplayRendererFuture,
@@ -912,6 +920,82 @@ pub async fn delete_instance(
     state.instance_manager.delete(&id).await?;
     info!("Deleted instance {}", id);
     Ok(())
+}
+
+fn is_permission_error(error: &LauncherError) -> bool {
+    match error {
+        LauncherError::Io { source, .. } => {
+            source.kind() == std::io::ErrorKind::PermissionDenied
+                || matches!(source.raw_os_error(), Some(5 | 32))
+        }
+        _ => false,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn request_windows_elevated_delete(target: &Path) -> Result<(), LauncherError> {
+    let escaped_target = target.display().to_string().replace('"', "`\"");
+    let script = format!(
+        "Start-Process -FilePath powershell -Verb RunAs -WindowStyle Hidden -ArgumentList @('-NoProfile','-Command','Remove-Item -LiteralPath \"{}\" -Recurse -Force')",
+        escaped_target
+    );
+
+    let status = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .status()
+        .map_err(|source| LauncherError::Io {
+            path: target.to_path_buf(),
+            source,
+        })?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(LauncherError::Other(
+            "No se pudo solicitar permisos de administrador para eliminar la instancia.".into(),
+        ))
+    }
+}
+
+#[tauri::command]
+pub async fn delete_instance_with_elevation(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    id: String,
+    request_elevation: bool,
+) -> Result<DeleteInstanceResponse, LauncherError> {
+    let mut state = state.lock().await;
+
+    if let Some(pid) = state.running_instances.remove(&id) {
+        kill_process(pid)?;
+    }
+
+    match state.instance_manager.delete(&id).await {
+        Ok(_) => {
+            info!("Deleted instance {}", id);
+            Ok(DeleteInstanceResponse::Deleted)
+        }
+        Err(error) if is_permission_error(&error) => {
+            if !request_elevation {
+                return Ok(DeleteInstanceResponse::NeedsElevation);
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                let target = state.instances_dir().join(&id);
+                request_windows_elevated_delete(&target)?;
+                return Ok(DeleteInstanceResponse::ElevationRequested);
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                Err(LauncherError::Other(
+                    "La elevación de privilegios para eliminar instancias sólo está disponible en Windows."
+                        .into(),
+                ))
+            }
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[tauri::command]

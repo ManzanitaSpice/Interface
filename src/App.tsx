@@ -22,7 +22,13 @@ interface InstanceInfo {
   minecraft_version: string;
   loader_type: LoaderType;
   loader_version: string | null;
+  state: "creating" | "ready" | "running" | "stopped" | "error";
+  icon_path?: string | null;
   total_size_bytes: number;
+}
+
+interface DeleteInstanceResponse {
+  status: "deleted" | "needs_elevation" | "elevation_requested";
 }
 
 interface LaunchProgressEvent {
@@ -152,6 +158,11 @@ function App() {
   const [showSearchInput, setShowSearchInput] = useState(false);
   const [expandedInstanceId, setExpandedInstanceId] = useState<string | null>(null);
   const [pendingDeleteInstance, setPendingDeleteInstance] = useState<InstanceInfo | null>(null);
+  const [deleteInProgress, setDeleteInProgress] = useState(false);
+  const [deleteFeedback, setDeleteFeedback] = useState<{ type: "idle" | "progress" | "success" | "error"; message: string; needsElevation?: boolean }>({
+    type: "idle",
+    message: "",
+  });
   const [minecraftVersions, setMinecraftVersions] = useState<MinecraftVersionEntry[]>([]);
   const [minecraftFilter, setMinecraftFilter] = useState<MinecraftVersionFilter>("all");
   const [selectedMinecraftVersion, setSelectedMinecraftVersion] = useState<string | null>(null);
@@ -360,19 +371,51 @@ function App() {
     await reloadInstances();
   };
 
-  const deleteInstanceById = async (instanceToDelete: InstanceInfo) => {
+  const deleteInstanceById = async (instanceToDelete: InstanceInfo, requestElevation = false) => {
     if (!instanceToDelete) return;
 
+    setDeleteInProgress(true);
+    setDeleteFeedback({ type: "progress", message: requestElevation ? "Solicitando permisos de administrador..." : "Eliminando instancia..." });
+
     try {
-      await invoke("delete_instance", { id: instanceToDelete.id });
+      const response = await invoke<DeleteInstanceResponse>("delete_instance_with_elevation", {
+        id: instanceToDelete.id,
+        requestElevation,
+      });
+
+      if (response.status === "needs_elevation") {
+        setDeleteFeedback({
+          type: "error",
+          message: "El sistema bloqueó la eliminación. Puedes solicitar permisos de administrador para completar el borrado.",
+          needsElevation: true,
+        });
+        return;
+      }
+
+      if (response.status === "elevation_requested") {
+        setDeleteFeedback({
+          type: "progress",
+          message: "Solicitud UAC enviada. Confirma el permiso para eliminar completamente los archivos protegidos.",
+        });
+        await reloadInstances();
+        return;
+      }
+
       setInstances((prev) => prev.filter((instance) => instance.id !== instanceToDelete.id));
       setSelectedInstance(null);
       setShowInstancePanel(false);
-      setPendingDeleteInstance(null);
+      setDeleteFeedback({ type: "success", message: "Instancia eliminada correctamente." });
+      setTimeout(() => {
+        setPendingDeleteInstance(null);
+        setDeleteFeedback({ type: "idle", message: "" });
+      }, 900);
       await reloadInstances();
     } catch (error) {
       const message = typeof error === "string" ? error : "No se pudo borrar la instancia.";
+      setDeleteFeedback({ type: "error", message });
       setLaunchError(message);
+    } finally {
+      setDeleteInProgress(false);
     }
   };
 
@@ -399,6 +442,7 @@ function App() {
       return;
     }
     if (action === "Borrar") {
+      setDeleteFeedback({ type: "idle", message: "" });
       setPendingDeleteInstance(selectedInstance);
     }
   };
@@ -578,7 +622,7 @@ function App() {
                   </div>
                   <div className="instance-details">
                     <span className={`instance-state ${selectedInstance?.id === instance.id ? "online" : "idle"}`}>
-                      {selectedInstance?.id === instance.id ? "Seleccionada" : "Disponible"}
+                      {instance.state === "running" ? "En ejecución" : selectedInstance?.id === instance.id ? "Seleccionada" : "Disponible"}
                     </span>
                     <span>MC {instance.minecraft_version}</span>
                     <span>{prettyLoader(instance.loader_type)} {instance.loader_version ?? "Integrado"}</span>
@@ -922,16 +966,26 @@ function App() {
       <main className="content-wrap">{renderSectionPage()}</main>
 
       {pendingDeleteInstance && (
-        <div className="delete-modal-backdrop" onClick={() => setPendingDeleteInstance(null)}>
+        <div className="delete-modal-backdrop" onClick={() => !deleteInProgress && setPendingDeleteInstance(null)}>
           <div className="delete-modal" onClick={(event) => event.stopPropagation()}>
             <h3>Eliminar instancia</h3>
             <p>
               ¿Seguro que quieres eliminar <strong>{pendingDeleteInstance.name}</strong>? Esta accion borrara
               todos sus archivos y no se puede deshacer.
             </p>
+            {deleteFeedback.type !== "idle" && (
+              <p className={`delete-feedback ${deleteFeedback.type}`}>{deleteFeedback.message}</p>
+            )}
             <div className="delete-modal-actions">
-              <button type="button" onClick={() => setPendingDeleteInstance(null)}>Cancelar</button>
-              <button type="button" className="danger" onClick={() => void deleteInstanceById(pendingDeleteInstance)}>Borrar</button>
+              <button type="button" disabled={deleteInProgress} onClick={() => setPendingDeleteInstance(null)}>Cancelar</button>
+              {deleteFeedback.needsElevation && (
+                <button type="button" className="warning" disabled={deleteInProgress} onClick={() => void deleteInstanceById(pendingDeleteInstance, true)}>
+                  Solicitar permisos de administrador
+                </button>
+              )}
+              <button type="button" className="danger" disabled={deleteInProgress} onClick={() => void deleteInstanceById(pendingDeleteInstance)}>
+                {deleteInProgress ? "Procesando..." : "Eliminar instancia"}
+              </button>
             </div>
           </div>
         </div>
