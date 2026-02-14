@@ -100,11 +100,13 @@ pub async fn launch(
     }
 
     cmd.current_dir(&game_dir);
+    configure_native_library_env(&mut cmd, &natives_dir);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
     info!("Launching Minecraft with Java: {:?}", java_bin);
     debug!("Command: {:?}", cmd);
+    debug!("Command (copy/paste): {}", format_command_for_logs(&cmd));
 
     let child = cmd
         .spawn()
@@ -340,6 +342,71 @@ fn ensure_loader_jvm_workarounds(instance: &Instance, args: &mut Vec<String>) {
     if !args.iter().any(|arg| arg == early_window_flag) {
         args.push(early_window_flag.to_string());
     }
+
+    // Newer NeoForge builds also support this namespace. Keeping both avoids
+    // requiring users to manually tweak launch options per loader version.
+    let neoforge_early_display_flag = "-Dneoforge.earlydisplay=false";
+    if !args.iter().any(|arg| arg == neoforge_early_display_flag) {
+        args.push(neoforge_early_display_flag.to_string());
+    }
+}
+
+fn configure_native_library_env(cmd: &mut std::process::Command, natives_dir: &std::path::Path) {
+    let native_path = safe_path_str(natives_dir);
+
+    if cfg!(target_os = "windows") {
+        let merged = append_env_path("PATH", &native_path);
+        cmd.env("PATH", merged);
+    } else if cfg!(target_os = "linux") {
+        let merged = append_env_path("LD_LIBRARY_PATH", &native_path);
+        cmd.env("LD_LIBRARY_PATH", merged);
+    } else if cfg!(target_os = "macos") {
+        let merged = append_env_path("DYLD_LIBRARY_PATH", &native_path);
+        cmd.env("DYLD_LIBRARY_PATH", merged);
+    }
+}
+
+fn append_env_path(var_name: &str, value: &str) -> String {
+    let separator = if cfg!(target_os = "windows") {
+        ";"
+    } else {
+        ":"
+    };
+    match std::env::var(var_name) {
+        Ok(existing) if !existing.trim().is_empty() => {
+            format!("{}{}{}", value, separator, existing)
+        }
+        _ => value.to_string(),
+    }
+}
+
+fn format_command_for_logs(cmd: &std::process::Command) -> String {
+    let program = shell_escape(&cmd.get_program().to_string_lossy());
+    let args = cmd
+        .get_args()
+        .map(|arg| shell_escape(&arg.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if args.is_empty() {
+        program
+    } else {
+        format!("{} {}", program, args)
+    }
+}
+
+fn shell_escape(raw: &str) -> String {
+    if raw.is_empty() {
+        return "\"\"".to_string();
+    }
+
+    if raw.chars().all(|ch| {
+        ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/' | ':' | '\\' | '=')
+    }) {
+        return raw.to_string();
+    }
+
+    format!("\"{}\"", raw.replace('"', "\\\""))
 }
 
 #[cfg(test)]
@@ -600,6 +667,32 @@ mod tests {
         ensure_loader_jvm_workarounds(&instance, &mut args);
         ensure_loader_jvm_workarounds(&instance, &mut args);
 
-        assert_eq!(args, vec!["-Xmx2048M", "-Dfml.earlyprogresswindow=false"]);
+        assert_eq!(
+            args,
+            vec![
+                "-Xmx2048M",
+                "-Dfml.earlyprogresswindow=false",
+                "-Dneoforge.earlydisplay=false"
+            ]
+        );
+    }
+
+    #[test]
+    fn append_env_path_prefixes_new_value() {
+        let merged = append_env_path("THIS_ENV_VAR_SHOULD_NOT_EXIST", "/tmp/natives");
+        assert_eq!(merged, "/tmp/natives");
+
+        std::env::set_var("IFACE_TEST_PATH", "C:/Windows/System32");
+        let merged = append_env_path("IFACE_TEST_PATH", "C:/Game/natives");
+        let expected_sep = if cfg!(target_os = "windows") {
+            ";"
+        } else {
+            ":"
+        };
+        assert_eq!(
+            merged,
+            format!("C:/Game/natives{}C:/Windows/System32", expected_sep)
+        );
+        std::env::remove_var("IFACE_TEST_PATH");
     }
 }
