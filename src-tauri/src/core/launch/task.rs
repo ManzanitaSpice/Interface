@@ -69,39 +69,41 @@ pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std:
     cmd.arg(main_class);
 
     // ── Game Arguments ──
-    cmd.arg("--gameDir").arg(safe_path_str(&game_dir));
-    cmd.arg("--assetsDir").arg(safe_path_str(&assets_dir));
+    let game_args = sanitize_game_args(instance, &instance.game_args, &game_dir, &assets_dir);
+    let mut final_game_args = game_args;
 
-    if let Some(ref asset_index) = instance.asset_index {
-        cmd.arg("--assetIndex").arg(asset_index);
-    }
+    // Inject required arguments only if they were not already provided by
+    // version metadata/loader arguments.
+    push_option_if_missing(&mut final_game_args, "--gameDir", safe_path_str(&game_dir));
+    push_option_if_missing(
+        &mut final_game_args,
+        "--assetsDir",
+        safe_path_str(&assets_dir),
+    );
 
-    // Extra game args from loader (replace known placeholders)
-    for arg in &instance.game_args {
-        let resolved = arg
-            .replace("${auth_player_name}", "Player")
-            .replace("${version_name}", &instance.minecraft_version)
-            .replace("${game_directory}", &safe_path_str(&game_dir))
-            .replace("${assets_root}", &safe_path_str(&assets_dir))
-            .replace(
-                "${assets_index_name}",
-                instance.asset_index.as_deref().unwrap_or("legacy"),
-            )
-            .replace("${auth_uuid}", "00000000-0000-0000-0000-000000000000")
-            .replace("${auth_access_token}", "0")
-            .replace("${user_type}", "legacy")
-            .replace("${version_type}", "release");
-        cmd.arg(resolved);
+    if let Some(asset_index) = instance.asset_index.clone() {
+        push_option_if_missing(&mut final_game_args, "--assetIndex", asset_index);
     }
 
     // Placeholder auth (offline mode)
-    cmd.arg("--username").arg("Player");
-    cmd.arg("--uuid")
-        .arg("00000000-0000-0000-0000-000000000000");
-    cmd.arg("--version").arg(&instance.minecraft_version);
-    cmd.arg("--accessToken").arg("0");
-    cmd.arg("--userType").arg("legacy");
-    cmd.arg("--versionType").arg("release");
+    push_option_if_missing(&mut final_game_args, "--username", "Player".into());
+    push_option_if_missing(
+        &mut final_game_args,
+        "--uuid",
+        "00000000-0000-0000-0000-000000000000".into(),
+    );
+    push_option_if_missing(
+        &mut final_game_args,
+        "--version",
+        instance.minecraft_version.clone(),
+    );
+    push_option_if_missing(&mut final_game_args, "--accessToken", "0".into());
+    push_option_if_missing(&mut final_game_args, "--userType", "legacy".into());
+    push_option_if_missing(&mut final_game_args, "--versionType", "release".into());
+
+    for arg in final_game_args {
+        cmd.arg(arg);
+    }
 
     cmd.current_dir(&game_dir);
     cmd.stdout(Stdio::piped());
@@ -185,6 +187,55 @@ fn sanitize_jvm_args(
     sanitized
 }
 
+fn sanitize_game_args(
+    instance: &Instance,
+    raw_args: &[String],
+    game_dir: &std::path::Path,
+    assets_dir: &std::path::Path,
+) -> Vec<String> {
+    let mut sanitized = Vec::new();
+    let game_dir = safe_path_str(game_dir);
+    let assets_dir = safe_path_str(assets_dir);
+
+    for arg in raw_args {
+        let resolved = arg
+            .replace("${auth_player_name}", "Player")
+            .replace("${version_name}", &instance.minecraft_version)
+            .replace("${game_directory}", &game_dir)
+            .replace("${assets_root}", &assets_dir)
+            .replace(
+                "${assets_index_name}",
+                instance.asset_index.as_deref().unwrap_or("legacy"),
+            )
+            .replace("${auth_uuid}", "00000000-0000-0000-0000-000000000000")
+            .replace("${auth_access_token}", "0")
+            .replace("${user_type}", "legacy")
+            .replace("${version_type}", "release");
+
+        // Skip unresolved placeholders to avoid passing malformed values.
+        if resolved.contains("${") {
+            continue;
+        }
+
+        sanitized.push(resolved);
+    }
+
+    sanitized
+}
+
+fn push_option_if_missing(args: &mut Vec<String>, option: &str, value: String) {
+    if has_option(args, option) {
+        return;
+    }
+    args.push(option.to_string());
+    args.push(value);
+}
+
+fn has_option(args: &[String], option: &str) -> bool {
+    args.iter()
+        .any(|arg| arg == option || arg.starts_with(&format!("{}=", option)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +277,51 @@ mod tests {
         assert_eq!(sanitized.len(), 2);
         assert_eq!(sanitized[0], "-XX:+UseG1GC");
         assert_eq!(sanitized[1], "-Djava.library.path=/tmp/natives");
+    }
+
+    #[test]
+    fn sanitize_game_args_resolves_known_placeholders_and_drops_unknown() {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::Vanilla,
+            None,
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+        instance.asset_index = Some("17".into());
+
+        let args = vec![
+            "--username".into(),
+            "${auth_player_name}".into(),
+            "--assetIndex".into(),
+            "${assets_index_name}".into(),
+            "--bad".into(),
+            "${unknown_placeholder}".into(),
+        ];
+
+        let sanitized = sanitize_game_args(
+            &instance,
+            &args,
+            std::path::Path::new("/tmp/game"),
+            std::path::Path::new("/tmp/assets"),
+        );
+
+        assert_eq!(
+            sanitized,
+            vec!["--username", "Player", "--assetIndex", "17", "--bad"]
+        );
+    }
+
+    #[test]
+    fn push_option_if_missing_avoids_duplicate_version_argument() {
+        let mut args = vec!["--version".to_string(), "1.20.1".to_string()];
+        push_option_if_missing(&mut args, "--version", "1.20.1".into());
+        assert_eq!(args, vec!["--version", "1.20.1"]);
+
+        let mut args_equals = vec!["--version=1.20.1".to_string()];
+        push_option_if_missing(&mut args_equals, "--version", "1.20.1".into());
+        assert_eq!(args_equals, vec!["--version=1.20.1"]);
     }
 }
