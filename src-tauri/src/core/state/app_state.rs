@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
 use crate::core::downloader::Downloader;
+use crate::core::http::build_http_client;
 use crate::core::instance::InstanceManager;
 
 const APP_DIR_NAME: &str = "InterfaceOficial";
@@ -71,10 +72,7 @@ impl AppState {
         let instances_dir = data_dir.join("instances");
         let instance_manager = InstanceManager::new(instances_dir);
 
-        let http_client = Client::builder()
-            .user_agent("InterfaceOficial/0.1.0")
-            .build()
-            .expect("Failed to build HTTP client");
+        let http_client = build_http_client().expect("Failed to build HTTP client");
 
         let downloader = Arc::new(Downloader::new(Some(app_handle)));
         let launcher_settings = load_settings_from_disk(&data_dir).unwrap_or_default();

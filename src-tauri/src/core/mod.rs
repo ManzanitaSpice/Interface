@@ -17,6 +17,7 @@ pub mod assets;
 pub mod auth;
 pub mod downloader;
 pub mod error;
+pub mod http;
 pub mod instance;
 pub mod java;
 pub mod launch;
