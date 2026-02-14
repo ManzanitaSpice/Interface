@@ -8,6 +8,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::{debug, info};
 
 use crate::core::error::{LauncherError, LauncherResult};
+use crate::core::http::build_http_client;
 
 /// Payload emitted to the frontend on download progress.
 #[derive(Clone, serde::Serialize)]
@@ -38,10 +39,7 @@ pub struct Downloader {
 
 impl Downloader {
     pub fn new(app_handle: Option<AppHandle>) -> Self {
-        let client = Client::builder()
-            .user_agent("InterfaceOficial/0.1.0")
-            .build()
-            .expect("Failed to build HTTP client");
+        let client = build_http_client().expect("Failed to build HTTP client");
 
         Self {
             client,

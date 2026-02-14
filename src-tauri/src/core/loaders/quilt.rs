@@ -4,6 +4,7 @@ use tracing::info;
 use super::context::InstallContext;
 use super::installer::{LoaderInstallResult, LoaderInstaller};
 use crate::core::error::{LauncherError, LauncherResult};
+use crate::core::http::build_http_client;
 
 /// Installs Quilt loader via the Quilt Meta API (nearly identical to Fabric's API).
 pub struct QuiltInstaller {
@@ -122,7 +123,7 @@ impl LoaderInstaller for QuiltInstaller {
 /// Fetch available Quilt loader versions for a Minecraft version.
 pub async fn list_loader_versions(minecraft_version: &str) -> LauncherResult<Vec<String>> {
     let url = format!("{}/versions/loader/{}", QUILT_META_BASE, minecraft_version);
-    let client = reqwest::Client::new();
+    let client = build_http_client()?;
     let resp = client.get(&url).send().await?;
     if !resp.status().is_success() {
         return Err(LauncherError::LoaderApi(format!(

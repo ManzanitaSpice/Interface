@@ -5,7 +5,8 @@ use serde::Deserialize;
 use tracing::info;
 
 use crate::core::downloader::{DownloadEntry, Downloader};
-use crate::core::error::LauncherResult;
+use crate::core::error::{LauncherError, LauncherResult};
+use crate::core::http::build_http_client;
 
 /// Manages Minecraft asset downloads (sounds, textures referenced by asset index).
 pub struct AssetManager;
@@ -32,8 +33,14 @@ impl AssetManager {
         downloader: &Downloader,
     ) -> LauncherResult<()> {
         // 1. Download asset index JSON
-        let client = reqwest::Client::new();
+        let client = build_http_client()?;
         let index_resp = client.get(index_url).send().await?;
+        if !index_resp.status().is_success() {
+            return Err(LauncherError::DownloadFailed {
+                url: index_url.to_string(),
+                status: index_resp.status().as_u16(),
+            });
+        }
         let index_text = index_resp.text().await?;
         let index: AssetIndex = serde_json::from_str(&index_text)?;
 
