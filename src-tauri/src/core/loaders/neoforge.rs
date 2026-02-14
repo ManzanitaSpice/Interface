@@ -169,7 +169,7 @@ impl LoaderInstaller for NeoForgeInstaller {
             }
         }
 
-        let processor_vars = build_processor_variables(ctx, &installer_path, &installer_bytes)?;
+        let processor_vars = build_processor_variables(&ctx, &installer_path, &installer_bytes)?;
 
         // Run processors (client side)
         for processor in &install_profile.processors {
@@ -249,7 +249,7 @@ impl LoaderInstaller for NeoForgeInstaller {
         let mut extra_game_args = Vec::new();
         let mut resolved_main_class = version_json.main_class.clone();
 
-        let installed_version_path = resolve_installed_neoforge_version_path(ctx);
+        let installed_version_path = resolve_installed_neoforge_version_path(&ctx);
         if installed_version_path.exists() {
             let raw_version = tokio::fs::read_to_string(&installed_version_path)
                 .await
@@ -262,7 +262,7 @@ impl LoaderInstaller for NeoForgeInstaller {
                 installed_version_path.parent().unwrap_or(ctx.instance_dir),
             )?;
 
-            resolved_main_class = installed_version.main_class;
+            resolved_main_class = installed_version.main_class.clone();
             extra_jvm_args = installed_version.simple_jvm_args();
             extra_game_args = installed_version.simple_game_args();
 
@@ -309,7 +309,7 @@ impl LoaderInstaller for NeoForgeInstaller {
     }
 }
 
-fn resolve_installed_neoforge_version_path(ctx: InstallContext<'_>) -> PathBuf {
+fn resolve_installed_neoforge_version_path(ctx: &InstallContext<'_>) -> PathBuf {
     let versions_dir = ctx.instance_dir.join("minecraft").join("versions");
     let candidates = [
         format!("{}-{}", ctx.minecraft_version, ctx.loader_version),
@@ -331,7 +331,7 @@ fn resolve_installed_neoforge_version_path(ctx: InstallContext<'_>) -> PathBuf {
 }
 
 fn build_processor_variables(
-    ctx: InstallContext<'_>,
+    ctx: &InstallContext<'_>,
     installer_path: &Path,
     installer_bytes: &[u8],
 ) -> LauncherResult<HashMap<String, String>> {
@@ -368,7 +368,7 @@ fn build_processor_variables(
 }
 
 fn extract_client_binpatch(
-    ctx: InstallContext<'_>,
+    ctx: &InstallContext<'_>,
     installer_bytes: &[u8],
 ) -> LauncherResult<Option<PathBuf>> {
     let cursor = std::io::Cursor::new(installer_bytes);
