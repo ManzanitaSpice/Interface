@@ -7,8 +7,8 @@ type LoaderType = "vanilla" | "forge" | "fabric" | "neoforge" | "quilt";
 type InstanceState = "created" | "installing" | "ready" | "running" | "error";
 type JavaRuntimePreference = "auto" | "embedded" | "system";
 type SettingsTab = "java" | "launcher";
-type InstanceConfigTab = "tools" | "java" | "args";
-type View = "home" | "create-instance" | "settings" | "instance-detail";
+type InstanceConfigTab = "java" | "args";
+type View = "home" | "create-instance" | "settings" | "instance-detail" | "instance-execution";
 
 interface InstanceInfo {
   id: string;
@@ -329,7 +329,7 @@ function App() {
   const launcherDirInputRef = useRef<HTMLInputElement | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const [isDetectingJava, setIsDetectingJava] = useState(false);
-  const [instanceConfigTab, setInstanceConfigTab] = useState<InstanceConfigTab>("tools");
+  const [instanceConfigTab, setInstanceConfigTab] = useState<InstanceConfigTab>("java");
   const [instanceJavaPathInput, setInstanceJavaPathInput] = useState("");
   const [instanceMaxMemoryInput, setInstanceMaxMemoryInput] = useState("4096");
   const [instanceJvmArgsInput, setInstanceJvmArgsInput] = useState("");
@@ -590,7 +590,6 @@ function App() {
   const handleStartInstance = async (id: string) => {
     setError("");
     setSelectedInstanceId(id);
-    setInstanceConfigTab("tools");
     updateLaunchProgress(id, "running", 4, "Solicitando inicio al backend");
     setInstances((prev) => prev.map((instance) => (instance.id === id ? { ...instance, state: "installing" } : instance)));
     try {
@@ -650,7 +649,6 @@ function App() {
 
   const openInstanceDetail = (id: string) => {
     setSelectedInstanceId(id);
-    setInstanceConfigTab("tools");
     navigateToView("instance-detail");
   };
 
@@ -754,13 +752,32 @@ function App() {
       </header>
 
       <div className="app-layout">
-        {currentView !== "instance-detail" && (<aside className="sidebar">
+        <aside className="sidebar">
           <div className="sidebar-header">Launcher</div>
           <nav>
             <button className={`sidebar-btn ${currentView === "home" ? "active" : ""}`} onClick={() => navigateToView("home")}>Instancias</button>
             <button className={`sidebar-btn ${currentView === "settings" ? "active" : ""}`} onClick={() => navigateToView("settings")}>Configuración</button>
           </nav>
-        </aside>)}
+          {selectedInstance && (
+            <div className="instance-sidebar-tools">
+              <h4>{selectedInstance.name}</h4>
+              <button className={`sidebar-btn ${(currentView === "instance-detail") ? "active" : ""}`} onClick={() => navigateToView("instance-detail")}>Configurar instancia</button>
+              <button className={`sidebar-btn ${(currentView === "instance-execution") ? "active" : ""}`} onClick={() => navigateToView("instance-execution")}>Ejecusion</button>
+              <button className="start-instance-btn" type="button" onClick={() => void handleStartInstance(selectedInstance.id)}>
+                {selectedInstance.state === "running" ? "En ejecución" : "Iniciar instancia"}
+              </button>
+              <button className="open-folder-btn" type="button" onClick={() => void handleOpenInstanceFolder(selectedInstance.id)}>
+                Abrir carpeta
+              </button>
+              <button className="danger-btn secondary" type="button" onClick={() => void handleForceCloseInstance(selectedInstance.id)} disabled={selectedInstance.state !== "running"}>
+                Parar ejecución
+              </button>
+              <button className="danger-btn" type="button" onClick={() => void handleDeleteInstance(selectedInstance.id)}>
+                Eliminar instancia
+              </button>
+            </div>
+          )}
+        </aside>
 
         <main className={`content-area ${currentView === "instance-detail" ? "instance-detail-open" : ""}`}>
           {firstLaunchStatus?.first_launch && (
@@ -844,6 +861,57 @@ function App() {
                 </div>
               </div>
 
+              <section className="settings-panel instance-full-config">
+                <div className="instance-config-header">
+                  <h3>Configuración avanzada de instancia</h3>
+                </div>
+                <div className="settings-tabs">
+                  <button className={`settings-tab ${instanceConfigTab === "java" ? "active" : ""}`} onClick={() => setInstanceConfigTab("java")}>Java y memoria</button>
+                  <button className={`settings-tab ${instanceConfigTab === "args" ? "active" : ""}`} onClick={() => setInstanceConfigTab("args")}>Argumentos</button>
+                </div>
+
+                {instanceConfigTab === "java" && (
+                  <section className="instance-config-panel">
+                    <div className="form-group">
+                      <label>Ruta Java específica</label>
+                      <input value={instanceJavaPathInput} onChange={(e) => setInstanceJavaPathInput(e.target.value)} placeholder="Auto por compatibilidad" />
+                    </div>
+                    <div className="form-group">
+                      <label>Memoria máxima (MB)</label>
+                      <input type="number" min={512} step={256} value={instanceMaxMemoryInput} onChange={(e) => setInstanceMaxMemoryInput(e.target.value)} />
+                    </div>
+                  </section>
+                )}
+
+                {instanceConfigTab === "args" && (
+                  <section className="instance-config-panel">
+                    <div className="form-group">
+                      <label>Argumentos JVM (uno por línea)</label>
+                      <textarea value={instanceJvmArgsInput} onChange={(e) => setInstanceJvmArgsInput(e.target.value)} rows={6} />
+                    </div>
+                    <div className="form-group">
+                      <label>Argumentos del juego (uno por línea)</label>
+                      <textarea value={instanceGameArgsInput} onChange={(e) => setInstanceGameArgsInput(e.target.value)} rows={6} />
+                    </div>
+                  </section>
+                )}
+
+                <button className="generate-btn" type="button" onClick={() => void handleSaveInstanceConfig()} disabled={isSavingInstanceConfig}>
+                  {isSavingInstanceConfig ? "Guardando..." : "Guardar configuración"}
+                </button>
+              </section>
+            </section>
+          )}
+
+          {currentView === "instance-execution" && selectedInstance && (
+            <section className="settings-page instance-detail-page">
+              <div className="home-toolbar">
+                <div>
+                  <h2>Consola · {selectedInstance.name}</h2>
+                  <p>Salida en tiempo real y progreso de ejecución.</p>
+                </div>
+              </div>
+
               <section className="instance-progress-wrap">
                 <div className="instance-progress-meta">
                   <span>Progreso de arranque</span>
@@ -854,84 +922,15 @@ function App() {
                 </div>
               </section>
 
-              <div className="instance-detail-shell">
-                <section className="instance-log-stream">
-                  {(instanceLogs[selectedInstance.id] ?? []).length === 0 ? (
-                    <p className="empty-logs">Sin logs todavía. Inicia la instancia para ver salida.</p>
-                  ) : (
-                    (instanceLogs[selectedInstance.id] ?? []).map((entry, idx) => (
-                      <div key={`${selectedInstance.id}-${idx}`} className={`log-entry ${entry.level}`}><span className="log-entry-time">[{entry.timestamp}]</span><span className="log-entry-message">{entry.message}</span></div>
-                    ))
-                  )}
-                </section>
-
-                <aside className="instance-tools-sidebar">
-                  <h3>Herramientas de instancia</h3>
-                  <div className="instance-tool-group">
-                    <button className="start-instance-btn" type="button" onClick={() => void handleStartInstance(selectedInstance.id)}>
-                      {selectedInstance.state === "running" ? "En ejecución" : "Iniciar instancia"}
-                    </button>
-                    <button className="open-folder-btn" type="button" onClick={() => void handleOpenInstanceFolder(selectedInstance.id)}>
-                      Abrir carpeta
-                    </button>
-                  </div>
-                  <div className="instance-tool-group secondary">
-                    <button className="generate-btn" type="button" onClick={() => setInstanceConfigTab("java")}>
-                      Configurar instancia
-                    </button>
-                    <button className="danger-btn secondary" type="button" onClick={() => void handleForceCloseInstance(selectedInstance.id)} disabled={selectedInstance.state !== "running"}>
-                      Parar ejecución
-                    </button>
-                    <button className="danger-btn" type="button" onClick={() => void handleDeleteInstance(selectedInstance.id)}>
-                      Eliminar instancia
-                    </button>
-                  </div>
-                </aside>
-              </div>
-
-              {instanceConfigTab !== "tools" && (
-                <section className="settings-panel instance-full-config">
-                  <div className="instance-config-header">
-                    <h3>Configuración avanzada de instancia</h3>
-                    <button className="open-folder-btn" type="button" onClick={() => setInstanceConfigTab("tools")}>Cerrar configuración</button>
-                  </div>
-                  <div className="settings-tabs">
-                    <button className={`settings-tab ${instanceConfigTab === "java" ? "active" : ""}`} onClick={() => setInstanceConfigTab("java")}>Java y memoria</button>
-                    <button className={`settings-tab ${instanceConfigTab === "args" ? "active" : ""}`} onClick={() => setInstanceConfigTab("args")}>Argumentos</button>
-                  </div>
-
-                  {instanceConfigTab === "java" && (
-                    <section className="instance-config-panel">
-                      <div className="form-group">
-                        <label>Ruta Java específica</label>
-                        <input value={instanceJavaPathInput} onChange={(e) => setInstanceJavaPathInput(e.target.value)} placeholder="Auto por compatibilidad" />
-                      </div>
-                      <div className="form-group">
-                        <label>Memoria máxima (MB)</label>
-                        <input type="number" min={512} step={256} value={instanceMaxMemoryInput} onChange={(e) => setInstanceMaxMemoryInput(e.target.value)} />
-                      </div>
-                    </section>
-                  )}
-
-                  {instanceConfigTab === "args" && (
-                    <section className="instance-config-panel">
-                      <div className="form-group">
-                        <label>Argumentos JVM (uno por línea)</label>
-                        <textarea value={instanceJvmArgsInput} onChange={(e) => setInstanceJvmArgsInput(e.target.value)} rows={6} />
-                      </div>
-                      <div className="form-group">
-                        <label>Argumentos del juego (uno por línea)</label>
-                        <textarea value={instanceGameArgsInput} onChange={(e) => setInstanceGameArgsInput(e.target.value)} rows={6} />
-                      </div>
-                    </section>
-                  )}
-
-                  <button className="generate-btn" type="button" onClick={() => void handleSaveInstanceConfig()} disabled={isSavingInstanceConfig}>
-                    {isSavingInstanceConfig ? "Guardando..." : "Guardar configuración"}
-                  </button>
-                </section>
-              )}
-
+              <section className="instance-log-stream">
+                {(instanceLogs[selectedInstance.id] ?? []).length === 0 ? (
+                  <p className="empty-logs">Sin logs todavía. Inicia la instancia para ver salida.</p>
+                ) : (
+                  (instanceLogs[selectedInstance.id] ?? []).map((entry, idx) => (
+                    <div key={`${selectedInstance.id}-${idx}`} className={`log-entry ${entry.level}`}><span className="log-entry-time">[{entry.timestamp}]</span><span className="log-entry-message">{entry.message}</span></div>
+                  ))
+                )}
+              </section>
             </section>
           )}
 
