@@ -13,7 +13,7 @@ use crate::core::error::{LauncherError, LauncherResult};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionJson {
-    pub id: Option<String>,
+    pub id: String,
     pub main_class: String,
     #[serde(default)]
     pub inherits_from: Option<String>,
@@ -479,11 +479,13 @@ mod tests {
     #[test]
     fn merge_with_parent_json_overrides_parent_fields() {
         let parent = serde_json::json!({
+            "id": "1.20.1",
             "mainClass": "parent.Main",
             "libraries": [{"name": "a:b:1.0"}],
             "arguments": { "game": ["--parent"] }
         });
         let current = serde_json::json!({
+            "id": "1.20.1-forge-47.2.0",
             "inheritsFrom": "1.20.1",
             "mainClass": "child.Main",
             "arguments": { "game": ["--child"] }
@@ -492,7 +494,17 @@ mod tests {
         let merged = VersionJson::merge_with_parent_json(&current, &parent);
 
         assert_eq!(merged["mainClass"], "child.Main");
+        assert_eq!(merged["id"], "1.20.1-forge-47.2.0");
         assert_eq!(merged["libraries"][0]["name"], "a:b:1.0");
         assert_eq!(merged["arguments"]["game"][0], "--child");
+    }
+
+    #[test]
+    fn version_json_without_id_fails_to_parse() {
+        let parsed: Result<VersionJson, _> = serde_json::from_value(serde_json::json!({
+            "mainClass": "net.minecraft.client.main.Main"
+        }));
+
+        assert!(parsed.is_err());
     }
 }
