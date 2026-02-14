@@ -5,9 +5,17 @@
   padding: 14px;
   font-family: "JetBrains Mono", "Fira Code", monospace;
   color: var(--success);
-  max-height: 65vh;
+  height: calc(100vh - 120px);
+  min-height: 420px;
   overflow: auto;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+@media (max-height: 800px) {
+  .execution-log {
+    min-height: 320px;
+    height: calc(100vh - 96px);
+  }
 }
 
 .execution-actions {
