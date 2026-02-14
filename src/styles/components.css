@@ -1,8 +1,8 @@
 .profile-menu-container { position: relative; }
 .profile-btn {
-  border: 1px solid #4a4d55;
-  background: #2b2d31;
-  color: #f1f1f1;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-1);
+  color: var(--text-main);
   border-radius: 8px;
   padding: 6px 10px;
   cursor: pointer;
@@ -12,19 +12,19 @@
   right: 0;
   top: calc(100% + 8px);
   width: 220px;
-  background: #232428;
-  border: 1px solid #3b3d45;
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
   border-radius: 8px;
   overflow: hidden;
   z-index: 20;
 }
-.profile-dropdown button { width: 100%; border: none; background: transparent; color: #dbdee1; text-align: left; padding: 10px 12px; }
-.profile-dropdown button:hover { background: #313338; }
+.profile-dropdown button { width: 100%; border: none; background: transparent; color: var(--text-muted); text-align: left; padding: 10px 12px; }
+.profile-dropdown button:hover { background: var(--bg-2); }
 
 .nav-arrow-btn {
-  border: 1px solid #4a4d55;
-  background: #232428;
-  color: #dcddde;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-1);
+  color: var(--text-muted);
   width: 30px;
   height: 30px;
   border-radius: 8px;
@@ -36,7 +36,7 @@
 .sidebar-btn {
   background: transparent;
   border: none;
-  color: #b5bac1;
+  color: var(--text-muted);
   padding: 12px 20px;
   text-align: left;
   cursor: pointer;
@@ -45,8 +45,8 @@
   margin-bottom: 5px;
   width: 100%;
 }
-.sidebar-btn:hover { background-color: #313338; color: white; }
-.sidebar-btn.active { background-color: #2b2d31; color: #f2f3f5; border-left: 3px solid #586dff; }
+.sidebar-btn:hover { background-color: var(--bg-2); color: white; }
+.sidebar-btn.active { background-color: var(--bg-1); color: var(--text-main); border-left: 3px solid var(--accent); }
 
 .form-group { display: flex; flex-direction: column; gap: 8px; }
 .form-group label { font-weight: 500; color: #dbdee1; }

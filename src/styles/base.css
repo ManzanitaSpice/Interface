@@ -3,8 +3,8 @@
   font-size: 16px;
   line-height: 24px;
   font-weight: 400;
-  color: #f6f6f6;
-  background-color: #14161f;
+  color: #f3f4f6;
+  background-color: #121212;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -22,7 +22,7 @@ body {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: radial-gradient(circle at top right, #2b2d31 0%, #1e1f22 65%);
+  background: radial-gradient(circle at top right, #252525 0%, #121212 65%);
 }
 
 #root {

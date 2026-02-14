@@ -1,20 +1,20 @@
 button {
-  border: 1px solid rgba(115, 144, 196, 0.42);
-  background: linear-gradient(180deg, rgba(44, 58, 82, 0.95), rgba(31, 43, 63, 0.95));
+  border: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
   color: var(--text-main);
   border-radius: 10px;
   padding: 7px 11px;
   cursor: pointer;
   font-size: 0.8rem;
   letter-spacing: 0.01em;
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.36);
+  box-shadow: var(--shadow-soft);
   transition: transform 0.2s ease, border-color 0.24s ease, box-shadow 0.24s ease, background-color 0.24s ease;
 }
 
 button:hover:not(:disabled) {
-  background: linear-gradient(180deg, rgba(59, 77, 108, 0.98), rgba(39, 55, 81, 0.98));
-  border-color: var(--accent-strong);
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(109, 145, 205, 0.35);
+  background: linear-gradient(180deg, var(--bg-3), var(--bg-2));
+  border-color: var(--accent);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--line-soft);
   transform: translateY(-1px);
 }
 
@@ -30,9 +30,9 @@ button:disabled {
 }
 
 button.active {
-  border-color: var(--accent-strong);
-  background: linear-gradient(180deg, rgba(86, 122, 194, 0.95), rgba(66, 100, 168, 0.95));
-  box-shadow: 0 0 0 1px rgba(109, 145, 205, 0.45), 0 12px 22px rgba(4, 8, 18, 0.4);
+  border-color: var(--accent);
+  background: linear-gradient(180deg, rgba(77, 120, 200, 0.15), rgba(77, 120, 200, 0.05));
+  box-shadow: 0 0 0 1px var(--line-soft), 0 12px 22px rgba(4, 8, 18, 0.4);
 }
 
 .arrow-button {

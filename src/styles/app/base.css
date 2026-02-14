@@ -1,21 +1,22 @@
 :root {
   color-scheme: dark;
   font-family: Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --bg-0: #0a0d12;
-  --bg-1: #121722;
-  --bg-2: #171d2a;
-  --bg-3: #232d40;
-  --line: rgba(109, 145, 205, 0.34);
-  --line-soft: rgba(109, 145, 205, 0.2);
-  --text-main: #eef3ff;
-  --text-muted: #a8b5d0;
+  --bg-0: #121212;
+  --bg-1: #1a1a1a;
+  --bg-2: #252525;
+  --bg-3: #2d2d2d;
+  --line: rgba(77, 120, 200, 0.4);
+  --line-soft: rgba(77, 120, 200, 0.2);
+  --text-main: #f3f4f6;
+  --text-muted: #9ca3af;
   --accent: #4d78c8;
   --accent-strong: #6a94e6;
-  --accent-violet: #9385ff;
+  --accent-violet: #fcd34d;
+  --logo-accent: #f59e0b;
   --success: #35b479;
-  --danger: #f26778;
-  --shadow-lg: 0 20px 36px rgba(3, 8, 18, 0.52);
-  --shadow-soft: 0 8px 20px rgba(3, 9, 20, 0.36);
+  --danger: #ef4444;
+  --shadow-lg: 0 20px 36px rgba(0, 0, 0, 0.6);
+  --shadow-soft: 0 8px 20px rgba(0, 0, 0, 0.4);
   --radius-md: 12px;
   --radius-lg: 15px;
 }

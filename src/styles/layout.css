@@ -13,8 +13,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 14px;
-  background: linear-gradient(90deg, #1e1f22, #232428);
-  border-bottom: 1px solid #3b3d45;
+  background: linear-gradient(90deg, var(--bg-1), var(--bg-2));
+  border-bottom: 1px solid var(--line-soft);
 }
 
 .brand-zone {

@@ -6,13 +6,13 @@
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  background: #0f1115;
-  color: #f2f4f8;
+  background: var(--bg-0);
+  color: var(--text-main);
 }
 
 .app-shell {
   min-height: 100vh;
-  background: radial-gradient(circle at top, #1a2130 0%, #0f1115 40%, #0b0d12 100%);
+  background: radial-gradient(circle at top, #252525 0%, var(--bg-0) 40%, #000000 100%);
 }
 
 .topbar-primary,
@@ -21,12 +21,12 @@ body {
   align-items: center;
   gap: 12px;
   padding: 12px 20px;
-  border-bottom: 1px solid #2b3140;
+  border-bottom: 1px solid var(--bg-2);
 }
 
 .topbar-primary {
   justify-content: space-between;
-  background: #131825;
+  background: var(--bg-1);
   position: sticky;
   top: 0;
   z-index: 30;
@@ -39,10 +39,10 @@ body {
 }
 
 .brand { font-weight: 700; margin-left: 4px; }
-.topbar-info { color: #94a0b7; font-size: 0.92rem; }
+.topbar-info { color: var(--text-muted); font-size: 0.92rem; }
 
 .topbar-secondary {
-  background: rgba(19, 24, 37, 0.9);
+  background: rgba(26, 26, 26, 0.9);
   position: sticky;
   top: 58px;
   z-index: 20;

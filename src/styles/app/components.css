@@ -27,9 +27,9 @@
 .create-right-sidebar button,
 .instances-toolbar button,
 .instance-settings-tabs button {
-  border: 1px solid #3b4254;
-  background: linear-gradient(180deg, #353b4a 0%, #2d3341 100%);
-  color: #f1f3f7;
+  border: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 100%);
+  color: var(--text-main);
   border-radius: 10px;
   padding: 7px 12px;
   cursor: pointer;

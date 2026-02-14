@@ -189,6 +189,15 @@ function App() {
   const [loaderVersionsError, setLoaderVersionsError] = useState<string | null>(null);
   const [selectedLoaderVersion, setSelectedLoaderVersion] = useState<string | null>(null);
   const [newInstanceName, setNewInstanceName] = useState("");
+  const [newInstanceGroup, setNewInstanceGroup] = useState("Test");
+  
+  // Detailed Minecraft Filters
+  const [mcFilterVersions, setMcFilterVersions] = useState(true);
+  const [mcFilterSnapshots, setMcFilterSnapshots] = useState(false);
+  const [mcFilterBetas, setMcFilterBetas] = useState(false);
+  const [mcFilterAlphas, setMcFilterAlphas] = useState(false);
+  const [mcFilterExperiments, setMcFilterExperiments] = useState(false);
+
   const [createInProgress, setCreateInProgress] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createProgress, setCreateProgress] = useState<CreateProgressEvent | null>(null);
@@ -799,133 +808,182 @@ function App() {
     );
   };
 
-  if (appMode === "create") {
+    if (appMode === "create") {
+    // Advanced Filtering Logic
+    const filteredMinecraftVersions = minecraftVersions.filter((v) => {
+      if (minecraftVersionSearch && !v.id.includes(minecraftVersionSearch)) return false;
+      
+      const isRelease = v.version_type === "release";
+      const isSnapshot = v.version_type === "snapshot";
+      const isBeta = v.version_type === "old_beta";
+      const isAlpha = v.version_type === "old_alpha";
+      
+      if (isRelease && !mcFilterVersions) return false;
+      if (isSnapshot && !mcFilterSnapshots) return false;
+      if (isBeta && !mcFilterBetas) return false;
+      if (isAlpha && !mcFilterAlphas) return false;
+      
+      return true;
+    });
+
     return (
-      <div className="app-shell">
+      <div className="app-shell" style={{ background: "var(--bg-0)" }}> {/* Force background for full screen */}
         <header className="topbar-primary">
           <div className="topbar-left-controls">
             <button type="button" aria-label="Atras" className="arrow-button" onClick={goBackCreateSection}>←</button>
             <button type="button" aria-label="Adelante" className="arrow-button" onClick={goForwardCreateSection}>→</button>
             <div className="brand">Launcher Principal</div>
           </div>
-          <div className="topbar-info">Creando nueva instancia</div>
+          <div className="topbar-right-controls">
+            <div className="topbar-info">Creando instancia</div>
+          </div>
         </header>
-        <div className="create-layout create-layout-wide">
+
+        <div className="create-layout fullscreen-grid">
+           {/* Left Sidebar - Sources */}
           <aside className="create-left-sidebar compact-sidebar">
             {CREATE_SECTIONS.map((section) => (
               <button
                 key={section}
                 type="button"
-                className={activeCreateSection === section ? "active" : ""}
+                className={`sidebar-btn ${activeCreateSection === section ? "active" : ""}`}
                 onClick={() => selectCreateSection(section)}
               >
-                {section}
+                {/* Icon placeholder if we had them */}
+                {section === "Base" ? "Personalizado" : section}
               </button>
             ))}
           </aside>
-          <main className="create-main-content create-main-grid">
-            {shouldShowMinecraftBlock && (
-            <section className="create-block">
-              <header><h2>Bloque 1 · Versiones Minecraft</h2></header>
-              <div className="create-block-body">
-                <div className="create-list-wrap">
-                  <div className="block-inline-filters">
-                    <input
-                      type="search"
-                      value={minecraftVersionSearch}
-                      onChange={(event) => setMinecraftVersionSearch(event.target.value)}
-                      placeholder="Filtrar versión..."
-                      aria-label="Filtrar versiones de Minecraft"
+
+          <main className="create-main-content">
+            {/* Top Bar - Name & Group */}
+            <div className="create-header-controls">
+                <div className="create-input-group">
+                    <label htmlFor="inst-name">Nombre:</label>
+                    <input 
+                        id="inst-name" 
+                        type="text" 
+                        value={newInstanceName} 
+                        onChange={(e) => setNewInstanceName(e.target.value)} 
+                        placeholder="Mi Instancia"
                     />
-                    {[ ["all", "Todas"], ["playable", "Versiones jugables"] ].map(([value, label]) => (
-                      <button key={value} type="button" className={minecraftFilter === value ? "active" : ""} onClick={() => setMinecraftFilter(value as MinecraftVersionFilter)}>{label}</button>
-                    ))}
-                  </div>
-                  <table className="version-table">
-                    <thead><tr><th>Version</th><th>Fecha de lanzado</th><th>Tipo</th></tr></thead>
-                    <tbody>
-                      {minecraftVersionsLoading && <tr><td colSpan={3}>Cargando versiones oficiales desde Mojang/Microsoft...</td></tr>}
-                      {!minecraftVersionsLoading && minecraftVersionsError && <tr><td colSpan={3}>{minecraftVersionsError}</td></tr>}
-                      {filteredMinecraftVersions.map((entry) => (
-                        <tr key={entry.id} className={selectedMinecraftVersion === entry.id ? "selected" : ""} onClick={() => setSelectedMinecraftVersion(entry.id)}>
-                          <td>{entry.id}</td>
-                          <td>{formatReleaseDate(entry.release_time)}</td>
-                          <td>{entry.version_type ?? "unknown"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
                 </div>
-              </div>
-            </section>
-            )}
-            {shouldShowLoaderBlock && (
-            <section className="create-block">
-              <header><h2>Bloque 2 · Loaders</h2></header>
-              <div className="create-block-body">
-                <div className="create-list-wrap">
-                  <table className="version-table">
-                    <thead><tr><th>Version</th><th>Compatibilidad</th><th>Estado</th></tr></thead>
-                    <tbody>
-                      {selectedLoaderType === null ? <tr><td colSpan={3}>Selecciona un loader.</td></tr> : selectedLoaderType === "vanilla" ? <tr className="selected"><td>Integrado</td><td>{selectedMinecraftVersion ?? "-"}</td><td>Recomendado</td></tr> : loaderVersionsLoading ? <tr><td colSpan={3}>Cargando loaders oficiales...</td></tr> : loaderVersionsError ? <tr><td colSpan={3}>{loaderVersionsError}</td></tr> : loaderVersions.length === 0 ? <tr><td colSpan={3}>Sin versiones compatibles.</td></tr> : loaderVersions.map((entry, idx) => (
-                        <tr key={entry.version} className={selectedLoaderVersion === entry.version ? "selected" : ""} onClick={() => setSelectedLoaderVersion(entry.version)}>
-                          <td>{entry.version}</td><td>{selectedMinecraftVersion ?? "-"}</td><td>{entry.stable || idx === 0 ? "Recomendada / Más actual" : "Disponible"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="create-input-group">
+                    <label htmlFor="inst-group">Grupo:</label>
+                    <select id="inst-group" value={newInstanceGroup} onChange={(e) => setNewInstanceGroup(e.target.value)}>
+                        <option value="Test">Test</option>
+                        <option value="Default">Default</option>
+                        <option value="Servidores">Servidores</option>
+                    </select>
                 </div>
-                <aside className="block-sidebar">
-                  <h3>Cargador de mods</h3>
-                  {LOADER_CHOICES.map((loader) => (
-                    <button key={loader.value} type="button" className={selectedLoaderType === loader.value ? "active" : ""} disabled={!loader.supported} onClick={() => loader.supported && setSelectedLoaderType(loader.value as LoaderType)}>
-                      {loader.label}
-                    </button>
-                  ))}
-                </aside>
-              </div>
-            </section>
-            )}
+            </div>
+
+            {/* Main Content Sections */}
+            <div className="create-content-scrollable">
+                <div className="create-section-header">
+                    <h2>Personalizado</h2>
+                </div>
+
+                {/* VERSION LIST & FILTERS BLOCK */}
+                {shouldShowMinecraftBlock && (
+                <section className="create-block-advanced">
+                    <div className="version-list-container">
+                        <table className="version-table sticky-header">
+                            <thead><tr><th>Versión</th><th>Lanzado</th><th>Tipo</th></tr></thead>
+                            <tbody>
+                                {minecraftVersionsLoading && <tr><td colSpan={3}>Cargando...</td></tr>}
+                                {filteredMinecraftVersions.map((entry) => (
+                                    <tr key={entry.id} className={selectedMinecraftVersion === entry.id ? "selected" : ""} onClick={() => setSelectedMinecraftVersion(entry.id)}>
+                                        <td>{entry.id}</td>
+                                        <td>{formatReleaseDate(entry.release_time)}</td>
+                                        <td>{entry.version_type}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <aside className="version-filters-sidebar">
+                        <h4>Filtrar</h4>
+                         <label><input type="checkbox" checked={mcFilterVersions} onChange={(e) => setMcFilterVersions(e.target.checked)} /> Versiones</label>
+                         <label><input type="checkbox" checked={mcFilterSnapshots} onChange={(e) => setMcFilterSnapshots(e.target.checked)} /> Snapshots</label>
+                         <label><input type="checkbox" checked={mcFilterBetas} onChange={(e) => setMcFilterBetas(e.target.checked)} /> Betas</label>
+                         <label><input type="checkbox" checked={mcFilterAlphas} onChange={(e) => setMcFilterAlphas(e.target.checked)} /> Alfas</label>
+                         <label><input type="checkbox" checked={mcFilterExperiments} onChange={(e) => setMcFilterExperiments(e.target.checked)} /> Experimentales</label>
+                         
+                         <div style={{ marginTop: 'auto', paddingTop: 10}}>
+                             <button type="button" onClick={() => void reloadInstances()}>Refrescar</button>
+                         </div>
+                    </aside>
+                </section>
+                )}
+                
+                {/* SEARCH BAR UNDER LIST */}
+                <div className="create-search-bar">
+                     <input 
+                        type="text" 
+                        placeholder="Buscar" 
+                        value={minecraftVersionSearch} 
+                        onChange={(e) => setMinecraftVersionSearch(e.target.value)}
+                     />
+                </div>
+
+                {/* LOADER BLOCK */}
+                {shouldShowLoaderBlock && (
+                <section className="create-block-advanced loader-block">
+                     <div className="loader-info-panel">
+                        {selectedLoaderType === "vanilla" || !selectedLoaderType ? (
+                             <div className="empty-loader-state">
+                                 <h3>Ningún cargador de mods esta seleccionado.</h3>
+                             </div>
+                        ) : (
+                             <div className="loader-version-list">
+                                 {/* We would render loader versions list here if needed, but for now just show valid state */}
+                                 <h3>{prettyLoader(selectedLoaderType)} Seleccionado</h3>
+                                 <p>Versión: {selectedLoaderVersion ?? "Automática"}</p>
+                             </div>
+                        )}
+                     </div>
+                     
+                     <aside className="loader-selection-sidebar">
+                        <h4>Cargador de Mods</h4>
+                        <div className="radio-group">
+                            {LOADER_CHOICES.map((loader) => (
+                                <label key={loader.value} className="radio-option">
+                                    <input 
+                                        type="radio" 
+                                        name="modloader" 
+                                        checked={selectedLoaderType === loader.value} 
+                                        disabled={!loader.supported}
+                                        onChange={() => loader.supported && setSelectedLoaderType(loader.value as LoaderType)}
+                                    />
+                                    {loader.label}
+                                </label>
+                            ))}
+                        </div>
+                     </aside>
+                </section>
+                )}
+
+                 {/* SEARCH BAR UNDER LOADER (As per image layout consistency, usually one global or per section) */}
+                 {/* Image shows a search bar at the very bottom too? "Buscar" */}
+                 <div className="create-search-bar" style={{ marginTop: 8 }}>
+                     <input type="text" placeholder="Buscar" /> 
+                     {/* The text in image "Refrescar" is a button on the right of the search bar? No, it's above. */}
+                     <div style={{ marginLeft: "auto" }}>
+                        <button type="button" onClick={() => void createInstanceNow()}>Refrescar</button> 
+                     </div>
+                </div>
+
+            </div>
+
+             {/* Footer Actions */}
+            <footer className="create-footer-actions">
+                 <button type="button" className="primary-btn" onClick={() => void createInstanceNow()} disabled={createInProgress}>OK</button>
+                 <button type="button" onClick={() => setAppMode("main")}>Cancelar</button>
+                 <button type="button">Ayuda</button>
+            </footer>
           </main>
-          <aside className="create-right-sidebar compact-sidebar">
-            <h3>Crear instancia</h3>
-            <div className="create-form-group">
-              <label htmlFor="instance-name">Nombre</label>
-              <input
-                id="instance-name"
-                type="text"
-                className={newInstanceName.trim() ? "field-complete" : ""}
-                value={newInstanceName}
-                onChange={(event) => setNewInstanceName(event.target.value)}
-                placeholder="Mi instancia"
-              />
-            </div>
-            <div className="create-selection-summary">
-              <p>MC: <strong>{selectedMinecraftVersion ?? "Sin seleccionar"}</strong></p>
-              <p>Loader: <strong>{selectedLoaderType ? prettyLoader(selectedLoaderType) : "Sin seleccionar"}</strong></p>
-              <p>Version loader: <strong>{selectedLoaderType === "vanilla" ? "Integrado" : (selectedLoaderVersion ?? "Sin seleccionar")}</strong></p>
-            </div>
-            {createProgress && (
-              <div className={`create-status-banner ${createProgress.state}`}>
-                <p>
-                  Progreso: {createProgress.stage} ({createProgress.value}%)
-                </p>
-                <div className="create-progress-track" aria-hidden="true">
-                  <span style={{ width: `${createProgress.value}%` }} />
-                </div>
-              </div>
-            )}
-            {createError && <p className="execution-error create-error-banner">{createError}</p>}
-            {createLogs.length > 0 && (
-              <div className="create-log-box" aria-live="polite">
-                {createLogs.slice(-4).map((entry, index) => (
-                  <p key={`${entry.id}-${index}`}>[{entry.level.toUpperCase()}] {entry.message}</p>
-                ))}
-              </div>
-            )}
-            <button type="button" onClick={() => void createInstanceNow()} disabled={createInProgress}>{createInProgress ? "Creando..." : "Crear instancia"}</button>
-            <button type="button" onClick={() => setAppMode("main")}>Cancelar</button>
-          </aside>
         </div>
       </div>
     );

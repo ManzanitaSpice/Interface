@@ -3,7 +3,7 @@
 .create-left-sidebar,
 .create-right-sidebar {
   border-right: 1px solid var(--line-soft);
-  background: linear-gradient(180deg, rgba(21, 29, 44, 0.95) 0%, rgba(16, 22, 34, 0.98) 100%);
+  background: linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
   padding: 10px;
   display: grid;
   align-content: start;
@@ -31,14 +31,14 @@
   width: 100%;
   max-height: calc(100vh - 116px);
   overflow: auto;
-  border: 1px solid rgba(121, 156, 214, 0.38);
-  background: linear-gradient(170deg, rgba(31, 43, 65, 0.93) 0%, rgba(17, 24, 37, 0.98) 100%);
+  border: 1px solid var(--line-soft);
+  background: linear-gradient(170deg, var(--bg-2) 0%, var(--bg-1) 100%);
   border-radius: 14px;
   padding: 12px;
   display: grid;
   align-content: start;
   gap: 8px;
-  box-shadow: var(--shadow-lg), -6px 0 18px rgba(10, 24, 46, 0.2);
+  box-shadow: var(--shadow-lg), -6px 0 18px rgba(0, 0, 0, 0.2);
   animation: panel-fade-in 0.26s ease;
 }
 
