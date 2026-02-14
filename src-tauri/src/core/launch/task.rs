@@ -344,17 +344,13 @@ fn ensure_loader_jvm_workarounds(instance: &Instance, args: &mut Vec<String>) {
     // Workaround for crashes in NeoForge Early Display (`rendererFuture` null)
     // seen on some GPU/overlay setups. Disabling the early progress window lets
     // the game continue with the normal LWJGL window initialization path.
-    let early_window_flag = "-Dfml.earlyprogresswindow=false";
-    if !args.iter().any(|arg| arg == early_window_flag) {
-        args.push(early_window_flag.to_string());
-    }
+    set_jvm_system_property(args, "fml.earlyprogresswindow", "false");
+    // Legacy namespace still appears in some Forge/NeoForge metadata.
+    set_jvm_system_property(args, "forge.earlywindow", "false");
 
     // Newer NeoForge builds also support this namespace. Keeping both avoids
     // requiring users to manually tweak launch options per loader version.
-    let neoforge_early_display_flag = "-Dneoforge.earlydisplay=false";
-    if !args.iter().any(|arg| arg == neoforge_early_display_flag) {
-        args.push(neoforge_early_display_flag.to_string());
-    }
+    set_jvm_system_property(args, "neoforge.earlydisplay", "false");
 }
 
 fn ensure_jvm_arg_present(args: &mut Vec<String>, flag_with_value: &str) {
@@ -363,6 +359,12 @@ fn ensure_jvm_arg_present(args: &mut Vec<String>, flag_with_value: &str) {
     }
 
     args.push(flag_with_value.to_string());
+}
+
+fn set_jvm_system_property(args: &mut Vec<String>, property: &str, value: &str) {
+    let prefix = format!("-D{}=", property);
+    args.retain(|arg| !arg.starts_with(&prefix));
+    args.push(format!("{}{}", prefix, value));
 }
 
 fn configure_native_library_env(cmd: &mut std::process::Command, natives_dir: &std::path::Path) {
@@ -686,6 +688,7 @@ mod tests {
             vec![
                 "-Xmx2048M",
                 "-Dfml.earlyprogresswindow=false",
+                "-Dforge.earlywindow=false",
                 "-Dneoforge.earlydisplay=false"
             ]
         );
@@ -728,6 +731,49 @@ mod tests {
         assert!(args.contains(&"--add-modules=jdk.naming.dns".to_string()));
         assert!(args.contains(&"--add-opens=java.base/java.util.jar=ALL-UNNAMED".to_string()));
         assert!(args.contains(&"-Dfml.earlyprogresswindow=false".to_string()));
+        assert!(args.contains(&"-Dforge.earlywindow=false".to_string()));
+        assert!(args.contains(&"-Dneoforge.earlydisplay=false".to_string()));
+    }
+
+    #[test]
+    fn neoforge_workarounds_override_conflicting_early_window_properties() {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::NeoForge,
+            Some("47.1.79".into()),
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+
+        let mut args = vec![
+            "-Dfml.earlyprogresswindow=true".to_string(),
+            "-Dforge.earlywindow=true".to_string(),
+            "-Dneoforge.earlydisplay=true".to_string(),
+        ];
+        ensure_loader_jvm_workarounds(&instance, &mut args);
+
+        assert_eq!(
+            args.iter()
+                .filter(|arg| arg.starts_with("-Dfml.earlyprogresswindow="))
+                .count(),
+            1
+        );
+        assert_eq!(
+            args.iter()
+                .filter(|arg| arg.starts_with("-Dforge.earlywindow="))
+                .count(),
+            1
+        );
+        assert_eq!(
+            args.iter()
+                .filter(|arg| arg.starts_with("-Dneoforge.earlydisplay="))
+                .count(),
+            1
+        );
+        assert!(args.contains(&"-Dfml.earlyprogresswindow=false".to_string()));
+        assert!(args.contains(&"-Dforge.earlywindow=false".to_string()));
         assert!(args.contains(&"-Dneoforge.earlydisplay=false".to_string()));
     }
 
