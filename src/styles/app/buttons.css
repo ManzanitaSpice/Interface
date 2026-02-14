@@ -1,0 +1,63 @@
+.topbar-primary button,
+.topbar-secondary button,
+.instance-right-panel button,
+.edit-left-sidebar button,
+.edit-right-sidebar button,
+.create-left-sidebar button,
+.create-right-sidebar button,
+.instances-toolbar button,
+.instance-settings-tabs button {
+  border: 1px solid #454a52;
+  background: linear-gradient(180deg, #353940 0%, #2a2e34 100%);
+  color: var(--text-main);
+  border-radius: 10px;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 0.83rem;
+  transition: transform 0.14s ease, border-color 0.16s ease, box-shadow 0.16s ease, background 0.18s ease;
+}
+
+.topbar-primary button:hover,
+.topbar-secondary button:hover,
+.instance-right-panel button:hover,
+.edit-left-sidebar button:hover,
+.edit-right-sidebar button:hover,
+.create-left-sidebar button:hover,
+.create-right-sidebar button:hover,
+.instances-toolbar button:hover,
+.instance-settings-tabs button:hover {
+  border-color: #5f6670;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+  transform: translateY(-1px);
+}
+
+.topbar-primary button:focus-visible,
+.topbar-secondary button:focus-visible,
+.instance-right-panel button:focus-visible,
+.edit-left-sidebar button:focus-visible,
+.edit-right-sidebar button:focus-visible,
+.create-left-sidebar button:focus-visible,
+.create-right-sidebar button:focus-visible,
+.instances-toolbar button:focus-visible,
+.instance-settings-tabs button:focus-visible,
+.instances-toolbar input:focus-visible {
+  outline: 2px solid #7f8792;
+  outline-offset: 1px;
+}
+
+button.active {
+  background: linear-gradient(180deg, #5b626c 0%, #4a5058 100%);
+  border-color: #7a828d;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.3);
+}
+
+.arrow-button {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}

@@ -3,8 +3,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import "./styles/app/base.css";
 import "./styles/app/layout.css";
-import "./styles/app/components.css";
-import "./styles/app/pages.css";
+import "./styles/app/topbar.css";
+import "./styles/app/buttons.css";
+import "./styles/app/sidebars.css";
+import "./styles/app/instances.css";
+import "./styles/app/settings.css";
 
 type LoaderType = "vanilla" | "forge" | "fabric" | "neoforge" | "quilt";
 type TopSection = "menu" | "instances" | "news" | "explorer" | "servers" | "community" | "global-settings";
@@ -583,8 +586,29 @@ function App() {
           <button type="button" aria-label="Adelante" className="arrow-button">→</button>
           <div className="brand">Launcher Principal</div>
         </div>
-        <div className="topbar-right-controls" ref={profileMenuRef}>
+        <div className="topbar-right-controls">
           <div className="topbar-info" />
+        </div>
+      </header>
+
+      <nav className="topbar-secondary" onClick={(event) => event.stopPropagation()}>
+        <div className="secondary-nav-items">
+          {SECTION_LABELS.map((section) => (
+            <button
+              key={section.key}
+              type="button"
+              className={activeSection === section.key ? "active" : ""}
+              onClick={() => {
+                setActiveSection(section.key);
+                setShowInstancePanel(false);
+              }}
+            >
+              {section.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="topbar-profile" ref={profileMenuRef}>
           <button type="button" onClick={() => setShowProfileMenu((prev) => !prev)}>Perfil</button>
           {showProfileMenu && (
             <div className="profile-menu" role="menu" aria-label="Perfil">
@@ -596,22 +620,6 @@ function App() {
             </div>
           )}
         </div>
-      </header>
-
-      <nav className="topbar-secondary" onClick={(event) => event.stopPropagation()}>
-        {SECTION_LABELS.map((section) => (
-          <button
-            key={section.key}
-            type="button"
-            className={activeSection === section.key ? "active" : ""}
-            onClick={() => {
-              setActiveSection(section.key);
-              setShowInstancePanel(false);
-            }}
-          >
-            {section.label}
-          </button>
-        ))}
       </nav>
 
       <main className="content-wrap">{renderSectionPage()}</main>
