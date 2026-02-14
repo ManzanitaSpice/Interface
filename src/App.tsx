@@ -71,8 +71,6 @@ interface LoaderVersionEntry {
   source: "official" | "fallback";
 }
 
-type MinecraftVersionFilter = "all" | "playable";
-
 const SECTION_LABELS: { key: TopSection; label: string }[] = [
   { key: "menu", label: "Menu" },
   { key: "instances", label: "Mis Instancias" },
@@ -180,7 +178,6 @@ function App() {
   const [minecraftVersions, setMinecraftVersions] = useState<MinecraftVersionEntry[]>([]);
   const [minecraftVersionsLoading, setMinecraftVersionsLoading] = useState(false);
   const [minecraftVersionsError, setMinecraftVersionsError] = useState<string | null>(null);
-  const [minecraftFilter, setMinecraftFilter] = useState<MinecraftVersionFilter>("all");
   const [minecraftVersionSearch, setMinecraftVersionSearch] = useState("");
   const [selectedMinecraftVersion, setSelectedMinecraftVersion] = useState<string | null>(null);
   const [selectedLoaderType, setSelectedLoaderType] = useState<LoaderType | null>("vanilla");
@@ -617,11 +614,31 @@ function App() {
 
     return minecraftVersions.filter((entry) => {
       const versionType = (entry.version_type ?? "").toLowerCase();
-      const matchesFilter = minecraftFilter === "all" || ["release", "snapshot"].includes(versionType);
-      const matchesSearch = !query || entry.id.toLowerCase().includes(query);
-      return matchesFilter && matchesSearch;
+      const isRelease = versionType === "release";
+      const isSnapshot = versionType === "snapshot";
+      const isBeta = versionType === "old_beta";
+      const isAlpha = versionType === "old_alpha";
+      const isExperimental = !isRelease && !isSnapshot && !isBeta && !isAlpha;
+
+      const allowedByFilter =
+        (isRelease && mcFilterVersions) ||
+        (isSnapshot && mcFilterSnapshots) ||
+        (isBeta && mcFilterBetas) ||
+        (isAlpha && mcFilterAlphas) ||
+        (isExperimental && mcFilterExperiments);
+
+      if (!allowedByFilter) return false;
+      return !query || entry.id.toLowerCase().includes(query);
     });
-  }, [minecraftFilter, minecraftVersionSearch, minecraftVersions]);
+  }, [
+    mcFilterAlphas,
+    mcFilterBetas,
+    mcFilterExperiments,
+    mcFilterSnapshots,
+    mcFilterVersions,
+    minecraftVersionSearch,
+    minecraftVersions,
+  ]);
 
   const formatReleaseDate = (releaseTime?: string) => {
     if (!releaseTime) return "-";
@@ -809,23 +826,6 @@ function App() {
   };
 
     if (appMode === "create") {
-    // Advanced Filtering Logic
-    const filteredMinecraftVersions = minecraftVersions.filter((v) => {
-      if (minecraftVersionSearch && !v.id.includes(minecraftVersionSearch)) return false;
-      
-      const isRelease = v.version_type === "release";
-      const isSnapshot = v.version_type === "snapshot";
-      const isBeta = v.version_type === "old_beta";
-      const isAlpha = v.version_type === "old_alpha";
-      
-      if (isRelease && !mcFilterVersions) return false;
-      if (isSnapshot && !mcFilterSnapshots) return false;
-      if (isBeta && !mcFilterBetas) return false;
-      if (isAlpha && !mcFilterAlphas) return false;
-      
-      return true;
-    });
-
     return (
       <div className="app-shell" style={{ background: "var(--bg-0)" }}> {/* Force background for full screen */}
         <header className="topbar-primary">
@@ -884,6 +884,27 @@ function App() {
                     <h2>Personalizado</h2>
                 </div>
 
+                {createError && (
+                  <div className="create-error-banner" role="alert">
+                    {createError}
+                  </div>
+                )}
+
+                {createProgress && (
+                  <div className={`create-status-banner ${createProgress.state === "error" ? "error" : createProgress.state === "done" ? "done" : ""}`}>
+                    <p>{createProgress.stage}</p>
+                    <div className="create-progress-track">
+                      <span style={{ width: `${Math.max(0, Math.min(100, createProgress.value))}%` }} />
+                    </div>
+                  </div>
+                )}
+
+                {minecraftVersionsError && (
+                  <div className="create-error-banner" role="alert">
+                    {minecraftVersionsError}
+                  </div>
+                )}
+
                 {/* VERSION LIST & FILTERS BLOCK */}
                 {shouldShowMinecraftBlock && (
                 <section className="create-block-advanced">
@@ -911,8 +932,8 @@ function App() {
                          <label><input type="checkbox" checked={mcFilterAlphas} onChange={(e) => setMcFilterAlphas(e.target.checked)} /> Alfas</label>
                          <label><input type="checkbox" checked={mcFilterExperiments} onChange={(e) => setMcFilterExperiments(e.target.checked)} /> Experimentales</label>
                          
-                         <div style={{ marginTop: 'auto', paddingTop: 10}}>
-                             <button type="button" onClick={() => void reloadInstances()}>Refrescar</button>
+                         <div style={{ marginTop: "auto", paddingTop: 10 }}>
+                             <button type="button" onClick={() => window.location.reload()}>Recargar catálogo</button>
                          </div>
                     </aside>
                 </section>
@@ -938,9 +959,23 @@ function App() {
                              </div>
                         ) : (
                              <div className="loader-version-list">
-                                 {/* We would render loader versions list here if needed, but for now just show valid state */}
                                  <h3>{prettyLoader(selectedLoaderType)} Seleccionado</h3>
                                  <p>Versión: {selectedLoaderVersion ?? "Automática"}</p>
+                                 {loaderVersionsError && <p className="execution-error">{loaderVersionsError}</p>}
+                                 {loaderVersionsLoading ? (
+                                   <p>Cargando versiones de loader...</p>
+                                 ) : (
+                                   <select
+                                     value={selectedLoaderVersion ?? ""}
+                                     onChange={(event) => setSelectedLoaderVersion(event.target.value || null)}
+                                   >
+                                     {loaderVersions.map((version) => (
+                                       <option key={version.version} value={version.version}>
+                                         {version.version} {version.stable ? "(estable)" : ""}
+                                       </option>
+                                     ))}
+                                   </select>
+                                 )}
                              </div>
                         )}
                      </div>
@@ -971,9 +1006,17 @@ function App() {
                      <input type="text" placeholder="Buscar" /> 
                      {/* The text in image "Refrescar" is a button on the right of the search bar? No, it's above. */}
                      <div style={{ marginLeft: "auto" }}>
-                        <button type="button" onClick={() => void createInstanceNow()}>Refrescar</button> 
+                        <button type="button" onClick={() => void reloadInstances()}>Refrescar instancias</button>
                      </div>
                 </div>
+
+                {createLogs.length > 0 && (
+                  <div className="create-log-box">
+                    {createLogs.slice(-8).map((log, index) => (
+                      <p key={`${log.level}-${index}`}>[{log.level.toUpperCase()}] {log.message}</p>
+                    ))}
+                  </div>
+                )}
 
             </div>
 
