@@ -21,6 +21,9 @@ interface InstanceInfo {
   max_memory_mb?: number;
   jvm_args?: string[];
   game_args?: string[];
+  total_size_bytes: number;
+  created_at: string;
+  last_played?: string | null;
 }
 
 interface JavaInstallation {
@@ -80,6 +83,27 @@ const LOADERS: { label: string; value: LoaderType }[] = [
 ];
 
 const getErrorMessage = (e: unknown) => String(e).replace("Error: ", "");
+
+const formatBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const power = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** power;
+  return `${value.toFixed(power === 0 ? 0 : 2)} ${units[power]}`;
+};
+
+const formatDateLabel = (value?: string | null) => {
+  if (!value) return "Nunca";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Sin dato";
+  return parsed.toLocaleString("es-ES", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
 
 function LoadingScreen() {
   const [progress, setProgress] = useState(0);
@@ -620,6 +644,9 @@ function App() {
                     <p><strong>Loader:</strong> {instance.loader_type}</p>
                     <p><strong>Java recomendada:</strong> {instance.required_java_major ? `Java ${instance.required_java_major}+` : "Auto"}</p>
                     <p><strong>Status:</strong> {instance.state}</p>
+                    <p><strong>Tamaño total:</strong> {formatBytes(instance.total_size_bytes)}</p>
+                    <p><strong>Creada:</strong> {formatDateLabel(instance.created_at)}</p>
+                    <p><strong>Último juego:</strong> {formatDateLabel(instance.last_played)}</p>
 
                   </article>
                 ))}

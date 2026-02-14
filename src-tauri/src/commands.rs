@@ -39,6 +39,9 @@ pub struct InstanceInfo {
     pub max_memory_mb: u32,
     pub jvm_args: Vec<String>,
     pub game_args: Vec<String>,
+    pub total_size_bytes: u64,
+    pub created_at: String,
+    pub last_played: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,8 +96,74 @@ impl From<&Instance> for InstanceInfo {
             max_memory_mb: inst.max_memory_mb,
             jvm_args: inst.jvm_args.clone(),
             game_args: inst.game_args.clone(),
+            total_size_bytes: directory_size_bytes(&inst.path),
+            created_at: inst.created_at.to_rfc3339(),
+            last_played: inst.last_played.map(|date| date.to_rfc3339()),
         }
     }
+}
+
+fn directory_size_bytes(path: &std::path::Path) -> u64 {
+    let mut total_size = 0_u64;
+    let mut stack = vec![path.to_path_buf()];
+
+    while let Some(current) = stack.pop() {
+        let read_dir = match std::fs::read_dir(&current) {
+            Ok(read_dir) => read_dir,
+            Err(_) => continue,
+        };
+
+        for entry in read_dir.flatten() {
+            let entry_path = entry.path();
+            if let Ok(metadata) = entry.metadata() {
+                if metadata.is_file() {
+                    total_size = total_size.saturating_add(metadata.len());
+                } else if metadata.is_dir() {
+                    stack.push(entry_path);
+                }
+            }
+        }
+    }
+
+    total_size
+}
+
+async fn validate_instance_state_before_launch(
+    state: &crate::core::state::AppState,
+    instance: &Instance,
+) -> Result<(), LauncherError> {
+    if instance.state != InstanceState::Ready {
+        return Err(LauncherError::Other(format!(
+            "Instance {} is not in Ready state (current: {:?})",
+            instance.id, instance.state
+        )));
+    }
+
+    if instance.main_class.is_none() {
+        return Err(LauncherError::Other(
+            "Instancia inválida: falta main_class".into(),
+        ));
+    }
+
+    if instance.required_java_major.is_none() {
+        return Err(LauncherError::Other(
+            "Instancia inválida: falta required_java_major".into(),
+        ));
+    }
+
+    let game_dir = instance.game_dir();
+    let assets_dir = game_dir.join("assets");
+    let libraries_dir = state.libraries_dir();
+    for required in [&game_dir, &assets_dir, &libraries_dir] {
+        if !required.exists() {
+            return Err(LauncherError::Other(format!(
+                "Instancia incompleta: no existe el directorio requerido {}",
+                required.to_string_lossy()
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 async fn validate_or_resolve_java(instance: &mut Instance) -> Result<(), LauncherError> {
@@ -125,6 +194,23 @@ async fn validate_or_resolve_java(instance: &mut Instance) -> Result<(), Launche
     }
 
     let resolved = java::resolve_java_binary(required_major).await?;
+    let detected = java::runtime::detect_java_installations_sync();
+    let resolved_info = detected.iter().find(|candidate| candidate.path == resolved);
+
+    if let Some(info) = resolved_info {
+        if info.major < required_major {
+            return Err(LauncherError::Other(format!(
+                "La Java resuelta ({}) no cumple versión mínima {}",
+                info.version, required_major
+            )));
+        }
+        if !info.is_64bit {
+            return Err(LauncherError::Other(
+                "La Java resuelta debe ser de 64 bits".into(),
+            ));
+        }
+    }
+
     instance.java_path = Some(resolved);
     Ok(())
 }
@@ -578,11 +664,10 @@ pub async fn launch_instance(
         let mut state_guard = state_arc.lock().await;
         let mut instance = state_guard.instance_manager.load(&id).await?;
 
-        if instance.state != InstanceState::Ready {
-            return Err(LauncherError::Other(format!(
-                "Instance {} is not in Ready state (current: {:?})",
-                id, instance.state
-            )));
+        if let Err(err) = validate_instance_state_before_launch(&state_guard, &instance).await {
+            instance.state = InstanceState::Error;
+            state_guard.instance_manager.save(&instance).await?;
+            return Err(err);
         }
 
         instance.state = InstanceState::Installing;
