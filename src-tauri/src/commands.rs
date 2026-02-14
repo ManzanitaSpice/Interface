@@ -132,7 +132,7 @@ async fn validate_instance_state_before_launch(
     state: &crate::core::state::AppState,
     instance: &Instance,
 ) -> Result<(), LauncherError> {
-    if instance.state != InstanceState::Ready {
+    if instance.state != InstanceState::Ready && instance.state != InstanceState::Error {
         return Err(LauncherError::Other(format!(
             "Instance {} is not in Ready state (current: {:?})",
             instance.id, instance.state
@@ -568,7 +568,10 @@ pub async fn create_instance(
         .set_state(&mut instance, InstanceState::Installing)
         .await
     {
-        error!("Cannot persist installing state for {}: {}", instance.id, err);
+        error!(
+            "Cannot persist installing state for {}: {}",
+            instance.id, err
+        );
     }
 
     let install_result: Result<(), LauncherError> = async {
@@ -781,10 +784,25 @@ pub async fn launch_instance(
         }
 
         match wait_result {
-            Ok(status) => info!(
-                "Minecraft process for {} exited with status: {:?}",
-                id, status
-            ),
+            Ok(status) => {
+                if status.success() {
+                    info!(
+                        "Minecraft process for {} exited with status: {:?}",
+                        id, status
+                    );
+                } else {
+                    error!(
+                        "Minecraft process for {} exited abnormally with status: {:?}",
+                        id, status
+                    );
+                    if let Ok(mut persisted) = state.instance_manager.load(&id).await {
+                        persisted.state = InstanceState::Error;
+                        if let Err(save_err) = state.instance_manager.save(&persisted).await {
+                            error!("Cannot persist error state for {}: {}", id, save_err);
+                        }
+                    }
+                }
+            }
             Err(err) => error!("Minecraft process for {} failed while waiting: {}", id, err),
         }
     });

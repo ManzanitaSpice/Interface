@@ -12,6 +12,8 @@ use crate::core::error::{LauncherError, LauncherResult};
 
 const ADOPTIUM_JRE17_X64_URL: &str =
     "https://github.com/adoptium/temurin17-binaries/releases/latest/download/OpenJDK17U-jre_x64_windows_hotspot.zip";
+const ADOPTIUM_JRE21_X64_URL: &str =
+    "https://github.com/adoptium/temurin21-binaries/releases/latest/download/OpenJDK21U-jre_x64_windows_hotspot.zip";
 
 /// A detected Java installation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,7 +97,7 @@ pub async fn resolve_java_binary(required_major: u32) -> LauncherResult<PathBuf>
     }
 
     if let Some(runtime_dir) = preferred_embedded_runtime_dir() {
-        if let Ok(downloaded) = ensure_embedded_jre17(&runtime_dir).await {
+        if let Ok(downloaded) = ensure_embedded_runtime(&runtime_dir, required_major).await {
             if let Some(probed) = probe_java(&downloaded) {
                 if probed.major >= required_major {
                     info!(
@@ -113,6 +115,13 @@ pub async fn resolve_java_binary(required_major: u32) -> LauncherResult<PathBuf>
 
 /// Ensure a JRE 17 exists in `runtime_root`, downloading and extracting it when missing.
 pub async fn ensure_embedded_jre17(runtime_root: &Path) -> LauncherResult<PathBuf> {
+    ensure_embedded_runtime(runtime_root, 17).await
+}
+
+async fn ensure_embedded_runtime(
+    runtime_root: &Path,
+    required_major: u32,
+) -> LauncherResult<PathBuf> {
     let java_bin = runtime_root.join("bin").join(java_exe());
     if java_bin.exists() && is_usable_java_binary(&java_bin) {
         info!("Embedded runtime already available at {:?}", java_bin);
@@ -120,8 +129,8 @@ pub async fn ensure_embedded_jre17(runtime_root: &Path) -> LauncherResult<PathBu
     }
 
     warn!(
-        "Embedded runtime missing or invalid at {:?}. Downloading JRE 17...",
-        runtime_root
+        "Embedded runtime missing or invalid at {:?}. Downloading JRE {}...",
+        runtime_root, required_major
     );
 
     tokio::fs::create_dir_all(runtime_root)
@@ -131,11 +140,17 @@ pub async fn ensure_embedded_jre17(runtime_root: &Path) -> LauncherResult<PathBu
             source,
         })?;
 
-    let response = reqwest::get(ADOPTIUM_JRE17_X64_URL).await?;
+    let runtime_url = if required_major >= 21 {
+        ADOPTIUM_JRE21_X64_URL
+    } else {
+        ADOPTIUM_JRE17_X64_URL
+    };
+
+    let response = reqwest::get(runtime_url).await?;
     let status = response.status();
     if !status.is_success() {
         return Err(LauncherError::DownloadFailed {
-            url: ADOPTIUM_JRE17_X64_URL.to_string(),
+            url: runtime_url.to_string(),
             status: status.as_u16(),
         });
     }
@@ -161,7 +176,7 @@ pub async fn ensure_embedded_jre17(runtime_root: &Path) -> LauncherResult<PathBu
         )));
     }
 
-    info!("Embedded JRE 17 installed successfully at {:?}", java_bin);
+    info!("Embedded JRE installed successfully at {:?}", java_bin);
     Ok(java_bin)
 }
 
@@ -260,6 +275,21 @@ pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
         let separator = if cfg!(windows) { ';' } else { ':' };
         for dir in path_var.split(separator) {
             push_candidate(PathBuf::from(dir).join(java_exe()));
+        }
+    }
+
+    let path_command = if cfg!(windows) { "where" } else { "which" };
+    let path_args: Vec<&str> = if cfg!(windows) {
+        vec!["java"]
+    } else {
+        vec!["-a", "java"]
+    };
+    if let Ok(output) = Command::new(path_command).args(path_args).output() {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let candidate = line.trim();
+            if !candidate.is_empty() {
+                push_candidate(PathBuf::from(candidate));
+            }
         }
     }
 

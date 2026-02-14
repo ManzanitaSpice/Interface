@@ -7,9 +7,9 @@
   align-items: center;
 }
 .loading-title { margin-bottom: 20px; font-size: 1.5rem; color: #ffffff; }
-.loading-progress { margin-top: 10px; color: #aab3d5; }
-.progress-bar-container { width: 300px; height: 10px; background-color: #2e3550; border-radius: 999px; overflow: hidden; }
-.progress-bar-fill { height: 100%; background: linear-gradient(90deg, #646cff, #3bc4ff); transition: width .1s linear; }
+.loading-progress { margin-top: 10px; color: #b5bac1; }
+.progress-bar-container { width: 300px; height: 10px; background-color: #3b3d45; border-radius: 999px; overflow: hidden; }
+.progress-bar-fill { height: 100%; background: linear-gradient(90deg, #5865f2, #949cf7); transition: width .1s linear; }
 
 .create-instance-page { max-width: 760px; }
 .create-instance-form { max-width: 640px; display: flex; flex-direction: column; gap: 20px; }
@@ -19,7 +19,7 @@
 .onboarding-overlay {
   position: fixed;
   inset: 48px 0 0 220px;
-  background: rgba(8, 8, 14, 0.88);
+  background: rgba(17, 18, 20, 0.92);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -28,11 +28,11 @@
 }
 .onboarding-card {
   width: min(720px, 100%);
-  border: 1px solid #47475a;
+  border: 1px solid #4a4d55;
   border-radius: 12px;
-  background: #23232c;
+  background: #2b2d31;
   padding: 18px;
 }
-.onboarding-card p { color: #cdced8; }
+.onboarding-card p { color: #dbdee1; }
 
 .instance-detail-page { max-width: none; }

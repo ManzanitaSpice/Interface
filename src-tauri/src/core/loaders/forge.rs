@@ -1,13 +1,14 @@
+use std::collections::BTreeSet;
+
 use serde::Deserialize;
-use tracing::{info, warn};
+use tracing::info;
 
 use super::context::InstallContext;
 use super::installer::{LoaderInstallResult, LoaderInstaller};
 use crate::core::error::{LauncherError, LauncherResult};
 use crate::core::maven::MavenArtifact;
 
-/// Installs Forge by downloading the installer JAR, extracting `install_profile.json`,
-/// and running processors via `std::process::Command`.
+/// Installs Forge by downloading and executing the official installer JAR.
 pub struct ForgeInstaller;
 
 impl ForgeInstaller {
@@ -23,33 +24,12 @@ const FORGE_MAVEN: &str = "https://maven.minecraftforge.net";
 #[serde(rename_all = "camelCase")]
 pub struct ForgeInstallProfile {
     #[serde(default)]
-    pub version: Option<String>,
-    #[serde(default)]
-    pub minecraft: Option<String>,
-    #[serde(default)]
     pub libraries: Vec<ForgeLibrary>,
-    #[serde(default)]
-    pub processors: Vec<ForgeProcessor>,
-    #[serde(default)]
-    pub data: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ForgeLibrary {
     pub name: String,
-    #[serde(default)]
-    pub downloads: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ForgeProcessor {
-    #[serde(default)]
-    pub sides: Option<Vec<String>>,
-    pub jar: String,
-    #[serde(default)]
-    pub classpath: Vec<String>,
-    #[serde(default)]
-    pub args: Vec<String>,
 }
 
 /// Subset of the Forge version JSON (inside the installer as `version.json`).
@@ -59,18 +39,6 @@ pub struct ForgeVersionJson {
     pub main_class: String,
     #[serde(default)]
     pub libraries: Vec<ForgeLibrary>,
-    #[serde(default)]
-    pub arguments: Option<ForgeArguments>,
-    #[serde(default)]
-    pub minecraft_arguments: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ForgeArguments {
-    #[serde(default)]
-    pub game: Vec<serde_json::Value>,
-    #[serde(default)]
-    pub jvm: Vec<serde_json::Value>,
 }
 
 #[async_trait::async_trait]
@@ -84,7 +52,6 @@ impl LoaderInstaller for ForgeInstaller {
         let forge_id = format!("{}-{}", ctx.minecraft_version, ctx.loader_version);
         let installer_name = format!("forge-{}-installer.jar", forge_id);
 
-        // 1. Download the Forge installer JAR
         let installer_url = format!(
             "{}/net/minecraftforge/forge/{}/{}",
             FORGE_MAVEN, forge_id, installer_name
@@ -94,7 +61,6 @@ impl LoaderInstaller for ForgeInstaller {
             .download_file(&installer_url, &installer_path, None)
             .await?;
 
-        // 2. Extract install_profile.json and version.json from the installer JAR
         let installer_bytes =
             tokio::fs::read(&installer_path)
                 .await
@@ -106,7 +72,6 @@ impl LoaderInstaller for ForgeInstaller {
         let cursor = std::io::Cursor::new(&installer_bytes);
         let mut archive = zip::ZipArchive::new(cursor)?;
 
-        // Extract install_profile.json
         let install_profile: ForgeInstallProfile = {
             let file = archive.by_name("install_profile.json").map_err(|e| {
                 LauncherError::Loader(format!("Missing install_profile.json: {}", e))
@@ -114,7 +79,6 @@ impl LoaderInstaller for ForgeInstaller {
             serde_json::from_reader(file)?
         };
 
-        // Extract version.json
         let version_json: ForgeVersionJson = {
             let file = archive
                 .by_name("version.json")
@@ -122,101 +86,54 @@ impl LoaderInstaller for ForgeInstaller {
             serde_json::from_reader(file)?
         };
 
-        // 3. Download all libraries declared in install_profile
-        let mut lib_names = Vec::new();
+        let required_java = required_java_for_minecraft(ctx.minecraft_version);
+        let java_bin = crate::core::java::resolve_java_binary(required_java).await?;
+
+        let output = std::process::Command::new(&java_bin)
+            .arg("-jar")
+            .arg(&installer_path)
+            .arg("--installClient")
+            .arg(ctx.instance_dir)
+            .current_dir(ctx.instance_dir)
+            .output()
+            .map_err(|e| LauncherError::JavaExecution(e.to_string()))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return Err(LauncherError::Loader(format!(
+                "Forge installer failed (code {:?})\nSTDOUT:\n{}\nSTDERR:\n{}",
+                output.status.code(),
+                stdout,
+                stderr
+            )));
+        }
+
+        let mut libraries = BTreeSet::new();
         for lib in &install_profile.libraries {
-            let artifact = MavenArtifact::parse(&lib.name)?;
-            let dest = ctx.libs_dir.join(artifact.local_path());
-            if !dest.exists() {
-                let url = artifact.url(FORGE_MAVEN);
-                match ctx.downloader.download_file(&url, &dest, None).await {
-                    Ok(()) => {}
-                    Err(e) => {
-                        // Try Mojang libraries as fallback
-                        let mojang_url = artifact.url(crate::core::maven::MOJANG_LIBRARIES);
-                        match ctx.downloader.download_file(&mojang_url, &dest, None).await {
-                            Ok(()) => {}
-                            Err(_) => {
-                                warn!("Failed to download Forge lib {}: {}", lib.name, e);
-                            }
-                        }
-                    }
-                }
-            }
+            libraries.insert(lib.name.clone());
         }
-
-        // 4. Download libraries from version.json
         for lib in &version_json.libraries {
-            let artifact = MavenArtifact::parse(&lib.name)?;
+            libraries.insert(lib.name.clone());
+        }
+
+        for lib_name in &libraries {
+            let artifact = MavenArtifact::parse(lib_name)?;
             let dest = ctx.libs_dir.join(artifact.local_path());
             if !dest.exists() {
-                let url = artifact.url(FORGE_MAVEN);
-                let _ = ctx.downloader.download_file(&url, &dest, None).await;
-            }
-            lib_names.push(lib.name.clone());
-        }
-
-        // 5. Run processors (client-side only)
-        for processor in &install_profile.processors {
-            // Skip server-side processors
-            if let Some(sides) = &processor.sides {
-                if !sides.iter().any(|s| s == "client") {
-                    continue;
+                let primary = artifact.url(FORGE_MAVEN);
+                if ctx
+                    .downloader
+                    .download_file(&primary, &dest, None)
+                    .await
+                    .is_err()
+                {
+                    let fallback = artifact.url(crate::core::maven::MOJANG_LIBRARIES);
+                    let _ = ctx.downloader.download_file(&fallback, &dest, None).await;
                 }
             }
-
-            let jar_artifact = MavenArtifact::parse(&processor.jar)?;
-            let jar_path = ctx.libs_dir.join(jar_artifact.local_path());
-
-            // Build classpath for the processor
-            let mut cp_entries = vec![jar_path.to_string_lossy().to_string()];
-            for cp_coord in &processor.classpath {
-                let cp_artifact = MavenArtifact::parse(cp_coord)?;
-                let cp_path = ctx.libs_dir.join(cp_artifact.local_path());
-                cp_entries.push(cp_path.to_string_lossy().to_string());
-            }
-            let classpath = cp_entries.join(if cfg!(windows) { ";" } else { ":" });
-
-            // Resolve processor args — substitute known variables
-            let client_jar = ctx.instance_dir.join("client.jar");
-            let resolved_args: Vec<String> = processor
-                .args
-                .iter()
-                .map(|arg| {
-                    arg.replace("{SIDE}", "client")
-                        .replace("{MINECRAFT_JAR}", &client_jar.to_string_lossy())
-                        .replace("{ROOT}", &ctx.instance_dir.to_string_lossy())
-                        .replace("{INSTALLER}", &installer_path.to_string_lossy())
-                        .replace("{LIBRARY_DIR}", &ctx.libs_dir.to_string_lossy())
-                })
-                .collect();
-
-            // Execute processor
-            info!("Running Forge processor: {}", processor.jar);
-            let java_bin = match crate::core::java::find_java_binary(17).await {
-                Ok(bin) => bin,
-                Err(_) => std::path::PathBuf::from("java"),
-            };
-
-            let status = std::process::Command::new(&java_bin)
-                .arg("-cp")
-                .arg(&classpath)
-                .arg("net.minecraftforge.installertools.ConsoleTool") // common entry point
-                .args(&resolved_args)
-                .current_dir(ctx.instance_dir)
-                .status()
-                .map_err(|e| LauncherError::JavaExecution(e.to_string()))?;
-
-            if !status.success() {
-                warn!(
-                    "Forge processor {} exited with code {:?}",
-                    processor.jar,
-                    status.code()
-                );
-            }
         }
 
-        // Cleanup installer JAR
         let _ = tokio::fs::remove_file(&installer_path).await;
 
         info!("Forge {} installed successfully", forge_id);
@@ -225,10 +142,30 @@ impl LoaderInstaller for ForgeInstaller {
             main_class: version_json.main_class,
             extra_jvm_args: vec![],
             extra_game_args: vec![],
-            libraries: lib_names,
+            libraries: libraries.into_iter().collect(),
             asset_index_id: None,
             asset_index_url: None,
             java_major: None,
         })
+    }
+}
+
+fn required_java_for_minecraft(version: &str) -> u32 {
+    let mut parts = version.split('.');
+    let major = parts
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(1);
+    let minor = parts
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(20);
+
+    if major > 1 || minor >= 21 {
+        21
+    } else if minor >= 17 {
+        17
+    } else {
+        8
     }
 }
