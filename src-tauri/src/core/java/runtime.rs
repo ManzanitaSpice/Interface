@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::Cursor;
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
@@ -237,27 +238,28 @@ pub async fn detect_java_installations() -> Vec<JavaInstallation> {
 /// Blocking implementation used by async wrappers.
 pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
     let mut installations = Vec::new();
+    let mut seen = HashSet::new();
 
-    if let Ok(java_home) = std::env::var("JAVA_HOME") {
-        let bin = PathBuf::from(&java_home).join("bin").join(java_exe());
-        if bin.exists() {
-            if let Some(info) = probe_java(&bin) {
+    let mut push_candidate = |candidate: PathBuf| {
+        if !candidate.exists() {
+            return;
+        }
+        if let Some(info) = probe_java(&candidate) {
+            let key = info.path.to_string_lossy().to_string();
+            if seen.insert(key) {
                 installations.push(info);
             }
         }
+    };
+
+    if let Ok(java_home) = std::env::var("JAVA_HOME") {
+        push_candidate(PathBuf::from(&java_home).join("bin").join(java_exe()));
     }
 
     if let Ok(path_var) = std::env::var("PATH") {
         let separator = if cfg!(windows) { ';' } else { ':' };
         for dir in path_var.split(separator) {
-            let bin = PathBuf::from(dir).join(java_exe());
-            if bin.exists() {
-                if let Some(info) = probe_java(&bin) {
-                    if !installations.iter().any(|i| i.path == info.path) {
-                        installations.push(info);
-                    }
-                }
-            }
+            push_candidate(PathBuf::from(dir).join(java_exe()));
         }
     }
 
@@ -276,14 +278,7 @@ pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
             if root_path.is_dir() {
                 if let Ok(entries) = std::fs::read_dir(&root_path) {
                     for entry in entries.flatten() {
-                        let bin = entry.path().join("bin").join("java.exe");
-                        if bin.exists() {
-                            if let Some(info) = probe_java(&bin) {
-                                if !installations.iter().any(|i| i.path == info.path) {
-                                    installations.push(info);
-                                }
-                            }
-                        }
+                        push_candidate(entry.path().join("bin").join("java.exe"));
                     }
                 }
             }
@@ -303,36 +298,48 @@ pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
             if root_path.is_dir() {
                 if let Ok(entries) = std::fs::read_dir(&root_path) {
                     for entry in entries.flatten() {
-                        let bin = entry.path().join("bin").join("java");
-                        let bin_alt = entry.path().join("Contents/Home/bin/java");
-                        for candidate in [&bin, &bin_alt] {
-                            if candidate.exists() {
-                                if let Some(info) = probe_java(candidate) {
-                                    if !installations.iter().any(|i| i.path == info.path) {
-                                        installations.push(info);
-                                    }
-                                }
-                            }
-                        }
+                        push_candidate(entry.path().join("bin").join("java"));
+                        push_candidate(entry.path().join("Contents/Home/bin/java"));
                     }
                 }
             }
         }
     }
 
+    installations.sort_by(|a, b| {
+        b.major
+            .cmp(&a.major)
+            .then_with(|| b.is_64bit.cmp(&a.is_64bit))
+            .then_with(|| b.version.cmp(&a.version))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+
     info!("Detected {} Java installations", installations.len());
     installations
 }
+
 
 /// Find a suitable Java binary for a given major version (e.g. 17, 21).
 pub async fn find_java_binary(major: u32) -> LauncherResult<PathBuf> {
     let installations = detect_java_installations().await;
 
+    if let Some(exact_64) = installations.iter().find(|i| i.major == major && i.is_64bit) {
+        return Ok(exact_64.path.clone());
+    }
+
     if let Some(exact) = installations.iter().find(|i| i.major == major) {
         return Ok(exact.path.clone());
     }
 
-    if let Some(compat) = installations.iter().find(|i| i.major >= major) {
+    if let Some(compat_64) = installations.iter().find(|i| i.major > major && i.is_64bit) {
+        warn!(
+            "Exact Java {} not found, using Java {} at {:?}",
+            major, compat_64.major, compat_64.path
+        );
+        return Ok(compat_64.path.clone());
+    }
+
+    if let Some(compat) = installations.iter().find(|i| i.major > major) {
         warn!(
             "Exact Java {} not found, using Java {} at {:?}",
             major, compat.major, compat.path

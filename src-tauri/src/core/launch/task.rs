@@ -93,18 +93,23 @@ pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std:
 
 /// Determine the required Java major version based on Minecraft version string.
 fn determine_java_major(minecraft_version: &str) -> u32 {
-    // 1.21+ requires Java 21
-    // 1.17+ requires Java 17
-    // Older versions use Java 8 (but we target 17 minimum)
     let parts: Vec<&str> = minecraft_version.split('.').collect();
-    if parts.len() >= 2 {
-        if let (Ok(major), Ok(minor)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
-            if major >= 1 && minor >= 21 {
-                return 21;
-            }
-        }
+    if parts.len() < 2 {
+        return 17;
     }
-    17 // Safe default
+
+    let major = parts[0].parse::<u32>().unwrap_or(1);
+    let minor = parts[1].parse::<u32>().unwrap_or(20);
+
+    if major > 1 || minor >= 21 {
+        return 21;
+    }
+
+    if minor >= 17 {
+        return 17;
+    }
+
+    8
 }
 
 #[cfg(test)]
@@ -116,6 +121,7 @@ mod tests {
         assert_eq!(determine_java_major("1.21.4"), 21);
         assert_eq!(determine_java_major("1.21"), 21);
         assert_eq!(determine_java_major("1.20.4"), 17);
-        assert_eq!(determine_java_major("1.16.5"), 17);
+        assert_eq!(determine_java_major("1.16.5"), 8);
+        assert_eq!(determine_java_major("1.8.9"), 8);
     }
 }
