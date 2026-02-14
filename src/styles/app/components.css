@@ -1,0 +1,143 @@
+.brand {
+  font-weight: 700;
+  margin-left: 4px;
+}
+
+.topbar-info {
+  color: #94a0b7;
+  font-size: 0.92rem;
+}
+
+.topbar-primary button,
+.topbar-secondary button,
+.instance-right-panel button,
+.edit-left-sidebar button,
+.edit-right-sidebar button,
+.create-left-sidebar button,
+.create-right-sidebar button,
+.instances-floating-create button {
+  border: 1px solid #374159;
+  background: #1c2434;
+  color: #e8ecf8;
+  border-radius: 9px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+button.active {
+  background: #3564ff;
+  border-color: #5f84ff;
+}
+
+.instance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.instance-card {
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid #2d374b;
+  overflow: visible;
+  background: #161d2c;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.instance-card.active {
+  border-color: #6c8fff;
+  box-shadow: 0 0 0 1px #6c8fff;
+}
+
+.instance-cover {
+  height: 120px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(120deg, #3a62c7, #5b2f9f);
+  font-weight: 700;
+}
+
+.instance-meta {
+  padding: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.instance-meta h3 {
+  margin: 0;
+  font-size: 1.02rem;
+}
+
+.instance-extra-tooltip {
+  position: relative;
+  border: 1px solid #374159;
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 0.84rem;
+}
+
+.tooltip-bubble {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  min-width: 230px;
+  max-width: 300px;
+  white-space: pre-line;
+  border: 1px solid #3b4458;
+  border-radius: 10px;
+  background: #0c1220;
+  color: #dce4f7;
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease;
+  transition-delay: 0.8s;
+  z-index: 5;
+}
+
+.instance-extra-tooltip:hover .tooltip-bubble,
+.instance-extra-tooltip:focus-within .tooltip-bubble {
+  opacity: 1;
+  visibility: visible;
+}
+
+.instance-right-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 260px;
+  border: 1px solid #2a3242;
+  background: #121a2a;
+  border-radius: 14px;
+  padding: 14px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.execution-log {
+  border: 1px solid #2a3140;
+  border-radius: 10px;
+  background: #090d16;
+  padding: 14px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  color: #a7d3a0;
+  max-height: 65vh;
+  overflow: auto;
+}
+
+.execution-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.execution-error {
+  color: #ff9696;
+}

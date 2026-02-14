@@ -1,0 +1,73 @@
+.app-shell {
+  min-height: 100vh;
+  background: radial-gradient(circle at top, #1a2130 0%, #0f1115 40%, #0b0d12 100%);
+}
+
+.topbar-primary,
+.topbar-secondary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #2b3140;
+}
+
+.topbar-primary {
+  justify-content: space-between;
+  background: #131825;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.topbar-left-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar-secondary {
+  background: rgba(19, 24, 37, 0.9);
+  position: sticky;
+  top: 58px;
+  z-index: 20;
+  flex-wrap: wrap;
+}
+
+.content-wrap {
+  padding: 16px 24px 24px;
+}
+
+.instances-workspace {
+  position: relative;
+}
+
+.edit-layout,
+.create-layout {
+  min-height: calc(100vh - 58px);
+  display: grid;
+  grid-template-columns: 200px 1fr 220px;
+}
+
+.edit-left-sidebar,
+.edit-right-sidebar,
+.create-left-sidebar,
+.create-right-sidebar {
+  border-right: 1px solid #2a3140;
+  background: #111827;
+  padding: 12px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.edit-right-sidebar,
+.create-right-sidebar {
+  border-right: 0;
+  border-left: 1px solid #2a3140;
+}
+
+.edit-main-content,
+.create-main-content {
+  padding: 24px;
+}
