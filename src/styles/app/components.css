@@ -11,6 +11,13 @@
   text-align: right;
 }
 
+.topbar-right-controls {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .topbar-primary button,
 .topbar-secondary button,
 .instance-right-panel button,
@@ -28,6 +35,16 @@
   cursor: pointer;
   font-size: 0.83rem;
   transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.2s ease, background 0.18s ease;
+}
+
+.topbar-primary button,
+.topbar-secondary button,
+.instances-toolbar button,
+.instance-settings-tabs button,
+.compact-sidebar button,
+.instance-right-panel button {
+  width: fit-content;
+  max-width: 100%;
 }
 
 .topbar-primary button:hover,
@@ -199,6 +216,25 @@ button.active {
   gap: 8px;
 }
 
+.profile-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 180px;
+  border: 1px solid #3a4253;
+  border-radius: 10px;
+  background: #1a1f2a;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  z-index: 40;
+}
+
+.profile-menu button {
+  width: 100%;
+  text-align: left;
+}
+
 .execution-log {
   border: 1px solid #31384a;
   border-radius: 10px;
@@ -250,7 +286,7 @@ button.active {
 
 .settings-block-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 10px;
 }
 

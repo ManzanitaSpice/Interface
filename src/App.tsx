@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import "./styles/app/base.css";
@@ -113,6 +113,11 @@ function App() {
   const [launchLogs, setLaunchLogs] = useState<LaunchLogEvent[]>([]);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [instanceSearch, setInstanceSearch] = useState("");
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [createSectionHistory, setCreateSectionHistory] = useState<(typeof CREATE_SECTIONS)[number][]>(["Base"]);
+  const [createHistoryIndex, setCreateHistoryIndex] = useState(0);
+  const executionLogRef = useRef<HTMLDivElement | null>(null);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const loadInstances = async () => {
@@ -154,6 +159,45 @@ function App() {
     };
   }, [selectedInstance]);
 
+  useEffect(() => {
+    if (!executionLogRef.current) return;
+    executionLogRef.current.scrollTop = executionLogRef.current.scrollHeight;
+  }, [launchLogs, launchProgress, launchError]);
+
+  useEffect(() => {
+    const onDocumentClick = (event: MouseEvent) => {
+      if (!profileMenuRef.current) return;
+      if (profileMenuRef.current.contains(event.target as Node)) return;
+      setShowProfileMenu(false);
+    };
+
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (showProfileMenu) {
+        setShowProfileMenu(false);
+        return;
+      }
+      if (showInstancePanel) {
+        setShowInstancePanel(false);
+        return;
+      }
+      if (editingInstance) {
+        setEditingInstance(null);
+        return;
+      }
+      if (appMode === "create") {
+        setAppMode("main");
+      }
+    };
+
+    window.addEventListener("click", onDocumentClick);
+    window.addEventListener("keydown", onEscape);
+    return () => {
+      window.removeEventListener("click", onDocumentClick);
+      window.removeEventListener("keydown", onEscape);
+    };
+  }, [appMode, editingInstance, showInstancePanel, showProfileMenu]);
+
   const instanceCards = useMemo(() => {
     const query = instanceSearch.trim().toLowerCase();
     if (!query) return instances;
@@ -170,6 +214,85 @@ function App() {
     if (!selectedInstance) return;
     setEditingInstance(selectedInstance);
     setShowInstancePanel(false);
+  };
+
+  const reloadInstances = async () => {
+    const saved = await invoke<InstanceInfo[]>("list_instances");
+    setInstances(saved);
+    if (selectedInstance) {
+      const updated = saved.find((instance) => instance.id === selectedInstance.id) ?? null;
+      setSelectedInstance(updated);
+      if (!updated) {
+        setShowInstancePanel(false);
+        setEditingInstance(null);
+      }
+    }
+  };
+
+  const copyInstance = async () => {
+    if (!selectedInstance) return;
+    await invoke("clone_instance", { id: selectedInstance.id });
+    await reloadInstances();
+  };
+
+  const deleteSelectedInstance = async () => {
+    if (!selectedInstance) return;
+    const confirmed = window.confirm(`¿Borrar completamente la instancia ${selectedInstance.name} y todos sus archivos?`);
+    if (!confirmed) return;
+    await invoke("delete_instance", { id: selectedInstance.id });
+    await reloadInstances();
+  };
+
+  const handleInstanceAction = async (action: InstanceAction) => {
+    if (!selectedInstance) return;
+    if (action === "Editar") {
+      enterEditMode();
+      return;
+    }
+    if (action === "Iniciar") {
+      await launchInstance();
+      return;
+    }
+    if (action === "Forzar Cierre") {
+      await invoke("force_close_instance", { id: selectedInstance.id });
+      return;
+    }
+    if (action === "Carpeta") {
+      await invoke("open_instance_folder", { id: selectedInstance.id });
+      return;
+    }
+    if (action === "Copiar") {
+      await copyInstance();
+      return;
+    }
+    if (action === "Borrar") {
+      await deleteSelectedInstance();
+    }
+  };
+
+  const goBackCreateSection = () => {
+    if (createHistoryIndex <= 0) return;
+    const nextIndex = createHistoryIndex - 1;
+    setCreateHistoryIndex(nextIndex);
+    setActiveCreateSection(createSectionHistory[nextIndex]);
+  };
+
+  const goForwardCreateSection = () => {
+    if (createHistoryIndex >= createSectionHistory.length - 1) return;
+    const nextIndex = createHistoryIndex + 1;
+    setCreateHistoryIndex(nextIndex);
+    setActiveCreateSection(createSectionHistory[nextIndex]);
+  };
+
+  const selectCreateSection = (section: (typeof CREATE_SECTIONS)[number]) => {
+    setActiveCreateSection(section);
+    setCreateSectionHistory((prev) => {
+      const compact = prev.slice(0, createHistoryIndex + 1);
+      if (compact[compact.length - 1] === section) return compact;
+      const next = [...compact, section];
+      setCreateHistoryIndex(next.length - 1);
+      return next;
+    });
   };
 
   const launchInstance = async () => {
@@ -274,9 +397,7 @@ function App() {
                 <button
                   key={action}
                   type="button"
-                  onClick={
-                    action === "Editar" ? enterEditMode : action === "Iniciar" ? () => void launchInstance() : undefined
-                  }
+                  onClick={() => void handleInstanceAction(action)}
                 >
                   {action}
                 </button>
@@ -293,8 +414,8 @@ function App() {
       <div className="app-shell">
         <header className="topbar-primary">
           <div className="topbar-left-controls">
-            <button type="button" aria-label="Atras" className="arrow-button">←</button>
-            <button type="button" aria-label="Adelante" className="arrow-button">→</button>
+            <button type="button" aria-label="Atras" className="arrow-button" onClick={goBackCreateSection}>←</button>
+            <button type="button" aria-label="Adelante" className="arrow-button" onClick={goForwardCreateSection}>→</button>
             <div className="brand">Launcher Principal</div>
           </div>
           <div className="topbar-info">Creando nueva instancia</div>
@@ -306,7 +427,7 @@ function App() {
                 key={section}
                 type="button"
                 className={activeCreateSection === section ? "active" : ""}
-                onClick={() => setActiveCreateSection(section)}
+                onClick={() => selectCreateSection(section)}
               >
                 {section}
               </button>
@@ -354,7 +475,7 @@ function App() {
           <main className="edit-main-content">
             <h2>{activeEditSection}</h2>
             {activeEditSection === "Ejecucion" ? (
-              <div className="execution-log">
+              <div className="execution-log" ref={executionLogRef}>
                 <div className="execution-actions">
                   <button type="button" onClick={() => void launchInstance()}>Iniciar</button>
                   {launchProgress && <span>{launchProgress.stage} ({launchProgress.value}%)</span>}
@@ -462,7 +583,19 @@ function App() {
           <button type="button" aria-label="Adelante" className="arrow-button">→</button>
           <div className="brand">Launcher Principal</div>
         </div>
-        <div className="topbar-info" />
+        <div className="topbar-right-controls" ref={profileMenuRef}>
+          <div className="topbar-info" />
+          <button type="button" onClick={() => setShowProfileMenu((prev) => !prev)}>Perfil</button>
+          {showProfileMenu && (
+            <div className="profile-menu" role="menu" aria-label="Perfil">
+              <button type="button" role="menuitem">Perfil 1</button>
+              <button type="button" role="menuitem">Perfil 2</button>
+              <button type="button" role="menuitem">Perfil 3</button>
+              <button type="button" role="menuitem">Perfil 4</button>
+              <button type="button" role="menuitem">Perfil 5</button>
+            </div>
+          )}
+        </div>
       </header>
 
       <nav className="topbar-secondary" onClick={(event) => event.stopPropagation()}>

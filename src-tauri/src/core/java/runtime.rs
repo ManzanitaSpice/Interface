@@ -363,22 +363,6 @@ pub async fn find_java_binary(major: u32) -> LauncherResult<PathBuf> {
         return Ok(exact.path.clone());
     }
 
-    if let Some(compat_64) = installations.iter().find(|i| i.major > major && i.is_64bit) {
-        warn!(
-            "Exact Java {} not found, using Java {} at {:?}",
-            major, compat_64.major, compat_64.path
-        );
-        return Ok(compat_64.path.clone());
-    }
-
-    if let Some(compat) = installations.iter().find(|i| i.major > major) {
-        warn!(
-            "Exact Java {} not found, using Java {} at {:?}",
-            major, compat.major, compat.path
-        );
-        return Ok(compat.path.clone());
-    }
-
     Err(LauncherError::JavaNotFound(major))
 }
 
