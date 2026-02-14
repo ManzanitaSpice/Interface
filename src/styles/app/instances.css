@@ -113,8 +113,14 @@
 
 .instance-expand-btn {
   margin: 0 12px 10px;
-  width: calc(100% - 24px);
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
   text-align: center;
+  justify-self: end;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
 }
 
 .instance-expanded-content {
@@ -147,40 +153,29 @@
   margin-bottom: 0;
 }
 
-.instance-extra-tooltip {
-  position: relative;
-  border: 1px solid #4b6898;
-  border-radius: 999px;
-  padding: 2px 6px;
-  font-size: 0.8rem;
-  background: rgba(18, 28, 46, 0.82);
+.instance-expanded-grid {
+  display: grid;
+  gap: 6px;
 }
 
-.tooltip-bubble {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  min-width: 220px;
-  max-width: 290px;
-  white-space: pre-line;
-  border: 1px solid #405b87;
-  border-radius: 10px;
-  background: #121b2c;
-  color: #dce9ff;
-  padding: 9px;
-  box-shadow: var(--shadow-lg);
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.2s ease;
-  transition-delay: 0.5s;
-  z-index: 5;
+.instance-expanded-grid span {
+  font-size: 0.74rem;
+  color: #c6daf6;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.instance-extra-tooltip:hover .tooltip-bubble,
-.instance-extra-tooltip:focus-within .tooltip-bubble {
-  opacity: 1;
-  visibility: visible;
+.instance-expanded-grid strong {
+  color: #9dbce6;
+  font-weight: 600;
 }
+
+.instance-quick-optimize-btn {
+  margin-top: 8px;
+  width: 100%;
+}
+
 
 .toolbar-menu {
   position: relative;
