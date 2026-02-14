@@ -23,6 +23,14 @@ interface InstanceInfo {
   loader_type: LoaderType;
   loader_version: string | null;
   state: "creating" | "ready" | "running" | "stopped" | "error";
+  created_at?: string;
+  account?: {
+    username?: string;
+  };
+  max_memory_mb?: number;
+  jvm_args?: string[];
+  game_args?: string[];
+  java_path?: string | null;
   icon_path?: string | null;
   total_size_bytes: number;
 }
@@ -147,10 +155,6 @@ const formatBytes = (bytes: number) => {
 const prettyLoader = (loader: LoaderType) => loader.charAt(0).toUpperCase() + loader.slice(1);
 
 const MOJANG_VERSION_MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
-const FABRIC_LOADER_URL = "https://meta.fabricmc.net/v2/versions/loader";
-const FORGE_MAVEN_METADATA_URL = "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml";
-const NEOFORGE_MAVEN_METADATA_URL = "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml";
-const QUILT_LOADER_URL = "https://meta.quiltmc.org/v3/versions/loader";
 
 function App() {
   const [activeSection, setActiveSection] = useState<TopSection>("instances");
@@ -171,6 +175,7 @@ function App() {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showSearchInput, setShowSearchInput] = useState(false);
   const [expandedInstanceId, setExpandedInstanceId] = useState<string | null>(null);
+  const [optimizingInstanceId, setOptimizingInstanceId] = useState<string | null>(null);
   const [pendingDeleteInstance, setPendingDeleteInstance] = useState<InstanceInfo | null>(null);
   const [deleteInProgress, setDeleteInProgress] = useState(false);
   const [deleteFeedback, setDeleteFeedback] = useState<{ type: "idle" | "progress" | "success" | "error"; message: string; needsElevation?: boolean }>({
@@ -293,61 +298,9 @@ function App() {
         setLoaderVersions(normalized);
         setSelectedLoaderVersion(normalized[0]?.version ?? null);
       } catch {
-        try {
-          let fallbackVersions: LoaderVersionEntry[] = [];
-
-          if (selectedLoaderType === "fabric") {
-            const response = await fetch(`${FABRIC_LOADER_URL}/${selectedMinecraftVersion}`);
-            const payload = await response.json() as Array<{ loader?: { version?: string }; stable?: boolean }>;
-            fallbackVersions = payload
-              .filter((entry) => entry.loader?.version)
-              .map((entry) => ({
-                version: entry.loader?.version ?? "",
-                stable: Boolean(entry.stable),
-                source: "fallback",
-              }));
-          }
-
-          if (selectedLoaderType === "quilt") {
-            const response = await fetch(QUILT_LOADER_URL);
-            const payload = await response.json() as Array<{ loader?: { version?: string }; stable?: boolean }>; 
-            fallbackVersions = payload
-              .filter((entry) => entry.loader?.version)
-              .map((entry) => ({
-                version: entry.loader?.version ?? "",
-                stable: Boolean(entry.stable),
-                source: "fallback",
-              }));
-          }
-
-          if (selectedLoaderType === "forge" || selectedLoaderType === "neoforge") {
-            const metadataUrl = selectedLoaderType === "forge" ? FORGE_MAVEN_METADATA_URL : NEOFORGE_MAVEN_METADATA_URL;
-            const response = await fetch(metadataUrl);
-            const xmlText = await response.text();
-            const parser = new DOMParser();
-            const xml = parser.parseFromString(xmlText, "application/xml");
-            const versions = Array.from(xml.querySelectorAll("version"))
-              .map((entry) => entry.textContent?.trim() ?? "")
-              .filter(Boolean)
-              .filter((version) => selectedLoaderType === "forge"
-                ? version.startsWith(`${selectedMinecraftVersion}-`)
-                : version.includes(selectedMinecraftVersion.replace("1.", "").split(".").slice(0, 2).join("."))
-              )
-              .map((version) => selectedLoaderType === "forge" ? version.replace(`${selectedMinecraftVersion}-`, "") : version);
-
-            fallbackVersions = versions.map((version, index) => ({ version, stable: index === 0, source: "fallback" }));
-          }
-
-          setLoaderVersions(fallbackVersions);
-          setSelectedLoaderVersion(fallbackVersions[0]?.version ?? null);
-          if (fallbackVersions.length === 0) {
-            setLoaderVersionsError("No se encontraron versiones oficiales para este loader y versión de Minecraft.");
-          }
-        } catch {
-          setLoaderVersions([]);
-          setSelectedLoaderVersion(null);
-          setLoaderVersionsError("No se pudieron cargar versiones de loaders desde APIs oficiales.");
-        }
+        setLoaderVersions([]);
+        setSelectedLoaderVersion(null);
+        setLoaderVersionsError("No se pudieron consultar versiones oficiales del loader para esta versión de Minecraft.");
       } finally {
         setLoaderVersionsLoading(false);
       }
@@ -656,6 +609,17 @@ function App() {
     return parsedDate.toLocaleDateString("es-ES");
   };
 
+  const formatInstanceCreationDate = (isoDate?: string) => {
+    if (!isoDate) return "-";
+    const parsedDate = new Date(isoDate);
+    if (Number.isNaN(parsedDate.getTime())) return "-";
+    return parsedDate.toLocaleDateString("es-ES", {
+      year: "2-digit",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  };
+
   const createInstanceNow = async () => {
     if (!selectedMinecraftVersion || !selectedLoaderType) {
       setCreateError("Selecciona versión de Minecraft y loader.");
@@ -709,6 +673,30 @@ function App() {
 
   const toggleExpandedCard = (instanceId: string) => {
     setExpandedInstanceId((prev) => (prev === instanceId ? null : instanceId));
+  };
+
+  const quickOptimizeInstance = async (instance: InstanceInfo) => {
+    setOptimizingInstanceId(instance.id);
+    try {
+      const optimized = await invoke<InstanceInfo>("update_instance_launch_config", {
+        payload: {
+          id: instance.id,
+          java_path: instance.java_path ?? null,
+          max_memory_mb: Math.max(2048, instance.max_memory_mb ?? 2048),
+          jvm_args: Array.from(new Set([...(instance.jvm_args ?? []), "-XX:+UseG1GC", "-XX:+UnlockExperimentalVMOptions"])),
+          game_args: instance.game_args ?? [],
+        },
+      });
+
+      setInstances((prev) => prev.map((entry) => (entry.id === optimized.id ? optimized : entry)));
+      if (selectedInstance?.id === optimized.id) {
+        setSelectedInstance(optimized);
+      }
+    } catch {
+      setLaunchError("No se pudo aplicar la optimización rápida.");
+    } finally {
+      setOptimizingInstanceId(null);
+    }
   };
 
   const renderSectionPage = () => {
@@ -767,7 +755,6 @@ function App() {
         <div className={`instances-workspace ${showInstancePanel && selectedInstance ? "with-panel" : ""}`}>
           <div className="instance-grid" onClick={(event) => event.stopPropagation()}>
             {instanceCards.map((instance) => {
-              const tooltipText = `Version MC: ${instance.minecraft_version}\nLoader: ${prettyLoader(instance.loader_type)} ${instance.loader_version ?? "N/A"}\nAutor: Usuario Local\nPeso: ${formatBytes(instance.total_size_bytes)}`;
               return (
                 <article
                   key={instance.id}
@@ -777,10 +764,6 @@ function App() {
                   <div className="instance-cover" aria-hidden="true">{instance.name.slice(0, 3).toUpperCase()}</div>
                   <div className="instance-meta">
                     <h3>{instance.name}</h3>
-                    <div className="instance-extra-tooltip" tabIndex={0}>
-                      ℹ️
-                      <span className="tooltip-bubble">{tooltipText}</span>
-                    </div>
                   </div>
                   <div className="instance-details">
                     <span className={`instance-state ${selectedInstance?.id === instance.id ? "online" : "idle"}`}>
@@ -797,13 +780,27 @@ function App() {
                       toggleExpandedCard(instance.id);
                     }}
                     aria-expanded={expandedInstanceId === instance.id}
+                    aria-label={expandedInstanceId === instance.id ? "Cerrar panel rápido" : "Abrir panel rápido"}
                   >
-                    {expandedInstanceId === instance.id ? "Ocultar detalles" : "Expandir"}
+                    ⚡
                   </button>
                   <div className={`instance-expanded-content ${expandedInstanceId === instance.id ? "open" : ""}`}>
-                    <p><strong>Tamaño:</strong> {formatBytes(instance.total_size_bytes)}</p>
-                    <p><strong>ID:</strong> {instance.id}</p>
-                    <p><strong>Compatibilidad:</strong> Perfil optimizado para escritorio Tauri.</p>
+                    <div className="instance-expanded-grid">
+                      <span><strong>Autor</strong> {instance.account?.username ?? "Local"}</span>
+                      <span><strong>Tamaño</strong> {formatBytes(instance.total_size_bytes)}</span>
+                      <span><strong>Creada</strong> {formatInstanceCreationDate(instance.created_at)}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="instance-quick-optimize-btn"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void quickOptimizeInstance(instance);
+                      }}
+                      disabled={optimizingInstanceId === instance.id}
+                    >
+                      {optimizingInstanceId === instance.id ? "Optimizando..." : "Optimización rápida"}
+                    </button>
                   </div>
                 </article>
               );
@@ -1010,7 +1007,7 @@ function App() {
                               onClick={() => setSelectedLoaderVersion(version.version)}
                             >
                               <span className="mc-version-main">{version.version}</span>
-                              <span className="mc-version-meta">{version.stable ? "Recomendada" : "Disponible"} · {prettyLoader(selectedLoaderType)}</span>
+                              <span className="mc-version-meta">{version.stable ? "Recomendada" : "Disponible"} · {prettyLoader(selectedLoaderType)} · API oficial</span>
                             </button>
                           );
                         })}
