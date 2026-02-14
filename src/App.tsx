@@ -275,44 +275,50 @@ function CreateInstancePage({
 
   return (
     <div className="create-instance-page">
-      <h2>Create New Instance</h2>
+      <div className="create-instance-header">
+        <h2>Crear instancia</h2>
+        <p>Configura versión, loader y parámetros base desde un panel más amplio y ordenado.</p>
+      </div>
       <form className="create-instance-form" onSubmit={handleGenerate}>
-        <div className="form-group">
-          <label>Instance Name</label>
-          <input value={instanceName} onChange={(e) => setInstanceName(e.target.value)} required />
+        <div className="create-instance-grid">
+          <div className="form-group">
+            <label>Nombre de la instancia</label>
+            <input value={instanceName} onChange={(e) => setInstanceName(e.target.value)} required />
+          </div>
+          <div className="form-group">
+            <label>Versión de Minecraft</label>
+            <select value={selectedVersion} onChange={(e) => setSelectedVersion(e.target.value)}>
+              {minecraftVersions.map((v) => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Mod Loader</label>
+            <select value={selectedLoader} onChange={(e) => setSelectedLoader(e.target.value as LoaderType)}>
+              {LOADERS.map((l) => (
+                <option key={l.value} value={l.value}>{l.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Versión del Loader</label>
+            <select
+              value={selectedLoaderVersion}
+              onChange={(e) => setSelectedLoaderVersion(e.target.value)}
+              disabled={selectedLoader === "vanilla" || isLoadingVersions || loaderVersions.length === 0}
+            >
+              {selectedLoader === "vanilla" ? <option value="">No aplica para Vanilla</option> : loaderVersions.map((lv) => (
+                <option key={lv} value={lv}>{`${lv === recommendedLoaderVersion ? "★ " : ""}${lv}`}</option>
+              ))}
+            </select>
+            {selectedLoader !== "vanilla" && !isLoadingVersions && loaderVersions.length > 0 && (
+              <small>Seleccionada automáticamente la versión más reciente compatible con {selectedVersion}.</small>
+            )}
+          </div>
         </div>
-        <div className="form-group">
-          <label>Minecraft Version</label>
-          <select value={selectedVersion} onChange={(e) => setSelectedVersion(e.target.value)}>
-            {minecraftVersions.map((v) => (
-              <option key={v} value={v}>{v}</option>
-            ))}
-          </select>
-        </div>
-        <div className="form-group">
-          <label>Mod Loader</label>
-          <select value={selectedLoader} onChange={(e) => setSelectedLoader(e.target.value as LoaderType)}>
-            {LOADERS.map((l) => (
-              <option key={l.value} value={l.value}>{l.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className="form-group">
-          <label>Loader Version</label>
-          <select
-            value={selectedLoaderVersion}
-            onChange={(e) => setSelectedLoaderVersion(e.target.value)}
-            disabled={selectedLoader === "vanilla" || isLoadingVersions || loaderVersions.length === 0}
-          >
-            {selectedLoader === "vanilla" ? <option value="">No aplica para Vanilla</option> : loaderVersions.map((lv) => (
-              <option key={lv} value={lv}>{`${lv === recommendedLoaderVersion ? "★ " : ""}${lv}`}</option>
-            ))}
-          </select>
-          {selectedLoader !== "vanilla" && !isLoadingVersions && loaderVersions.length > 0 && (
-            <small>Seleccionada automáticamente la versión más reciente compatible con {selectedVersion}.</small>
-          )}
-        </div>
-        <button type="submit" className="generate-btn" disabled={!canSubmit || isCreating}>
+
+        <button type="submit" className="generate-btn create-instance-submit" disabled={!canSubmit || isCreating}>
           {isCreating ? "Creating..." : "Generate Instance"}
         </button>
 
@@ -356,6 +362,7 @@ function App() {
   const [instanceLogs, setInstanceLogs] = useState<Record<string, LogEntry[]>>({});
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [error, setError] = useState("");
   const [isMigratingDataDir, setIsMigratingDataDir] = useState(false);
   const [firstLaunchStatus, setFirstLaunchStatus] = useState<FirstLaunchStatus | null>(null);
@@ -410,6 +417,11 @@ function App() {
   }, [selectedInstance, javaInstallations]);
 
   const showInstanceToolsOnly = currentView === "instance-detail" || currentView === "instance-execution";
+  const isCreateView = currentView === "create-instance";
+
+  useEffect(() => {
+    if (isCreateView) setIsSidebarCollapsed(true);
+  }, [isCreateView]);
 
   useEffect(() => {
     if (!selectedInstance) return;
@@ -852,6 +864,14 @@ function App() {
           <div className="brand-logo-placeholder" />
           <span className="brand-title">INTERFACE</span>
           <div className="topbar-nav-arrows">
+            <button
+              type="button"
+              className="nav-arrow-btn"
+              onClick={() => setIsSidebarCollapsed((prev) => !prev)}
+              aria-label={isSidebarCollapsed ? "Mostrar barra lateral" : "Ocultar barra lateral"}
+            >
+              {isSidebarCollapsed ? "☰" : "✕"}
+            </button>
             <button type="button" className="nav-arrow-btn" onClick={handleNavigateBack} disabled={backHistory.length === 0} aria-label="Navegar atrás">←</button>
             <button type="button" className="nav-arrow-btn" onClick={handleNavigateForward} disabled={forwardHistory.length === 0} aria-label="Navegar adelante">→</button>
           </div>
@@ -863,7 +883,7 @@ function App() {
       </header>
 
       <div className="app-layout">
-        {!showInstanceToolsOnly && (
+        {!showInstanceToolsOnly && !isSidebarCollapsed && !isCreateView && (
           <aside className="sidebar">
             <div className="sidebar-header">Launcher</div>
             <nav>
@@ -873,7 +893,7 @@ function App() {
           </aside>
         )}
 
-        {showInstanceToolsOnly && selectedInstance && (
+        {showInstanceToolsOnly && selectedInstance && !isSidebarCollapsed && (
           <aside className="sidebar instance-sidebar-only">
             <div className="sidebar-header">Herramientas</div>
             <div className="instance-sidebar-tools visible">
@@ -960,6 +980,19 @@ function App() {
                       <p><strong>Tamaño total:</strong> {formatBytes(instance.total_size_bytes)}</p>
                       <p><strong>Creada:</strong> {formatDateLabel(instance.created_at)}</p>
                       <p><strong>Último juego:</strong> {formatDateLabel(instance.last_played)}</p>
+                    </div>
+                    <div className="instance-card-actions">
+                      <button
+                        type="button"
+                        className="danger-btn secondary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleDeleteInstance(instance.id);
+                        }}
+                        disabled={instance.state === "running"}
+                      >
+                        Eliminar
+                      </button>
                     </div>
 
                   </article>
@@ -1067,7 +1100,7 @@ function App() {
           )}
 
           {currentView === "settings" && (
-            <section className="settings-page">
+            <section className={`settings-page ${settingsTab === "launcher" ? "launcher-settings-page" : ""}`}>
               <h2>Configurador del launcher</h2>
               <div className="settings-tabs">
                 <button className={`settings-tab ${settingsTab === "java" ? "active" : ""}`} onClick={() => setSettingsTab("java")}>Java</button>

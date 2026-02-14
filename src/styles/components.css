@@ -103,6 +103,17 @@
 .instance-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px; }
 .instance-card h3 { margin: 0; }
 .instance-card-details p { margin: 6px 0; color: #b5bac1; }
+.instance-card-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.instance-card-actions .danger-btn {
+  width: auto;
+  min-width: 120px;
+  padding: 8px 14px;
+}
 .instance-state-chip { text-transform: capitalize; font-size: .74rem; padding: 4px 9px; border-radius: 999px; border: 1px solid #4a4d55; color: #dbdee1; background: #313338; }
 .instance-state-chip.state-running { border-color: #1f8f65; color: #98ffda; background: rgba(30, 126, 84, 0.2); }
 .instance-state-chip.state-installing { border-color: #a8872b; color: #ffe099; background: rgba(169, 130, 35, 0.2); }
@@ -143,7 +154,19 @@
 .radio-row { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
 .settings-separator { border: 0; border-top: 1px solid #404a66; margin: 20px 0; }
 
-.instance-config-panel { display: flex; flex-direction: column; gap: 8px; }
+.instance-config-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.instance-config-panel .form-group:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+.instance-config-panel textarea {
+  min-height: 180px;
+}
 
 .instance-tool-group {
   display: flex;
@@ -234,6 +257,7 @@
   border-radius: 10px;
   overflow: hidden;
   margin-bottom: 12px;
+  min-height: 360px;
 }
 
 .java-installation-table {
