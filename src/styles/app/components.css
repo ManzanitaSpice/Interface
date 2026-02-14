@@ -18,7 +18,8 @@
 .edit-right-sidebar button,
 .create-left-sidebar button,
 .create-right-sidebar button,
-.instances-toolbar button {
+.instances-toolbar button,
+.instance-settings-tabs button {
   border: 1px solid #3b4254;
   background: linear-gradient(180deg, #353b4a 0%, #2d3341 100%);
   color: #f1f3f7;
@@ -36,7 +37,8 @@
 .edit-right-sidebar button:hover,
 .create-left-sidebar button:hover,
 .create-right-sidebar button:hover,
-.instances-toolbar button:hover {
+.instances-toolbar button:hover,
+.instance-settings-tabs button:hover {
   border-color: #6978a5;
   box-shadow: 0 8px 20px rgba(8, 10, 14, 0.35);
   transform: translateY(-1px);
@@ -49,7 +51,8 @@
 .edit-right-sidebar button:active,
 .create-left-sidebar button:active,
 .create-right-sidebar button:active,
-.instances-toolbar button:active {
+.instances-toolbar button:active,
+.instance-settings-tabs button:active {
   transform: translateY(0);
   box-shadow: 0 3px 8px rgba(8, 10, 14, 0.35);
 }
@@ -62,6 +65,7 @@
 .create-left-sidebar button:focus-visible,
 .create-right-sidebar button:focus-visible,
 .instances-toolbar button:focus-visible,
+.instance-settings-tabs button:focus-visible,
 .instances-toolbar input:focus-visible {
   outline: 2px solid #7289da;
   outline-offset: 1px;
@@ -215,6 +219,94 @@ button.active {
 
 .execution-error {
   color: #ff9b9b;
+}
+
+.instance-settings-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.instance-settings-header {
+  display: grid;
+  gap: 10px;
+}
+
+.instance-settings-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.instance-settings-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.instance-settings-tabs button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+}
+
+.settings-block-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.settings-card {
+  border: 1px solid #394257;
+  border-radius: 10px;
+  background: #1a202b;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.settings-card h4 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.settings-card p {
+  margin: 0;
+  color: #b5bdd2;
+  font-size: 0.8rem;
+}
+
+.settings-java-layout {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-inline-field {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+}
+
+.settings-inline-field input,
+.settings-card textarea {
+  width: 100%;
+  border: 1px solid #3b4254;
+  background: #11151f;
+  color: #e9edf5;
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 0.8rem;
+}
+
+.settings-card textarea {
+  resize: vertical;
+}
+
+.settings-card input[type="range"] {
+  width: 100%;
+}
+
+.settings-placeholder {
+  min-height: 120px;
+  align-content: center;
 }
 
 .sr-only {
