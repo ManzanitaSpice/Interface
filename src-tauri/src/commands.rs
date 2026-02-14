@@ -1,4 +1,5 @@
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{io::BufRead, io::BufReader as StdBufReader};
 
@@ -993,10 +994,22 @@ pub async fn launch_instance(
     if let Some(stderr) = child.stderr.take() {
         let instance_id = id.clone();
         let app_handle = app_handle.clone();
+        let neoforge_hint_emitted = Arc::new(AtomicBool::new(false));
         tauri::async_runtime::spawn(async move {
+            let neoforge_hint_emitted = neoforge_hint_emitted.clone();
             let _ = tauri::async_runtime::spawn_blocking(move || {
                 for line in StdBufReader::new(stderr).lines().map_while(Result::ok) {
                     emit_launch_log(&app_handle, &instance_id, "warn", line.clone());
+                    if (line.contains("rendererFuture") || line.contains("DisplayWindow.takeOverGlfwWindow"))
+                        && !neoforge_hint_emitted.swap(true, Ordering::Relaxed)
+                    {
+                        emit_launch_log(
+                            &app_handle,
+                            &instance_id,
+                            "error",
+                            "[DIAGNÓSTICO] NeoForge falló en early display (rendererFuture nulo). Prueba actualizar NeoForge, usar Java 17/21 x64 limpia y desactivar overlays de GPU antes de reiniciar la instancia.".into(),
+                        );
+                    }
                     warn!("[mc:{}][stderr] {}", instance_id, line);
                 }
             })
@@ -1056,7 +1069,10 @@ pub async fn launch_instance(
                         &app_handle_for_wait,
                         &id,
                         "error",
-                        format!("[ERROR] El proceso finalizó con código {:?}", status.code()),
+                        match status.code() {
+                            Some(code) => format!("[ERROR] El proceso finalizó con código {code}"),
+                            None => "[ERROR] El proceso finalizó sin código de salida (terminación externa).".into(),
+                        },
                     );
                     error!(
                         "Minecraft process for {} exited abnormally with status: {:?}",
