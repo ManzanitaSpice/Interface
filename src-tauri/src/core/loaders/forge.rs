@@ -7,6 +7,7 @@ use super::context::InstallContext;
 use super::installer::{LoaderInstallResult, LoaderInstaller};
 use crate::core::error::{LauncherError, LauncherResult};
 use crate::core::maven::MavenArtifact;
+use crate::core::version::VersionJson;
 
 /// Installs Forge by downloading and executing the official installer JAR.
 pub struct ForgeInstaller;
@@ -138,6 +139,37 @@ impl LoaderInstaller for ForgeInstaller {
             libraries.insert(lib.name.clone());
         }
 
+        let installed_version_path = minecraft_dir
+            .join("versions")
+            .join(&forge_id)
+            .join(format!("{}.json", forge_id));
+        let mut resolved_main_class = version_json.main_class.clone();
+        let mut extra_jvm_args = Vec::new();
+        let mut extra_game_args = Vec::new();
+        let mut java_major = None;
+
+        if installed_version_path.exists() {
+            let raw_version = tokio::fs::read_to_string(&installed_version_path)
+                .await
+                .map_err(|e| LauncherError::Io {
+                    path: installed_version_path.clone(),
+                    source: e,
+                })?;
+            let installed_version: VersionJson = serde_json::from_str(&raw_version)?;
+
+            resolved_main_class = installed_version.main_class.clone();
+            extra_jvm_args = installed_version.simple_jvm_args();
+            extra_game_args = installed_version.simple_game_args();
+            java_major = Some(installed_version.required_java_major());
+
+            for lib in installed_version
+                .download_libraries(ctx.libs_dir, ctx.downloader)
+                .await?
+            {
+                libraries.insert(lib);
+            }
+        }
+
         for lib_name in &libraries {
             let artifact = MavenArtifact::parse(lib_name)?;
             let dest = ctx.libs_dir.join(artifact.local_path());
@@ -160,13 +192,13 @@ impl LoaderInstaller for ForgeInstaller {
         info!("Forge {} installed successfully", forge_id);
 
         Ok(LoaderInstallResult {
-            main_class: version_json.main_class,
-            extra_jvm_args: vec![],
-            extra_game_args: vec![],
+            main_class: resolved_main_class,
+            extra_jvm_args,
+            extra_game_args,
             libraries: libraries.into_iter().collect(),
             asset_index_id: None,
             asset_index_url: None,
-            java_major: None,
+            java_major,
         })
     }
 }
