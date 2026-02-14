@@ -169,7 +169,12 @@ impl LoaderInstaller for NeoForgeInstaller {
             }
         }
 
-        let processor_vars = build_processor_variables(&ctx, &installer_path, &installer_bytes)?;
+        let mut processor_vars = HashMap::new();
+        merge_profile_data_variables(&mut processor_vars, &install_profile.data);
+        merge_runtime_processor_variables(
+            &mut processor_vars,
+            &build_processor_variables(&ctx, &installer_path, &installer_bytes)?,
+        );
 
         // Run processors (client side)
         for processor in &install_profile.processors {
@@ -365,6 +370,33 @@ fn build_processor_variables(
     }
 
     Ok(vars)
+}
+
+fn merge_runtime_processor_variables(
+    vars: &mut HashMap<String, String>,
+    runtime_vars: &HashMap<String, String>,
+) {
+    for (key, value) in runtime_vars {
+        vars.insert(key.clone(), value.clone());
+    }
+}
+
+fn merge_profile_data_variables(vars: &mut HashMap<String, String>, data: &serde_json::Value) {
+    let Some(obj) = data.as_object() else {
+        return;
+    };
+
+    for (key, value) in obj {
+        let resolved = value
+            .get("client")
+            .and_then(|v| v.as_str())
+            .or_else(|| value.get("value").and_then(|v| v.as_str()))
+            .or_else(|| value.as_str());
+
+        if let Some(v) = resolved {
+            vars.insert(key.clone(), v.to_string());
+        }
+    }
 }
 
 fn extract_client_binpatch(
