@@ -6,6 +6,7 @@ type LoaderType = "vanilla" | "forge" | "fabric" | "neoforge" | "quilt";
 type TopSection = "menu" | "instances" | "news" | "explorer" | "servers" | "community" | "global-settings";
 type InstanceAction = "Iniciar" | "Forzar Cierre" | "Editar" | "Cambiar Grupo" | "Carpeta" | "Exportar" | "Copiar" | "Borrar" | "Crear Atajo";
 type EditSection = "Ejecucion" | "Version" | "Mods" | "ResourcePacks" | "Shader Packs" | "Notas" | "Mundos" | "Servidores" | "Capturas" | "Configuracion" | "Otros Registros";
+type AppMode = "main" | "create";
 
 interface InstanceInfo {
   id: string;
@@ -52,6 +53,17 @@ const EDIT_SECTIONS: EditSection[] = [
   "Otros Registros",
 ];
 
+const CREATE_SECTIONS = [
+  "Base",
+  "Version",
+  "Loader",
+  "Java",
+  "Memoria",
+  "Mods",
+  "Recursos",
+  "Revision",
+] as const;
+
 const formatBytes = (bytes: number) => {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
@@ -68,6 +80,8 @@ function App() {
   const [showInstancePanel, setShowInstancePanel] = useState(false);
   const [editingInstance, setEditingInstance] = useState<InstanceInfo | null>(null);
   const [activeEditSection, setActiveEditSection] = useState<EditSection>("Ejecucion");
+  const [appMode, setAppMode] = useState<AppMode>("main");
+  const [activeCreateSection, setActiveCreateSection] = useState<(typeof CREATE_SECTIONS)[number]>("Base");
 
   useEffect(() => {
     const loadInstances = async () => {
@@ -101,6 +115,13 @@ function App() {
     setShowInstancePanel(false);
   };
 
+  const launchInstance = () => {
+    if (!selectedInstance) return;
+    setEditingInstance(selectedInstance);
+    setActiveEditSection("Ejecucion");
+    setShowInstancePanel(false);
+  };
+
   const onSelectInstance = (instance: InstanceInfo) => {
     setSelectedInstance(instance);
     setShowInstancePanel(true);
@@ -118,42 +139,109 @@ function App() {
     }
 
     return (
-      <section className="full-section-page instances-page">
+      <section className="full-section-page instances-page" onClick={() => setShowInstancePanel(false)}>
         <header className="section-header">
           <h1>Mis Instancias</h1>
-          <p>Panel completo para visualizar todas las instancias creadas.</p>
+          <p>Panel ampliado para visualizar todas las instancias y sus acciones.</p>
         </header>
-        <div className="instance-grid">
-          {instanceCards.map((instance) => (
-            <article
-              key={instance.id}
-              className={`instance-card ${selectedInstance?.id === instance.id ? "active" : ""}`}
-              onClick={() => onSelectInstance(instance)}
-            >
-              <div className="instance-cover">IMG</div>
-              <div className="instance-meta">
-                <h3>{instance.name}</h3>
-                <ul>
-                  <li><strong>Version MC:</strong> {instance.minecraft_version}</li>
-                  <li><strong>Loader:</strong> {prettyLoader(instance.loader_type)}</li>
-                  <li><strong>Version Loader:</strong> {instance.loader_version ?? "N/A"}</li>
-                  <li><strong>Autor:</strong> Usuario Local</li>
-                  <li><strong>Titulo:</strong> {instance.name}</li>
-                  <li><strong>Peso:</strong> {formatBytes(instance.total_size_bytes)}</li>
-                </ul>
-              </div>
-            </article>
-          ))}
+
+        <div className="instances-compact-toolbar" onClick={(event) => event.stopPropagation()}>
+          <span>Gestion de Instancias</span>
+          <button type="button" onClick={() => setAppMode("create")}>Crear instancia</button>
+        </div>
+
+        <div className={`instances-workspace ${showInstancePanel ? "with-panel" : ""}`}>
+          <div className="instance-grid" onClick={(event) => event.stopPropagation()}>
+            {instanceCards.map((instance) => {
+              const tooltipText = `Version MC: ${instance.minecraft_version}\nLoader: ${prettyLoader(instance.loader_type)} ${instance.loader_version ?? "N/A"}\nAutor: Usuario Local\nPeso: ${formatBytes(instance.total_size_bytes)}`;
+              return (
+                <article
+                  key={instance.id}
+                  className={`instance-card ${selectedInstance?.id === instance.id ? "active" : ""}`}
+                  onClick={() => onSelectInstance(instance)}
+                >
+                  <div className="instance-cover">IMG</div>
+                  <div className="instance-meta">
+                    <h3>{instance.name}</h3>
+                    <div className="instance-extra-tooltip" tabIndex={0}>
+                      ℹ️
+                      <span className="tooltip-bubble">{tooltipText}</span>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          {showInstancePanel && selectedInstance && (
+            <aside className="instance-right-panel" onClick={(event) => event.stopPropagation()}>
+              <h3>{selectedInstance.name}</h3>
+              {INSTANCE_ACTIONS.map((action) => (
+                <button
+                  key={action}
+                  type="button"
+                  onClick={
+                    action === "Editar" ? enterEditMode : action === "Iniciar" ? launchInstance : undefined
+                  }
+                >
+                  {action}
+                </button>
+              ))}
+            </aside>
+          )}
         </div>
       </section>
     );
   };
 
+  if (appMode === "create") {
+    return (
+      <div className="app-shell">
+        <header className="topbar-primary">
+          <div className="topbar-left-controls">
+            <button type="button" aria-label="Atras">←</button>
+            <button type="button" aria-label="Adelante">→</button>
+            <div className="brand">Launcher Principal</div>
+          </div>
+          <div className="topbar-info">Creando nueva instancia</div>
+        </header>
+        <div className="create-layout">
+          <aside className="create-left-sidebar">
+            {CREATE_SECTIONS.map((section) => (
+              <button
+                key={section}
+                type="button"
+                className={activeCreateSection === section ? "active" : ""}
+                onClick={() => setActiveCreateSection(section)}
+              >
+                {section}
+              </button>
+            ))}
+          </aside>
+          <main className="create-main-content">
+            <h2>Crear instancia - {activeCreateSection}</h2>
+            <p>Esta vista ocupa la pantalla completa (excepto la barra principal superior).</p>
+          </main>
+          <aside className="create-right-sidebar">
+            <h3>Panel de {activeCreateSection}</h3>
+            <button type="button" onClick={() => setAppMode("main")}>Cancelar</button>
+            <button type="button">Guardar borrador</button>
+            <button type="button">Crear instancia</button>
+          </aside>
+        </div>
+      </div>
+    );
+  }
+
   if (editingInstance) {
     return (
       <div className="app-shell" onClick={() => setEditingInstance(null)}>
         <header className="topbar-primary">
-          <div className="brand">Launcher Principal</div>
+          <div className="topbar-left-controls">
+            <button type="button" aria-label="Atras">←</button>
+            <button type="button" aria-label="Adelante">→</button>
+            <div className="brand">Launcher Principal</div>
+          </div>
           <div className="topbar-info">Editando: {editingInstance.name}</div>
         </header>
         <div className="edit-layout" onClick={(event) => event.stopPropagation()}>
@@ -171,7 +259,18 @@ function App() {
           </aside>
           <main className="edit-main-content">
             <h2>{activeEditSection}</h2>
-            <p>Vista completa de la instancia. Todo lo demás está oculto, excepto la barra superior principal.</p>
+            {activeEditSection === "Ejecucion" ? (
+              <div className="execution-log">
+                <p>[00:00] Preparando directorios de instancia...</p>
+                <p>[00:01] Descargando dependencias y librerías base...</p>
+                <p>[00:03] Instalando loader y verificando assets...</p>
+                <p>[00:04] Aplicando argumentos de JVM y de lanzamiento...</p>
+                <p>[00:06] Iniciando proceso del juego...</p>
+                <p>[00:07] [LIVE] Minecraft inicializado correctamente.</p>
+              </div>
+            ) : (
+              <p>Vista completa de la instancia. Todo lo demás está oculto, excepto la barra superior principal.</p>
+            )}
           </main>
           <aside className="edit-right-sidebar">
             <h3>Acciones de {activeEditSection}</h3>
@@ -187,7 +286,11 @@ function App() {
   return (
     <div className="app-shell" onClick={() => setShowInstancePanel(false)}>
       <header className="topbar-primary">
-        <div className="brand">Launcher Principal</div>
+        <div className="topbar-left-controls">
+          <button type="button" aria-label="Atras">←</button>
+          <button type="button" aria-label="Adelante">→</button>
+          <div className="brand">Launcher Principal</div>
+        </div>
         <div className="topbar-info">Barra principal superior</div>
       </header>
 
@@ -207,20 +310,7 @@ function App() {
         ))}
       </nav>
 
-      <main className="content-wrap" onClick={(event) => event.stopPropagation()}>
-        {renderSectionPage()}
-      </main>
-
-      {showInstancePanel && selectedInstance && activeSection === "instances" && (
-        <aside className="instance-left-panel" onClick={(event) => event.stopPropagation()}>
-          <h3>{selectedInstance.name}</h3>
-          {INSTANCE_ACTIONS.map((action) => (
-            <button key={action} type="button" onClick={action === "Editar" ? enterEditMode : undefined}>
-              {action}
-            </button>
-          ))}
-        </aside>
-      )}
+      <main className="content-wrap">{renderSectionPage()}</main>
     </div>
   );
 }
