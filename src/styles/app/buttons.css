@@ -1,17 +1,24 @@
 button {
-  border: 1px solid #3b5378;
-  background: linear-gradient(180deg, #24395e 0%, #1a2c49 100%);
+  border: 1px solid rgba(133, 180, 255, 0.44);
+  background:
+    linear-gradient(160deg, rgba(138, 88, 255, 0.24), rgba(89, 166, 255, 0.28) 44%, rgba(25, 42, 72, 0.92) 100%),
+    linear-gradient(180deg, #21365c 0%, #162746 100%);
   color: var(--text-main);
-  border-radius: 12px;
+  border-radius: 13px;
   padding: 8px 14px;
   cursor: pointer;
   font-size: 0.84rem;
-  transition: transform 0.14s ease, border-color 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
+  letter-spacing: 0.01em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), var(--shadow-soft);
+  transition: transform 0.2s ease, border-color 0.24s ease, box-shadow 0.24s ease, filter 0.24s ease;
 }
 
 button:hover:not(:disabled) {
-  border-color: #5d84be;
-  box-shadow: 0 12px 24px rgba(4, 12, 24, 0.38);
+  border-color: rgba(164, 205, 255, 0.82);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 16px 26px rgba(5, 14, 31, 0.45),
+    0 0 24px rgba(108, 170, 255, 0.24);
   transform: translateY(-1px);
   filter: brightness(1.06);
 }
@@ -19,31 +26,30 @@ button:hover:not(:disabled) {
 button:active:not(:disabled) {
   transform: translateY(0);
   filter: brightness(0.96);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 16px rgba(5, 14, 31, 0.36);
 }
 
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.55;
   cursor: not-allowed;
-}
-
-button:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
-.instances-toolbar input:focus-visible {
-  outline: 2px solid #7bb8ff;
-  outline-offset: 1px;
+  box-shadow: none;
 }
 
 button.active {
-  background: linear-gradient(180deg, #4f7fbf 0%, #2f5f9f 100%);
-  border-color: #90bcff;
-  box-shadow: 0 8px 20px rgba(10, 39, 86, 0.5);
+  border-color: rgba(178, 224, 255, 0.92);
+  background:
+    linear-gradient(145deg, rgba(107, 185, 255, 0.65), rgba(111, 103, 255, 0.52)),
+    linear-gradient(180deg, #3566a5 0%, #254c7e 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 0 0 1px rgba(163, 214, 255, 0.35),
+    0 12px 28px rgba(10, 39, 86, 0.46);
 }
 
 .arrow-button {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 35px;
+  height: 35px;
+  border-radius: 12px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -52,6 +58,6 @@ button.active {
 }
 
 .delete-modal-actions .danger {
-  border-color: #8f3f51;
-  background: linear-gradient(180deg, #843041 0%, #672433 100%);
+  border-color: rgba(255, 149, 171, 0.78);
+  background: linear-gradient(180deg, #8d3348 0%, #652538 100%);
 }

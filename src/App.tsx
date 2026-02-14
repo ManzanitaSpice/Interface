@@ -150,6 +150,7 @@ function App() {
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showSearchInput, setShowSearchInput] = useState(false);
+  const [expandedInstanceId, setExpandedInstanceId] = useState<string | null>(null);
   const [pendingDeleteInstance, setPendingDeleteInstance] = useState<InstanceInfo | null>(null);
   const [minecraftVersions, setMinecraftVersions] = useState<MinecraftVersionEntry[]>([]);
   const [minecraftFilter, setMinecraftFilter] = useState<MinecraftVersionFilter>("all");
@@ -500,6 +501,10 @@ function App() {
     setShowInstancePanel(true);
   };
 
+  const toggleExpandedCard = (instanceId: string) => {
+    setExpandedInstanceId((prev) => (prev === instanceId ? null : instanceId));
+  };
+
   const renderSectionPage = () => {
     if (activeSection !== "instances") {
       const label = SECTION_LABELS.find((section) => section.key === activeSection)?.label;
@@ -560,16 +565,39 @@ function App() {
               return (
                 <article
                   key={instance.id}
-                  className={`instance-card ${selectedInstance?.id === instance.id ? "active" : ""}`}
+                  className={`instance-card ${selectedInstance?.id === instance.id ? "active" : ""} ${expandedInstanceId === instance.id ? "expanded" : ""}`}
                   onClick={() => onSelectInstance(instance)}
                 >
-                  <div className="instance-cover">IMG</div>
+                  <div className="instance-cover" aria-hidden="true">{instance.name.slice(0, 3).toUpperCase()}</div>
                   <div className="instance-meta">
                     <h3>{instance.name}</h3>
                     <div className="instance-extra-tooltip" tabIndex={0}>
                       ℹ️
                       <span className="tooltip-bubble">{tooltipText}</span>
                     </div>
+                  </div>
+                  <div className="instance-details">
+                    <span className={`instance-state ${selectedInstance?.id === instance.id ? "online" : "idle"}`}>
+                      {selectedInstance?.id === instance.id ? "Seleccionada" : "Disponible"}
+                    </span>
+                    <span>MC {instance.minecraft_version}</span>
+                    <span>{prettyLoader(instance.loader_type)} {instance.loader_version ?? "Integrado"}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="instance-expand-btn"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      toggleExpandedCard(instance.id);
+                    }}
+                    aria-expanded={expandedInstanceId === instance.id}
+                  >
+                    {expandedInstanceId === instance.id ? "Ocultar detalles" : "Expandir"}
+                  </button>
+                  <div className={`instance-expanded-content ${expandedInstanceId === instance.id ? "open" : ""}`}>
+                    <p><strong>Tamaño:</strong> {formatBytes(instance.total_size_bytes)}</p>
+                    <p><strong>ID:</strong> {instance.id}</p>
+                    <p><strong>Compatibilidad:</strong> Perfil optimizado para escritorio Tauri.</p>
                   </div>
                 </article>
               );
@@ -580,15 +608,18 @@ function App() {
           {showInstancePanel && selectedInstance && (
             <aside className="instance-right-panel" onClick={(event) => event.stopPropagation()}>
               <h3>{selectedInstance.name}</h3>
-              {INSTANCE_ACTIONS.map((action) => (
-                <button
-                  key={action}
-                  type="button"
-                  onClick={() => void handleInstanceAction(action)}
-                >
-                  {action}
-                </button>
-              ))}
+              <p className="instance-right-meta">{selectedInstance.minecraft_version} · {prettyLoader(selectedInstance.loader_type)}</p>
+              <div className="instance-right-actions">
+                {INSTANCE_ACTIONS.map((action) => (
+                  <button
+                    key={action}
+                    type="button"
+                    onClick={() => void handleInstanceAction(action)}
+                  >
+                    {action}
+                  </button>
+                ))}
+              </div>
             </aside>
           )}
         </div>
@@ -674,17 +705,33 @@ function App() {
           </main>
           <aside className="create-right-sidebar compact-sidebar">
             <h3>Crear instancia</h3>
-            <label htmlFor="instance-name">Nombre</label>
-            <input id="instance-name" type="text" value={newInstanceName} onChange={(event) => setNewInstanceName(event.target.value)} placeholder="Mi instancia" />
-            <p>MC: {selectedMinecraftVersion ?? "Sin seleccionar"}</p>
-            <p>Loader: {selectedLoaderType ? prettyLoader(selectedLoaderType) : "Sin seleccionar"}</p>
-            <p>Version loader: {selectedLoaderType === "vanilla" ? "Integrado" : (selectedLoaderVersion ?? "Sin seleccionar")}</p>
+            <div className="create-form-group">
+              <label htmlFor="instance-name">Nombre</label>
+              <input
+                id="instance-name"
+                type="text"
+                className={newInstanceName.trim() ? "field-complete" : ""}
+                value={newInstanceName}
+                onChange={(event) => setNewInstanceName(event.target.value)}
+                placeholder="Mi instancia"
+              />
+            </div>
+            <div className="create-selection-summary">
+              <p>MC: <strong>{selectedMinecraftVersion ?? "Sin seleccionar"}</strong></p>
+              <p>Loader: <strong>{selectedLoaderType ? prettyLoader(selectedLoaderType) : "Sin seleccionar"}</strong></p>
+              <p>Version loader: <strong>{selectedLoaderType === "vanilla" ? "Integrado" : (selectedLoaderVersion ?? "Sin seleccionar")}</strong></p>
+            </div>
             {createProgress && (
-              <p>
-                Progreso: {createProgress.stage} ({createProgress.value}%)
-              </p>
+              <div className={`create-status-banner ${createProgress.state}`}>
+                <p>
+                  Progreso: {createProgress.stage} ({createProgress.value}%)
+                </p>
+                <div className="create-progress-track" aria-hidden="true">
+                  <span style={{ width: `${createProgress.value}%` }} />
+                </div>
+              </div>
             )}
-            {createError && <p className="execution-error">{createError}</p>}
+            {createError && <p className="execution-error create-error-banner">{createError}</p>}
             {createLogs.length > 0 && (
               <div className="create-log-box" aria-live="polite">
                 {createLogs.slice(-4).map((entry, index) => (

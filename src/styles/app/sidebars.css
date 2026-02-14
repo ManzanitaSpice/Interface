@@ -3,11 +3,12 @@
 .create-left-sidebar,
 .create-right-sidebar {
   border-right: 1px solid var(--line-soft);
-  background: linear-gradient(180deg, #101c30 0%, #0d1627 100%);
+  background: linear-gradient(180deg, rgba(16, 28, 48, 0.92) 0%, rgba(10, 18, 32, 0.96) 100%);
   padding: 12px;
   display: grid;
   align-content: start;
   gap: 8px;
+  box-shadow: var(--shadow-soft);
 }
 
 .edit-right-sidebar,
@@ -30,18 +31,30 @@
   width: 100%;
   max-height: calc(100vh - 132px);
   overflow: auto;
-  border: 1px solid #35527d;
-  background: linear-gradient(180deg, #182b48 0%, #0f1a2e 100%);
-  border-radius: 14px;
+  border: 1px solid rgba(130, 176, 255, 0.38);
+  background: linear-gradient(170deg, rgba(23, 39, 66, 0.92) 0%, rgba(13, 22, 38, 0.98) 100%);
+  border-radius: 16px;
   padding: 14px;
   display: grid;
   align-content: start;
-  gap: 8px;
-  box-shadow: var(--shadow-lg);
+  gap: 10px;
+  box-shadow: var(--shadow-lg), -8px 0 24px rgba(10, 32, 62, 0.22);
+  animation: panel-fade-in 0.26s ease;
 }
 
 .instance-right-panel h3 {
-  margin: 0 0 6px;
+  margin: 0;
+}
+
+.instance-right-meta {
+  margin: -2px 0 4px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.instance-right-actions {
+  display: grid;
+  gap: 8px;
 }
 
 .create-right-sidebar {
@@ -49,7 +62,94 @@
   top: 60px;
   align-self: start;
   min-height: calc(100vh - 72px);
-  border-left: 1px solid #2d4368;
-  background: linear-gradient(180deg, #13223b 0%, #0e182c 100%);
-  border-radius: 12px 0 0 12px;
+  border-left: 1px solid rgba(117, 165, 247, 0.28);
+  border-radius: 14px 0 0 14px;
+}
+
+.create-status-banner {
+  border: 1px solid rgba(129, 182, 255, 0.34);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(13, 25, 45, 0.72);
+}
+
+.create-status-banner p {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  color: #c4dbff;
+}
+
+.create-status-banner.done {
+  border-color: rgba(142, 224, 179, 0.5);
+}
+
+.create-status-banner.error {
+  border-color: rgba(255, 162, 181, 0.5);
+}
+
+.create-progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(48, 71, 111, 0.8);
+  overflow: hidden;
+}
+
+.create-progress-track span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #6eb7ff 0%, #8d92ff 100%);
+  border-radius: inherit;
+  transition: width 0.25s ease;
+}
+
+.create-error-banner {
+  border: 1px solid rgba(255, 145, 171, 0.48);
+  background: rgba(67, 23, 35, 0.55);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+@keyframes panel-fade-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+
+.instance-right-actions button:hover {
+  transform: translateX(2px);
+}
+
+.create-form-group {
+  display: grid;
+  gap: 6px;
+}
+
+.create-selection-summary {
+  border: 1px solid rgba(122, 171, 250, 0.28);
+  border-radius: 12px;
+  background: rgba(15, 24, 42, 0.72);
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.create-selection-summary p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #b3caf0;
+}
+
+.create-selection-summary strong {
+  color: #edf5ff;
+}
+
+.field-complete {
+  border-color: rgba(151, 221, 186, 0.66);
+  box-shadow: inset 0 0 0 1px rgba(151, 221, 186, 0.26), 0 0 14px rgba(123, 212, 161, 0.15);
 }
