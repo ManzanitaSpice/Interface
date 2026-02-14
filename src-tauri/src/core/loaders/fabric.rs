@@ -76,6 +76,14 @@ impl FabricInstaller {
         Ok(profile)
     }
 
+    fn ensure_loader_artifact(libraries: &mut Vec<String>, loader_version: &str) {
+        let loader_coord = format!("net.fabricmc:fabric-loader:{}", loader_version);
+        if libraries.iter().any(|lib| lib == &loader_coord) {
+            return;
+        }
+        libraries.push(loader_coord);
+    }
+
     async fn install_libraries(
         &self,
         profile: &FabricProfile,
@@ -143,9 +151,10 @@ impl LoaderInstaller for FabricInstaller {
         fs::write(&profile_path, profile_json).await?;
 
         // 3️⃣ Instalar librerías en paralelo
-        let libraries = self
+        let mut libraries = self
             .install_libraries(&profile, ctx.libs_dir, ctx.downloader)
             .await?;
+        Self::ensure_loader_artifact(&mut libraries, ctx.loader_version);
 
         // 4️⃣ Argumentos
         let (jvm_args, game_args) = match profile.arguments {
@@ -164,5 +173,35 @@ impl LoaderInstaller for FabricInstaller {
             asset_index_url: None,
             java_major: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FabricInstaller;
+
+    #[test]
+    fn ensure_loader_artifact_adds_fabric_loader_coordinate() {
+        let mut libs = vec!["net.fabricmc:intermediary:1.21.1".to_string()];
+
+        FabricInstaller::ensure_loader_artifact(&mut libs, "0.16.10");
+
+        assert!(libs
+            .iter()
+            .any(|lib| lib == "net.fabricmc:fabric-loader:0.16.10"));
+    }
+
+    #[test]
+    fn ensure_loader_artifact_keeps_existing_coordinate_unique() {
+        let mut libs = vec!["net.fabricmc:fabric-loader:0.16.10".to_string()];
+
+        FabricInstaller::ensure_loader_artifact(&mut libs, "0.16.10");
+
+        assert_eq!(
+            libs.iter()
+                .filter(|lib| lib.as_str() == "net.fabricmc:fabric-loader:0.16.10")
+                .count(),
+            1
+        );
     }
 }
