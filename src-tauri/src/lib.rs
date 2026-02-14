@@ -45,6 +45,8 @@ pub fn run() {
             commands::update_launcher_settings,
             commands::migrate_launcher_data_dir,
             commands::update_instance_launch_config,
+            commands::update_instance_account,
+            commands::get_auth_research_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

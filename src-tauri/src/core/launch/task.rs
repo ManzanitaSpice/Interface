@@ -5,6 +5,7 @@ use std::process::Stdio;
 
 use tracing::{debug, info};
 
+use crate::core::auth::LaunchAccountProfile;
 use crate::core::error::{LauncherError, LauncherResult};
 use crate::core::instance::Instance;
 use crate::core::java;
@@ -69,7 +70,13 @@ pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std:
     cmd.arg(main_class);
 
     // ── Game Arguments ──
-    let final_game_args = sanitize_game_args(instance, &instance.game_args, &game_dir, &assets_dir);
+    let final_game_args = sanitize_game_args(
+        instance,
+        &instance.game_args,
+        &game_dir,
+        &assets_dir,
+        &instance.account,
+    );
 
     for arg in final_game_args {
         cmd.arg(arg);
@@ -162,6 +169,7 @@ fn sanitize_game_args(
     raw_args: &[String],
     game_dir: &std::path::Path,
     assets_dir: &std::path::Path,
+    account: &LaunchAccountProfile,
 ) -> Vec<String> {
     let mut sanitized = Vec::new();
     let game_dir = safe_path_str(game_dir);
@@ -169,7 +177,7 @@ fn sanitize_game_args(
 
     for arg in raw_args {
         let resolved = arg
-            .replace("${auth_player_name}", "Player")
+            .replace("${auth_player_name}", &account.username)
             .replace("${version_name}", &instance.minecraft_version)
             .replace("${game_directory}", &game_dir)
             .replace("${assets_root}", &assets_dir)
@@ -177,12 +185,12 @@ fn sanitize_game_args(
                 "${assets_index_name}",
                 instance.asset_index.as_deref().unwrap_or("legacy"),
             )
-            .replace("${auth_uuid}", "00000000-0000-0000-0000-000000000000")
-            .replace("${auth_access_token}", "offline_access_token")
-            .replace("${auth_xuid}", "0")
-            .replace("${clientid}", "00000000000000000000000000000000")
+            .replace("${auth_uuid}", &account.uuid)
+            .replace("${auth_access_token}", &account.access_token)
+            .replace("${auth_xuid}", &account.xuid)
+            .replace("${clientid}", &account.client_id)
             .replace("${user_properties}", "{}")
-            .replace("${user_type}", "msa")
+            .replace("${user_type}", &account.user_type)
             .replace("${version_type}", "release");
 
         // Skip unresolved placeholders to avoid passing malformed values.
@@ -269,26 +277,29 @@ mod tests {
             "${unknown_placeholder}".into(),
         ];
 
+        instance.account = LaunchAccountProfile::offline("Alex").sanitized();
+
         let sanitized = sanitize_game_args(
             &instance,
             &args,
             std::path::Path::new("/tmp/game"),
             std::path::Path::new("/tmp/assets"),
+            &instance.account,
         );
 
         assert_eq!(
             sanitized,
             vec![
                 "--username",
-                "Player",
+                "Alex",
                 "--accessToken",
-                "offline_access_token",
+                &instance.account.access_token,
                 "--userType",
-                "msa",
+                "legacy",
                 "--xuid",
                 "0",
                 "--clientId",
-                "00000000000000000000000000000000",
+                "00000000402B5328",
                 "--assetIndex",
                 "17",
                 "--bad",
