@@ -7,7 +7,7 @@ type LoaderType = "vanilla" | "forge" | "fabric" | "neoforge" | "quilt";
 type InstanceState = "created" | "installing" | "ready" | "running" | "error";
 type JavaRuntimePreference = "auto" | "embedded" | "system";
 type SettingsTab = "java" | "launcher";
-type InstanceConfigTab = "java" | "arguments";
+type InstanceConfigTab = "java";
 type View = "home" | "create-instance" | "settings" | "instance-detail";
 
 interface InstanceInfo {
@@ -158,6 +158,11 @@ function CreateInstancePage({
   const [error, setError] = useState("");
 
   useEffect(() => {
+    if (!error) return;
+    console.error(`[create-instance] ${error}`);
+  }, [error]);
+
+  useEffect(() => {
     if (minecraftVersions.length > 0 && !selectedVersion) setSelectedVersion(minecraftVersions[0]);
   }, [minecraftVersions, selectedVersion]);
 
@@ -269,7 +274,6 @@ function CreateInstancePage({
             <small>Seleccionada automáticamente la versión más reciente compatible con {selectedVersion}.</small>
           )}
         </div>
-        {error && <pre className="error-message">{error}</pre>}
         <button type="submit" className="generate-btn" disabled={!canSubmit || isCreating}>
           {isCreating ? "Creating..." : "Generate Instance"}
         </button>
@@ -366,6 +370,7 @@ function App() {
 
   useEffect(() => {
     if (!error) return;
+    console.error(`[launcher-ui] ${error}`);
     const timeout = setTimeout(() => setError(""), 6500);
     return () => clearTimeout(timeout);
   }, [error]);
@@ -700,8 +705,6 @@ function App() {
         </aside>)}
 
         <main className={`content-area ${currentView === "instance-detail" ? "instance-detail-open" : ""}`}>
-          {error && <pre className="error-message global-error">{error}</pre>}
-
           {firstLaunchStatus?.first_launch && (
             <section className="onboarding-overlay">
               <div className="onboarding-card">
@@ -821,7 +824,6 @@ function App() {
 
                   <div className="settings-tabs instance-config-tabs">
                     <button className={`settings-tab ${instanceConfigTab === "java" ? "active" : ""}`} onClick={() => setInstanceConfigTab("java")}>Configuración</button>
-                    <button className={`settings-tab ${instanceConfigTab === "arguments" ? "active" : ""}`} onClick={() => setInstanceConfigTab("arguments")}>Argumentos</button>
                   </div>
 
                   {instanceConfigTab === "java" && (
@@ -833,19 +835,6 @@ function App() {
                       <div className="form-group">
                         <label>Memoria máxima (MB)</label>
                         <input type="number" min={512} step={256} value={instanceMaxMemoryInput} onChange={(e) => setInstanceMaxMemoryInput(e.target.value)} />
-                      </div>
-                    </div>
-                  )}
-
-                  {instanceConfigTab === "arguments" && (
-                    <div className="settings-panel">
-                      <div className="form-group">
-                        <label>JVM args (1 por línea)</label>
-                        <textarea value={instanceJvmArgsInput} onChange={(e) => setInstanceJvmArgsInput(e.target.value)} rows={5} />
-                      </div>
-                      <div className="form-group">
-                        <label>Game args (1 por línea)</label>
-                        <textarea value={instanceGameArgsInput} onChange={(e) => setInstanceGameArgsInput(e.target.value)} rows={5} />
                       </div>
                     </div>
                   )}
