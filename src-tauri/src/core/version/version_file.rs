@@ -343,6 +343,10 @@ fn merge_json_values(parent: &serde_json::Value, child: &serde_json::Value) -> s
                 };
                 merged.insert(key.clone(), value);
             }
+
+            // A resolved launcher version must not keep inheritance metadata.
+            merged.remove("inheritsFrom");
+
             serde_json::Value::Object(merged)
         }
         (_, child_value) => child_value.clone(),
@@ -353,30 +357,13 @@ fn merge_libraries(
     parent_libraries: Option<&serde_json::Value>,
     child_libraries: &serde_json::Value,
 ) -> serde_json::Value {
-    let mut merged = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    let parent = parent_libraries
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    let child = child_libraries.as_array().cloned().unwrap_or_default();
 
-    for source in [parent_libraries, Some(child_libraries)]
-        .into_iter()
-        .flatten()
-    {
-        let Some(arr) = source.as_array() else {
-            continue;
-        };
-
-        for entry in arr {
-            let key = entry
-                .get("name")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-                .unwrap_or_else(|| entry.to_string());
-
-            if seen.insert(key) {
-                merged.push(entry.clone());
-            }
-        }
-    }
-
+    let mut merged = parent;
+    merged.extend(child);
     serde_json::Value::Array(merged)
 }
 
@@ -570,11 +557,13 @@ mod tests {
         assert_eq!(merged["id"], "1.20.1-forge-47.2.0");
         assert_eq!(merged["libraries"][0]["name"], "a:b:1.0");
         assert_eq!(merged["libraries"][1]["name"], "shared:lib:1.0");
-        assert_eq!(merged["libraries"][2]["name"], "child:lib:2.0");
+        assert_eq!(merged["libraries"][2]["name"], "shared:lib:1.0");
+        assert_eq!(merged["libraries"][3]["name"], "child:lib:2.0");
         assert_eq!(merged["arguments"]["game"][0], "--parent");
         assert_eq!(merged["arguments"]["game"][1], "--child");
         assert_eq!(merged["arguments"]["jvm"][0], "-Dparent=true");
         assert_eq!(merged["arguments"]["jvm"][1], "-Dchild=true");
+        assert!(merged.get("inheritsFrom").is_none());
     }
 
     #[test]
