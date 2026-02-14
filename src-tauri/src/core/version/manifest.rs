@@ -54,7 +54,6 @@ impl VersionManifest {
         self.versions
             .iter()
             .filter(|v| v.version_type == "release")
-            .filter(|v| !v.id.to_ascii_lowercase().contains("demo"))
             .collect()
     }
 }
