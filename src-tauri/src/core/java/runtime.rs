@@ -363,7 +363,36 @@ pub async fn find_java_binary(major: u32) -> LauncherResult<PathBuf> {
         return Ok(exact.path.clone());
     }
 
+    if let Some(newer_64) = installations.iter().find(|i| i.major > major && i.is_64bit) {
+        return Ok(newer_64.path.clone());
+    }
+
+    if let Some(newer) = installations.iter().find(|i| i.major > major) {
+        return Ok(newer.path.clone());
+    }
+
     Err(LauncherError::JavaNotFound(major))
+}
+
+/// Maps Minecraft version to the Java major required by modern launchers.
+pub fn required_java_for_minecraft_version(minecraft_version: &str) -> u32 {
+    let mut parts = minecraft_version.split('.');
+    let major = parts
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(1);
+    let minor = parts
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(20);
+
+    if major > 1 || minor >= 21 {
+        21
+    } else if minor >= 17 {
+        17
+    } else {
+        8
+    }
 }
 
 pub fn is_usable_java_binary(path: &Path) -> bool {
@@ -448,5 +477,13 @@ mod tests {
     fn test_parse_version_string() {
         let output = "openjdk version \"17.0.8\" 2023-07-18";
         assert_eq!(parse_version_string(output), Some("17.0.8".to_string()));
+    }
+
+    #[test]
+    fn java_required_by_minecraft_version() {
+        assert_eq!(required_java_for_minecraft_version("1.16.5"), 8);
+        assert_eq!(required_java_for_minecraft_version("1.20.6"), 17);
+        assert_eq!(required_java_for_minecraft_version("1.21.1"), 21);
+        assert_eq!(required_java_for_minecraft_version("25w03a"), 17);
     }
 }
