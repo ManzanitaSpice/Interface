@@ -110,6 +110,19 @@ interface InstanceLaunchLogEvent {
   message: string;
 }
 
+interface InstanceCreateProgressEvent {
+  id: string;
+  value: number;
+  stage: string;
+  state: "idle" | "running" | "done" | "error";
+}
+
+interface InstanceCreateLogEvent {
+  id: string;
+  level: LogEntry["level"];
+  message: string;
+}
+
 const LOADERS: { label: string; value: LoaderType }[] = [
   { label: "Vanilla", value: "vanilla" },
   { label: "Forge", value: "forge" },
@@ -165,9 +178,13 @@ function LoadingScreen() {
 function CreateInstancePage({
   minecraftVersions,
   onInstanceCreated,
+  creationProgress,
+  creationLogs,
 }: {
   minecraftVersions: string[];
   onInstanceCreated: (instance: InstanceInfo) => void;
+  creationProgress: InstanceLaunchProgress | null;
+  creationLogs: LogEntry[];
 }) {
   const [selectedVersion, setSelectedVersion] = useState("");
   const [selectedLoader, setSelectedLoader] = useState<LoaderType>("vanilla");
@@ -298,6 +315,29 @@ function CreateInstancePage({
         <button type="submit" className="generate-btn" disabled={!canSubmit || isCreating}>
           {isCreating ? "Creating..." : "Generate Instance"}
         </button>
+
+        {creationProgress && (
+          <section className="instance-progress-wrap create-progress-wrap">
+            <div className="instance-progress-meta">
+              <span>Progreso de creación</span>
+              <strong>{creationProgress.stage} · {creationProgress.value}%</strong>
+            </div>
+            <div className={`instance-progress-bar ${creationProgress.state === "error" ? "error" : ""}`}>
+              <div style={{ width: `${creationProgress.value}%` }} />
+            </div>
+            <div className="create-log-preview">
+              {creationLogs.length === 0 ? (
+                <small>Esperando eventos del backend...</small>
+              ) : (
+                creationLogs.slice(-4).map((entry, idx) => (
+                  <small key={`${entry.timestamp}-${idx}`} className={`log-entry ${entry.level}`}>
+                    [{entry.timestamp}] {entry.message}
+                  </small>
+                ))
+              )}
+            </div>
+          </section>
+        )}
       </form>
     </div>
   );
@@ -337,6 +377,8 @@ function App() {
   const [instanceGameArgsInput, setInstanceGameArgsInput] = useState("");
   const [isSavingInstanceConfig, setIsSavingInstanceConfig] = useState(false);
   const [instanceLaunchProgress, setInstanceLaunchProgress] = useState<Record<string, InstanceLaunchProgress>>({});
+  const [instanceCreateProgress, setInstanceCreateProgress] = useState<Record<string, InstanceLaunchProgress>>({});
+  const [activeCreateInstanceId, setActiveCreateInstanceId] = useState<string | null>(null);
 
   const selectedInstance = useMemo(
     () => instances.find((instance) => instance.id === selectedInstanceId) ?? null,
@@ -380,6 +422,43 @@ function App() {
   useEffect(() => {
     const timer = setTimeout(() => setIsLoading(false), 1500);
     return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const unlistenProgress = listen<InstanceCreateProgressEvent>("instance-create-progress", (event) => {
+      if (!isMounted) return;
+      const payload = event.payload;
+      setActiveCreateInstanceId(payload.id);
+      setInstanceCreateProgress((prev) => ({
+        ...prev,
+        [payload.id]: { value: payload.value, stage: payload.stage, state: payload.state },
+      }));
+      setInstances((prev) => prev.map((instance) => (instance.id === payload.id
+        ? {
+          ...instance,
+          state: payload.state === "done"
+            ? "ready"
+            : payload.state === "running"
+              ? "installing"
+              : payload.state === "error"
+                ? "error"
+                : instance.state,
+        }
+        : instance)));
+    });
+
+    const unlistenLog = listen<InstanceCreateLogEvent>("instance-create-log", (event) => {
+      if (!isMounted) return;
+      const payload = event.payload;
+      addLog(payload.id, payload.level, payload.message);
+    });
+
+    return () => {
+      isMounted = false;
+      void unlistenProgress.then((dispose) => dispose());
+      void unlistenLog.then((dispose) => dispose());
+    };
   }, []);
 
   useEffect(() => {
@@ -889,7 +968,7 @@ function App() {
             </div>
           )}
 
-          {currentView === "create-instance" && <CreateInstancePage minecraftVersions={minecraftVersions} onInstanceCreated={(instance) => { setInstances((prev) => [instance, ...prev]); navigateToView("home"); }} />}
+          {currentView === "create-instance" && <CreateInstancePage minecraftVersions={minecraftVersions} onInstanceCreated={(instance) => { setInstances((prev) => [instance, ...prev]); setActiveCreateInstanceId(instance.id); navigateToView("home"); }} creationProgress={activeCreateInstanceId ? (instanceCreateProgress[activeCreateInstanceId] ?? null) : null} creationLogs={activeCreateInstanceId ? (instanceLogs[activeCreateInstanceId] ?? []) : []} />}
 
           {currentView === "instance-detail" && selectedInstance && (
             <section className="settings-page instance-detail-page">

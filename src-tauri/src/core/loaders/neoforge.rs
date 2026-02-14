@@ -1,3 +1,7 @@
+use std::collections::{BTreeSet, HashMap};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
 use serde::Deserialize;
 use tracing::{info, warn};
 
@@ -5,6 +9,7 @@ use super::context::InstallContext;
 use super::installer::{LoaderInstallResult, LoaderInstaller};
 use crate::core::error::{LauncherError, LauncherResult};
 use crate::core::maven::MavenArtifact;
+use crate::core::version::VersionJson;
 
 /// NeoForge installer — similar to Forge but uses the NeoForge Maven and API.
 pub struct NeoForgeInstaller;
@@ -132,8 +137,13 @@ impl LoaderInstaller for NeoForgeInstaller {
             serde_json::from_reader(file)?
         };
 
+        let required_java = required_java_for_minecraft(ctx.minecraft_version);
+        let java_bin = crate::core::java::resolve_java_binary(required_java).await?;
+
         // Download libraries from install_profile
+        let mut libraries = BTreeSet::new();
         for lib in &install_profile.libraries {
+            libraries.insert(lib.name.clone());
             let artifact = MavenArtifact::parse(&lib.name)?;
             let dest = ctx.libs_dir.join(artifact.local_path());
             if !dest.exists() {
@@ -149,16 +159,17 @@ impl LoaderInstaller for NeoForgeInstaller {
         }
 
         // Download libraries from version.json
-        let mut lib_names = Vec::new();
         for lib in &version_json.libraries {
+            libraries.insert(lib.name.clone());
             let artifact = MavenArtifact::parse(&lib.name)?;
             let dest = ctx.libs_dir.join(artifact.local_path());
             if !dest.exists() {
                 let url = artifact.url(NEOFORGE_MAVEN);
                 let _ = ctx.downloader.download_file(&url, &dest, None).await;
             }
-            lib_names.push(lib.name.clone());
         }
+
+        let processor_vars = build_processor_variables(ctx, &installer_path, &installer_bytes)?;
 
         // Run processors (client side)
         for processor in &install_profile.processors {
@@ -200,40 +211,85 @@ impl LoaderInstaller for NeoForgeInstaller {
                 classpath
             );
 
-            let client_jar = ctx.instance_dir.join("client.jar");
             let resolved_args: Vec<String> = processor
                 .args
                 .iter()
-                .map(|arg| {
-                    arg.replace("{SIDE}", "client")
-                        .replace("{MINECRAFT_JAR}", &client_jar.to_string_lossy())
-                        .replace("{ROOT}", &ctx.instance_dir.to_string_lossy())
-                        .replace("{INSTALLER}", &installer_path.to_string_lossy())
-                        .replace("{LIBRARY_DIR}", &ctx.libs_dir.to_string_lossy())
-                })
-                .collect();
+                .map(|arg| resolve_processor_arg(arg, &processor_vars, ctx.libs_dir))
+                .collect::<LauncherResult<Vec<_>>>()?;
 
-            info!("Running NeoForge processor: {}", processor.jar);
-            let java_bin = match crate::core::java::find_java_binary(21).await {
-                Ok(bin) => bin,
-                Err(_) => std::path::PathBuf::from("java"),
-            };
+            let main_class = read_main_class_from_jar(&jar_path)
+                .unwrap_or_else(|_| "net.minecraftforge.installertools.ConsoleTool".to_string());
 
-            let status = std::process::Command::new(&java_bin)
+            let output = std::process::Command::new(&java_bin)
                 .arg("-cp")
                 .arg(&classpath)
-                .arg("net.minecraftforge.installertools.ConsoleTool")
+                .arg(&main_class)
                 .args(&resolved_args)
                 .current_dir(ctx.instance_dir)
-                .status()
+                .output()
                 .map_err(|e| LauncherError::JavaExecution(e.to_string()))?;
 
-            if !status.success() {
-                warn!(
-                    "NeoForge processor {} exited with {:?}",
+            if !output.status.success() {
+                return Err(LauncherError::Loader(format!(
+                    "NeoForge processor {} failed (code {:?})\nSTDOUT:\n{}\nSTDERR:\n{}",
                     processor.jar,
-                    status.code()
-                );
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
+
+            for cp_coord in &processor.classpath {
+                libraries.insert(cp_coord.clone());
+            }
+            libraries.insert(processor.jar.clone());
+        }
+
+        let mut extra_jvm_args = Vec::new();
+        let mut extra_game_args = Vec::new();
+        let mut resolved_main_class = version_json.main_class.clone();
+
+        let installed_version_path = resolve_installed_neoforge_version_path(ctx);
+        if installed_version_path.exists() {
+            let raw_version = tokio::fs::read_to_string(&installed_version_path)
+                .await
+                .map_err(|e| LauncherError::Io {
+                    path: installed_version_path.clone(),
+                    source: e,
+                })?;
+            let installed_version = resolve_version_with_inheritance(
+                &raw_version,
+                installed_version_path.parent().unwrap_or(ctx.instance_dir),
+            )?;
+
+            resolved_main_class = installed_version.main_class;
+            extra_jvm_args = installed_version.simple_jvm_args();
+            extra_game_args = installed_version.simple_game_args();
+
+            for lib in installed_version
+                .download_libraries(ctx.libs_dir, ctx.downloader)
+                .await?
+            {
+                libraries.insert(lib);
+            }
+        }
+
+        for lib in &libraries {
+            let Ok(artifact) = MavenArtifact::parse(lib) else {
+                continue;
+            };
+            let dest = ctx.libs_dir.join(artifact.local_path());
+            if !dest.exists() {
+                let primary = artifact.url(NEOFORGE_MAVEN);
+                if ctx
+                    .downloader
+                    .download_file(&primary, &dest, None)
+                    .await
+                    .is_err()
+                {
+                    let fallback = artifact.url(crate::core::maven::MOJANG_LIBRARIES);
+                    let _ = ctx.downloader.download_file(&fallback, &dest, None).await;
+                }
             }
         }
 
@@ -242,13 +298,229 @@ impl LoaderInstaller for NeoForgeInstaller {
         info!("NeoForge {} installed successfully", ctx.loader_version);
 
         Ok(LoaderInstallResult {
-            main_class: version_json.main_class,
-            extra_jvm_args: vec![],
-            extra_game_args: vec![],
-            libraries: lib_names,
+            main_class: resolved_main_class,
+            extra_jvm_args,
+            extra_game_args,
+            libraries: libraries.into_iter().collect(),
             asset_index_id: None,
             asset_index_url: None,
-            java_major: None,
+            java_major: Some(required_java),
         })
+    }
+}
+
+fn resolve_installed_neoforge_version_path(ctx: InstallContext<'_>) -> PathBuf {
+    let versions_dir = ctx.instance_dir.join("minecraft").join("versions");
+    let candidates = [
+        format!("{}-{}", ctx.minecraft_version, ctx.loader_version),
+        ctx.loader_version.to_string(),
+    ];
+
+    for candidate in candidates {
+        let path = versions_dir
+            .join(&candidate)
+            .join(format!("{}.json", candidate));
+        if path.exists() {
+            return path;
+        }
+    }
+
+    versions_dir
+        .join(ctx.loader_version)
+        .join(format!("{}.json", ctx.loader_version))
+}
+
+fn build_processor_variables(
+    ctx: InstallContext<'_>,
+    installer_path: &Path,
+    installer_bytes: &[u8],
+) -> LauncherResult<HashMap<String, String>> {
+    let mut vars = HashMap::new();
+    vars.insert("SIDE".to_string(), "client".to_string());
+    vars.insert(
+        "MINECRAFT_JAR".to_string(),
+        ctx.instance_dir
+            .join("client.jar")
+            .to_string_lossy()
+            .to_string(),
+    );
+    vars.insert(
+        "LIBRARY_DIR".to_string(),
+        ctx.libs_dir.to_string_lossy().to_string(),
+    );
+    vars.insert(
+        "INSTALLER".to_string(),
+        installer_path.to_string_lossy().to_string(),
+    );
+    vars.insert(
+        "ROOT".to_string(),
+        ctx.instance_dir.to_string_lossy().to_string(),
+    );
+
+    if let Some(binpatch_path) = extract_client_binpatch(ctx, installer_bytes)? {
+        vars.insert(
+            "BINPATCH".to_string(),
+            binpatch_path.to_string_lossy().to_string(),
+        );
+    }
+
+    Ok(vars)
+}
+
+fn extract_client_binpatch(
+    ctx: InstallContext<'_>,
+    installer_bytes: &[u8],
+) -> LauncherResult<Option<PathBuf>> {
+    let cursor = std::io::Cursor::new(installer_bytes);
+    let mut archive = zip::ZipArchive::new(cursor)?;
+
+    let mut source = None;
+    for i in 0..archive.len() {
+        let Ok(file) = archive.by_index(i) else {
+            continue;
+        };
+        let name = file.name().to_string();
+        if name.ends_with("client.lzma") || name.ends_with("client-binpatches.lzma") {
+            source = Some(name);
+            break;
+        }
+    }
+
+    let Some(source_name) = source else {
+        return Ok(None);
+    };
+
+    let mut source_file = archive.by_name(&source_name).map_err(|e| {
+        LauncherError::Loader(format!(
+            "Failed to access NeoForge binpatch from installer: {}",
+            e
+        ))
+    })?;
+    let mut bytes = Vec::new();
+    source_file.read_to_end(&mut bytes)?;
+
+    let target = ctx.instance_dir.join("client-binpatches.lzma");
+    std::fs::write(&target, bytes).map_err(|e| LauncherError::Io {
+        path: target.clone(),
+        source: e,
+    })?;
+
+    Ok(Some(target))
+}
+
+fn resolve_processor_arg(
+    arg: &str,
+    vars: &HashMap<String, String>,
+    libs_dir: &Path,
+) -> LauncherResult<String> {
+    let mut out = arg.to_string();
+
+    for (key, value) in vars {
+        out = out.replace(&format!("{{{}}}", key), value);
+    }
+
+    if let Some(coord) = out.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        let artifact = MavenArtifact::parse(coord)?;
+        out = libs_dir
+            .join(artifact.local_path())
+            .to_string_lossy()
+            .to_string();
+    }
+
+    Ok(out)
+}
+
+fn read_main_class_from_jar(path: &Path) -> LauncherResult<String> {
+    let file = std::fs::File::open(path).map_err(|e| LauncherError::Io {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut manifest = archive.by_name("META-INF/MANIFEST.MF").map_err(|e| {
+        LauncherError::Loader(format!("Manifest not found in {}: {}", path.display(), e))
+    })?;
+
+    let mut text = String::new();
+    manifest.read_to_string(&mut text)?;
+
+    let mut main_class: Option<String> = None;
+    let mut current_key: Option<String> = None;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix(' ') {
+            if current_key.as_deref() == Some("Main-Class") {
+                if let Some(value) = &mut main_class {
+                    value.push_str(rest.trim());
+                }
+            }
+            continue;
+        }
+
+        if let Some((key, value)) = line.split_once(':') {
+            current_key = Some(key.trim().to_string());
+            if key.trim() == "Main-Class" {
+                main_class = Some(value.trim().to_string());
+            }
+        }
+    }
+
+    main_class.ok_or_else(|| {
+        LauncherError::Loader(format!(
+            "Main-Class missing in processor jar {}",
+            path.display()
+        ))
+    })
+}
+
+fn resolve_version_with_inheritance(
+    raw_json: &str,
+    current_version_dir: &Path,
+) -> LauncherResult<VersionJson> {
+    let mut current_json: serde_json::Value = serde_json::from_str(raw_json)?;
+    let versions_root = current_version_dir
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| current_version_dir.to_path_buf());
+
+    for _ in 0..8 {
+        let Some(parent_id) = current_json
+            .get("inheritsFrom")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        else {
+            break;
+        };
+
+        let parent_path = versions_root
+            .join(parent_id)
+            .join(format!("{}.json", parent_id));
+        let parent_raw = std::fs::read_to_string(&parent_path).map_err(|e| LauncherError::Io {
+            path: parent_path.clone(),
+            source: e,
+        })?;
+        let parent_json: serde_json::Value = serde_json::from_str(&parent_raw)?;
+        current_json = VersionJson::merge_with_parent_json(&current_json, &parent_json);
+    }
+
+    serde_json::from_value(current_json).map_err(LauncherError::from)
+}
+
+fn required_java_for_minecraft(version: &str) -> u32 {
+    let mut parts = version.split('.');
+    let major = parts
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(1);
+    let minor = parts
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(20);
+
+    if major > 1 || minor >= 21 {
+        21
+    } else if minor >= 17 {
+        17
+    } else {
+        8
     }
 }
