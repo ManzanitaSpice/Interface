@@ -456,7 +456,7 @@ mod tests {
                     "Player",
                     {
                         "rules": [{"action": "allow", "os": {"name": "linux"}}],
-                        "value": ["--demo"]
+                        "value": ["--sample-flag"]
                     },
                     {
                         "rules": [{"action": "allow", "os": {"name": "windows"}}],
@@ -471,7 +471,7 @@ mod tests {
         assert!(game_args.contains(&"--username".to_string()));
         assert!(game_args.contains(&"Player".to_string()));
         if cfg!(target_os = "linux") {
-            assert!(game_args.contains(&"--demo".to_string()));
+            assert!(game_args.contains(&"--sample-flag".to_string()));
             assert!(!game_args.contains(&"--should-not-appear".to_string()));
         }
     }

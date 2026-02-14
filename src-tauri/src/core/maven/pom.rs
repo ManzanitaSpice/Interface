@@ -120,7 +120,7 @@ mod tests {
         let xml = r#"
         <project>
             <groupId>com.example</groupId>
-            <artifactId>demo</artifactId>
+            <artifactId>sample-artifact</artifactId>
             <version>1.0</version>
             <packaging>pom</packaging>
             <dependencies>
