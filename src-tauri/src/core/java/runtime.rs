@@ -1,6 +1,6 @@
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Cursor;
-use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
@@ -318,12 +318,14 @@ pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
     installations
 }
 
-
 /// Find a suitable Java binary for a given major version (e.g. 17, 21).
 pub async fn find_java_binary(major: u32) -> LauncherResult<PathBuf> {
     let installations = detect_java_installations().await;
 
-    if let Some(exact_64) = installations.iter().find(|i| i.major == major && i.is_64bit) {
+    if let Some(exact_64) = installations
+        .iter()
+        .find(|i| i.major == major && i.is_64bit)
+    {
         return Ok(exact_64.path.clone());
     }
 

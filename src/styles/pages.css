@@ -34,3 +34,5 @@
   padding: 18px;
 }
 .onboarding-card p { color: #cdced8; }
+
+.instance-detail-page { max-width: none; }
