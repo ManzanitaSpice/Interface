@@ -220,7 +220,42 @@ fn sanitize_game_args(
     }
 
     let sanitized = sanitize_numeric_window_args(sanitized);
+    let sanitized = strip_demo_mode_args(sanitized);
     ensure_required_fml_game_args(instance, sanitized)
+}
+
+fn strip_demo_mode_args(args: Vec<String>) -> Vec<String> {
+    let mut cleaned = Vec::new();
+    let mut i = 0;
+
+    while i < args.len() {
+        let arg = &args[i];
+        if is_demo_mode_flag(arg) {
+            i += 1;
+            continue;
+        }
+
+        if let Some((flag, _)) = split_flag_value(arg) {
+            if is_demo_mode_flag(flag) {
+                i += 1;
+                continue;
+            }
+        }
+
+        cleaned.push(arg.clone());
+        i += 1;
+    }
+
+    cleaned
+}
+
+fn is_demo_mode_flag(flag: &str) -> bool {
+    matches!(flag, "--demo" | "--demoMode" | "--demo-mode")
+}
+
+fn split_flag_value(arg: &str) -> Option<(&str, &str)> {
+    let (flag, value) = arg.split_once('=')?;
+    Some((flag, value))
 }
 
 fn ensure_required_fml_game_args(instance: &Instance, mut args: Vec<String>) -> Vec<String> {
@@ -718,6 +753,41 @@ mod tests {
                 "47.1.79"
             ]
         );
+    }
+
+    #[test]
+    fn sanitize_game_args_removes_demo_flags_in_all_supported_forms() {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::Vanilla,
+            None,
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+        instance.account = LaunchAccountProfile::offline("Alex").sanitized();
+
+        let args = vec![
+            "--username".into(),
+            "${auth_player_name}".into(),
+            "--demo".into(),
+            "--demoMode".into(),
+            "--demo-mode".into(),
+            "--demo=true".into(),
+            "--demoMode=false".into(),
+            "--demo-mode=1".into(),
+        ];
+
+        let sanitized = sanitize_game_args(
+            &instance,
+            &args,
+            std::path::Path::new("/tmp/game"),
+            std::path::Path::new("/tmp/assets"),
+            &instance.account,
+        );
+
+        assert_eq!(sanitized, vec!["--username", "Alex"]);
     }
 
     #[test]
