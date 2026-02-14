@@ -67,7 +67,7 @@
 .create-layout {
   height: 100vh;
   display: grid;
-  grid-template-columns: 240px 1fr; /* Wider sidebar as per image usually */
+  grid-template-columns: 200px 1fr;
   background: var(--bg-0);
 }
 
@@ -323,6 +323,23 @@
 .block-sidebar button {
   width: 100%;
   text-align: center;
+}
+
+
+.single-pane-block {
+  grid-template-columns: 1fr;
+  min-height: 180px;
+}
+
+.single-pane-content {
+  padding: 16px;
+  color: var(--text-muted);
+  display: grid;
+  gap: 10px;
+}
+
+.single-pane-content p {
+  margin: 0;
 }
 
 .create-log-box {
