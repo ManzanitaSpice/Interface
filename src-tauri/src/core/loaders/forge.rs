@@ -244,8 +244,12 @@ fn run_processors(
     installer_path: &Path,
     install_profile: &ForgeInstallProfile,
 ) -> LauncherResult<()> {
-    let mut variables = build_processor_variables(&ctx, installer_path, installer_bytes)?;
+    let mut variables = HashMap::new();
     merge_profile_data_variables(&mut variables, &install_profile.data);
+    merge_runtime_processor_variables(
+        &mut variables,
+        &build_processor_variables(&ctx, installer_path, installer_bytes)?,
+    );
 
     for processor in &install_profile.processors {
         if let Some(sides) = &processor.sides {
@@ -290,7 +294,7 @@ fn run_processors(
             .arg(&classpath)
             .arg(&main_class)
             .args(&args)
-            .current_dir(ctx.instance_dir)
+            .current_dir(ctx.libs_dir)
             .output()
             .map_err(|e| LauncherError::JavaExecution(e.to_string()))?;
 
@@ -306,6 +310,15 @@ fn run_processors(
     }
 
     Ok(())
+}
+
+fn merge_runtime_processor_variables(
+    vars: &mut HashMap<String, String>,
+    runtime_vars: &HashMap<String, String>,
+) {
+    for (key, value) in runtime_vars {
+        vars.insert(key.clone(), value.clone());
+    }
 }
 
 fn build_processor_variables(
