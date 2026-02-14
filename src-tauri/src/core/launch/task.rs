@@ -58,6 +58,12 @@ pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std:
     }
 
     // Classpath
+    if classpath.trim().is_empty() {
+        return Err(LauncherError::Other(
+            "Classpath vacío: se cancela el arranque para evitar 'java -cp' inválido".into(),
+        ));
+    }
+    debug!("Classpath len={} value={:?}", classpath.len(), classpath);
     cmd.arg("-cp").arg(classpath);
 
     // Main class

@@ -171,13 +171,34 @@ impl LoaderInstaller for NeoForgeInstaller {
             let jar_artifact = MavenArtifact::parse(&processor.jar)?;
             let jar_path = ctx.libs_dir.join(jar_artifact.local_path());
 
-            let mut cp_entries = vec![jar_path.to_string_lossy().to_string()];
+            let separator = if cfg!(windows) { ";" } else { ":" };
+            let mut cp_entries: Vec<String> = Vec::new();
+
+            if jar_path.exists() {
+                cp_entries.push(jar_path.to_string_lossy().to_string());
+            }
+
             for cp_coord in &processor.classpath {
                 let cp_artifact = MavenArtifact::parse(cp_coord)?;
                 let cp_path = ctx.libs_dir.join(cp_artifact.local_path());
-                cp_entries.push(cp_path.to_string_lossy().to_string());
+                if cp_path.exists() {
+                    cp_entries.push(cp_path.to_string_lossy().to_string());
+                }
             }
-            let classpath = cp_entries.join(if cfg!(windows) { ";" } else { ":" });
+
+            if cp_entries.is_empty() {
+                return Err(LauncherError::Other(format!(
+                    "Classpath vacío para procesador NeoForge {}",
+                    processor.jar
+                )));
+            }
+
+            let classpath = cp_entries.join(separator);
+            info!(
+                "NeoForge processor classpath len={} value={:?}",
+                classpath.len(),
+                classpath
+            );
 
             let client_jar = ctx.instance_dir.join("client.jar");
             let resolved_args: Vec<String> = processor
