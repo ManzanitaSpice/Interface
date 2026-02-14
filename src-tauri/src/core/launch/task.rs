@@ -51,7 +51,7 @@ pub async fn launch(instance: &Instance, classpath: &str) -> LauncherResult<std:
 
     // Extra JVM args from instance config or loader (normalized to avoid
     // dangling "-cp" without value and unresolved placeholders).
-    for arg in sanitize_jvm_args(&instance.jvm_args, &natives_dir) {
+    for arg in sanitize_jvm_args(instance, &instance.jvm_args, &natives_dir, classpath) {
         cmd.arg(arg);
     }
 
@@ -138,10 +138,18 @@ fn determine_java_major(minecraft_version: &str) -> u32 {
     8
 }
 
-fn sanitize_jvm_args(raw_args: &[String], natives_dir: &std::path::Path) -> Vec<String> {
+fn sanitize_jvm_args(
+    instance: &Instance,
+    raw_args: &[String],
+    natives_dir: &std::path::Path,
+    classpath: &str,
+) -> Vec<String> {
     let mut sanitized = Vec::new();
     let mut i = 0;
     let natives = safe_path_str(natives_dir);
+    let game_dir = safe_path_str(&instance.game_dir());
+    let library_dir = safe_path_str(&instance.game_dir().join("libraries"));
+    let classpath_separator = super::classpath::get_classpath_separator();
 
     while i < raw_args.len() {
         let arg = &raw_args[i];
@@ -155,6 +163,11 @@ fn sanitize_jvm_args(raw_args: &[String], natives_dir: &std::path::Path) -> Vec<
 
         let resolved = arg
             .replace("${natives_directory}", &natives)
+            .replace("${library_directory}", &library_dir)
+            .replace("${classpath}", classpath)
+            .replace("${classpath_separator}", classpath_separator)
+            .replace("${game_directory}", &game_dir)
+            .replace("${version_name}", &instance.minecraft_version)
             .replace("${launcher_name}", "InterfaceOficial")
             .replace("${launcher_version}", "0.1.0");
 
@@ -198,7 +211,17 @@ mod tests {
             "-Dsomething=${unknown_placeholder}".to_string(),
         ];
 
-        let sanitized = sanitize_jvm_args(&args, &natives);
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::Vanilla,
+            None,
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+
+        let sanitized = sanitize_jvm_args(&instance, &args, &natives, "/tmp/classpath.jar");
 
         assert_eq!(sanitized.len(), 2);
         assert_eq!(sanitized[0], "-XX:+UseG1GC");
