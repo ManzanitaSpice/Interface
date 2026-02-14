@@ -44,6 +44,7 @@ pub fn run() {
             commands::get_launcher_settings,
             commands::update_launcher_settings,
             commands::migrate_launcher_data_dir,
+            commands::update_instance_launch_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

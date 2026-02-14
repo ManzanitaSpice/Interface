@@ -2,10 +2,12 @@ use std::process::Command;
 use std::sync::Arc;
 use std::{io::BufRead, io::BufReader as StdBufReader};
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
+use crate::core::assets::AssetManager;
 use crate::core::error::LauncherError;
 use crate::core::instance::{Instance, InstanceState, LoaderType};
 use crate::core::java::{self, JavaInstallation};
@@ -33,6 +35,19 @@ pub struct InstanceInfo {
     pub loader_version: Option<String>,
     pub state: InstanceState,
     pub required_java_major: Option<u32>,
+    pub java_path: Option<String>,
+    pub max_memory_mb: u32,
+    pub jvm_args: Vec<String>,
+    pub game_args: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateInstanceLaunchConfigPayload {
+    pub id: String,
+    pub java_path: Option<String>,
+    pub max_memory_mb: u32,
+    pub jvm_args: Vec<String>,
+    pub game_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,8 +86,141 @@ impl From<&Instance> for InstanceInfo {
             loader_version: inst.loader_version.clone(),
             state: inst.state.clone(),
             required_java_major: inst.required_java_major,
+            java_path: inst
+                .java_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string()),
+            max_memory_mb: inst.max_memory_mb,
+            jvm_args: inst.jvm_args.clone(),
+            game_args: inst.game_args.clone(),
         }
     }
+}
+
+async fn validate_or_resolve_java(instance: &mut Instance) -> Result<(), LauncherError> {
+    let required_major = instance.required_java_major.unwrap_or(17);
+    if let Some(custom_path) = &instance.java_path {
+        let installations = java::runtime::detect_java_installations_sync();
+        if let Some(found) = installations
+            .iter()
+            .find(|candidate| candidate.path == *custom_path)
+        {
+            if found.major < required_major {
+                return Err(LauncherError::Other(format!(
+                    "La Java configurada ({}) no cumple versión mínima {}",
+                    found.version, required_major
+                )));
+            }
+            if !found.is_64bit {
+                return Err(LauncherError::Other(
+                    "La Java configurada debe ser de 64 bits".into(),
+                ));
+            }
+            return Ok(());
+        }
+
+        if !custom_path.exists() {
+            instance.java_path = None;
+        }
+    }
+
+    let resolved = java::resolve_java_binary(required_major).await?;
+    instance.java_path = Some(resolved);
+    Ok(())
+}
+
+async fn prepare_instance_for_launch(
+    state: &crate::core::state::AppState,
+    instance: &mut Instance,
+) -> Result<(), LauncherError> {
+    let game_dir = instance.game_dir();
+    tokio::fs::create_dir_all(&game_dir)
+        .await
+        .map_err(|source| LauncherError::Io {
+            path: game_dir.clone(),
+            source,
+        })?;
+    let assets_dir = game_dir.join("assets");
+    tokio::fs::create_dir_all(&assets_dir)
+        .await
+        .map_err(|source| LauncherError::Io {
+            path: assets_dir.clone(),
+            source,
+        })?;
+    let libs_dir = state.libraries_dir();
+    tokio::fs::create_dir_all(&libs_dir)
+        .await
+        .map_err(|source| LauncherError::Io {
+            path: libs_dir.clone(),
+            source,
+        })?;
+
+    let needs_install = instance.main_class.is_none()
+        || instance.required_java_major.is_none()
+        || !instance.path.join("client.jar").exists()
+        || instance.libraries.iter().any(|coord| {
+            crate::core::maven::MavenArtifact::parse(coord)
+                .map(|artifact| !libs_dir.join(artifact.local_path()).exists())
+                .unwrap_or(false)
+        });
+
+    if needs_install {
+        let client = state.http_client.clone();
+        let vanilla_installer = loaders::Installer::new(&LoaderType::Vanilla, client.clone());
+        let vanilla_result = vanilla_installer
+            .install(loaders::InstallContext {
+                minecraft_version: &instance.minecraft_version,
+                loader_version: "",
+                instance_dir: &instance.path,
+                libs_dir: &libs_dir,
+                downloader: state.downloader.as_ref(),
+                http_client: &client,
+            })
+            .await?;
+
+        instance.main_class = Some(vanilla_result.main_class.clone());
+        instance.asset_index = vanilla_result.asset_index_id.clone();
+        instance.libraries = vanilla_result.libraries.clone();
+        instance.required_java_major = vanilla_result.java_major;
+
+        if instance.loader != LoaderType::Vanilla {
+            if let Some(loader_version) = &instance.loader_version {
+                let installer = loaders::Installer::new(&instance.loader, client.clone());
+                let loader_result = installer
+                    .install(loaders::InstallContext {
+                        minecraft_version: &instance.minecraft_version,
+                        loader_version,
+                        instance_dir: &instance.path,
+                        libs_dir: &libs_dir,
+                        downloader: state.downloader.as_ref(),
+                        http_client: &client,
+                    })
+                    .await?;
+                instance.main_class = Some(loader_result.main_class);
+                instance.jvm_args.extend(loader_result.extra_jvm_args);
+                instance.game_args.extend(loader_result.extra_game_args);
+                instance.libraries.extend(loader_result.libraries);
+                if loader_result.asset_index_id.is_some() {
+                    instance.asset_index = loader_result.asset_index_id;
+                }
+            }
+        }
+
+        if let Some(url) = vanilla_result.asset_index_url {
+            AssetManager::download_assets(&url, &assets_dir, state.downloader.as_ref()).await?;
+        }
+    }
+
+    if instance.main_class.is_none() || instance.required_java_major.is_none() {
+        return Err(LauncherError::Other(
+            "Instancia inválida: main_class o required_java_major no definidos".into(),
+        ));
+    }
+
+    validate_or_resolve_java(instance).await?;
+    instance.libraries.sort();
+    instance.libraries.dedup();
+    Ok(())
 }
 
 impl LauncherSettingsPayload {
@@ -437,6 +585,15 @@ pub async fn launch_instance(
             )));
         }
 
+        instance.state = InstanceState::Installing;
+        state_guard.instance_manager.save(&instance).await?;
+
+        if let Err(err) = prepare_instance_for_launch(&state_guard, &mut instance).await {
+            instance.state = InstanceState::Error;
+            state_guard.instance_manager.save(&instance).await?;
+            return Err(err);
+        }
+
         let libs_dir = state_guard.libraries_dir();
         let classpath = launch::build_classpath(&instance, &libs_dir, &instance.libraries)?;
         let _natives_dir =
@@ -445,12 +602,13 @@ pub async fn launch_instance(
         let child = match launch::launch(&instance, &classpath).await {
             Ok(child) => child,
             Err(err) => {
-                instance.state = InstanceState::Ready;
+                instance.state = InstanceState::Error;
                 state_guard.instance_manager.save(&instance).await?;
                 return Err(err);
             }
         };
         instance.state = InstanceState::Running;
+        instance.last_played = Some(Utc::now());
         state_guard.instance_manager.save(&instance).await?;
         let pid = child.id();
         state_guard.running_instances.insert(id.clone(), pid);
@@ -494,6 +652,7 @@ pub async fn launch_instance(
         match state.instance_manager.load(&id).await {
             Ok(mut persisted) => {
                 persisted.state = InstanceState::Ready;
+                launch::cleanup_natives(&persisted).await;
                 if let Err(err) = state.instance_manager.save(&persisted).await {
                     error!("Cannot persist ready state for {}: {}", id, err);
                 }
@@ -511,6 +670,37 @@ pub async fn launch_instance(
     });
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn update_instance_launch_config(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    payload: UpdateInstanceLaunchConfigPayload,
+) -> Result<InstanceInfo, LauncherError> {
+    let state = state.lock().await;
+    let mut instance = state.instance_manager.load(&payload.id).await?;
+
+    if payload.max_memory_mb < 512 {
+        return Err(LauncherError::Other(
+            "La memoria mínima permitida es 512 MB".into(),
+        ));
+    }
+
+    instance.max_memory_mb = payload.max_memory_mb;
+    instance.jvm_args = payload
+        .jvm_args
+        .into_iter()
+        .filter(|arg| !arg.trim().is_empty())
+        .collect();
+    instance.game_args = payload
+        .game_args
+        .into_iter()
+        .filter(|arg| !arg.trim().is_empty())
+        .collect();
+    instance.java_path = payload.java_path.map(std::path::PathBuf::from);
+    state.instance_manager.save(&instance).await?;
+
+    Ok(InstanceInfo::from(&instance))
 }
 
 #[tauri::command]
@@ -545,7 +735,9 @@ fn kill_process(pid: u32) -> Result<(), LauncherError> {
         let status = Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .status()
-            .map_err(|e| LauncherError::Other(format!("No se pudo finalizar proceso {pid}: {e}")))?;
+            .map_err(|e| {
+                LauncherError::Other(format!("No se pudo finalizar proceso {pid}: {e}"))
+            })?;
 
         if !status.success() {
             return Err(LauncherError::Other(format!(
@@ -575,7 +767,9 @@ fn kill_process(pid: u32) -> Result<(), LauncherError> {
         let force = Command::new("kill")
             .args(["-9", &pid.to_string()])
             .status()
-            .map_err(|e| LauncherError::Other(format!("No se pudo finalizar proceso {pid}: {e}")))?;
+            .map_err(|e| {
+                LauncherError::Other(format!("No se pudo finalizar proceso {pid}: {e}"))
+            })?;
 
         if !force.success() {
             return Err(LauncherError::Other(format!(
