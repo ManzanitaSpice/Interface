@@ -48,6 +48,7 @@ pub fn run() {
             commands::update_launcher_settings,
             commands::migrate_launcher_data_dir,
             commands::update_instance_launch_config,
+            commands::optimize_instance_with_real_process,
             commands::update_instance_account,
             commands::get_auth_research_info,
         ])

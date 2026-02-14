@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use std::sync::Arc;
 use std::{fs, path::Path};
@@ -5,6 +6,7 @@ use std::{io::BufRead, io::BufReader as StdBufReader};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sysinfo::System;
 use tauri::Emitter;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
@@ -155,6 +157,35 @@ pub struct UpdateInstanceLaunchConfigPayload {
     pub max_memory_mb: u32,
     pub jvm_args: Vec<String>,
     pub game_args: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OptimizationModePayload {
+    Balanced,
+    MaxPerformance,
+    LowPower,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OptimizeInstancePayload {
+    pub id: String,
+    pub mode: Option<OptimizationModePayload>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OptimizationReport {
+    pub instance: InstanceInfo,
+    pub recommended_xmx_mb: u32,
+    pub recommended_xms_mb: u32,
+    pub detected_mods: usize,
+    pub duplicate_mods: Vec<String>,
+    pub potentially_conflicting_mods: Vec<String>,
+    pub missing_recommended_mods: Vec<String>,
+    pub removed_logs: usize,
+    pub freed_log_bytes: u64,
+    pub mode: String,
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1339,6 +1370,256 @@ pub async fn launch_instance(
     Ok(())
 }
 
+fn clamp_memory_to_safe_bounds(
+    total_mb: u64,
+    available_mb: u64,
+    suggested_mb: u32,
+) -> (u32, Vec<String>) {
+    let mut notes = Vec::new();
+    let hard_cap_by_total = ((total_mb as f64) * 0.60).floor() as u32;
+    let available_cap = available_mb.saturating_sub(if total_mb >= 32 * 1024 {
+        6144
+    } else if total_mb >= 16 * 1024 {
+        4096
+    } else {
+        3072
+    }) as u32;
+    let mut cap = hard_cap_by_total.min(available_cap.max(2048));
+    cap = cap.max(2048);
+
+    let mut final_mb = suggested_mb.max(2048);
+    if final_mb > cap {
+        final_mb = cap;
+        notes.push(
+            "Ajustamos la RAM para evitar inestabilidad del sistema (límite dinámico aplicado)."
+                .into(),
+        );
+    }
+
+    (final_mb, notes)
+}
+
+fn recommended_memory_for_mod_count(mod_count: usize, mode: &OptimizationModePayload) -> u32 {
+    let base = if mod_count <= 50 {
+        5120
+    } else if mod_count <= 150 {
+        7168
+    } else {
+        10240
+    };
+
+    match mode {
+        OptimizationModePayload::Balanced => base,
+        OptimizationModePayload::MaxPerformance => base.saturating_add(1024),
+        OptimizationModePayload::LowPower => base.saturating_sub(1024).max(4096),
+    }
+}
+
+fn normalize_mod_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_lowercase()
+}
+
+fn collect_mod_analysis(
+    instance: &Instance,
+) -> (usize, Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
+    let mut mod_count = 0usize;
+    let mut seen = HashMap::<String, usize>::new();
+    let mut duplicates = Vec::new();
+    let mut conflict_hits = Vec::new();
+    let mut notes = Vec::new();
+
+    let mods_dir = instance.mods_dir();
+    if let Ok(entries) = fs::read_dir(&mods_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_jar = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("jar"))
+                .unwrap_or(false);
+            if !is_jar {
+                continue;
+            }
+
+            mod_count += 1;
+            let normalized = normalize_mod_name(&path);
+            if normalized.is_empty() {
+                continue;
+            }
+
+            let key = normalized
+                .split(['-', '_'])
+                .next()
+                .unwrap_or(&normalized)
+                .to_string();
+            let counter = seen.entry(key.clone()).or_insert(0);
+            *counter += 1;
+            if *counter == 2 {
+                duplicates.push(key.clone());
+            }
+
+            if normalized.contains("optifine") {
+                conflict_hits.push("OptiFine puede generar conflictos en packs modernos (usa Sodium/Embeddium según loader).".into());
+            }
+            if normalized.contains("rubidium") && instance.loader == LoaderType::Fabric {
+                conflict_hits
+                    .push("Rubidium no es para Fabric; revisa compatibilidad del loader.".into());
+            }
+            if normalized.contains("sodium") && instance.loader == LoaderType::Forge {
+                conflict_hits.push(
+                    "Sodium en Forge suele indicar mod incorrecto; usa Embeddium/Rubidium.".into(),
+                );
+            }
+        }
+    } else {
+        notes.push("No se pudo leer la carpeta de mods para análisis automático.".into());
+    }
+
+    let mod_names: HashSet<String> = seen.keys().cloned().collect();
+    let mut missing = Vec::new();
+    let recommendations = ["sodium", "lithium", "ferritecore"];
+    for item in recommendations {
+        if !mod_names.contains(item) {
+            missing.push(item.to_string());
+        }
+    }
+
+    (mod_count, duplicates, conflict_hits, missing, notes)
+}
+
+fn clean_old_logs(instance: &Instance) -> (usize, u64) {
+    let mut removed = 0usize;
+    let mut freed = 0u64;
+    let logs_dir = instance.game_dir().join("logs");
+
+    if let Ok(entries) = fs::read_dir(logs_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_log = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("log") || e.eq_ignore_ascii_case("gz"))
+                .unwrap_or(false);
+            if !is_log {
+                continue;
+            }
+
+            if let Ok(meta) = fs::metadata(&path) {
+                freed = freed.saturating_add(meta.len());
+            }
+
+            if fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+
+    (removed, freed)
+}
+
+fn optimized_jvm_args(java_major: u32, mode: &OptimizationModePayload) -> Vec<String> {
+    let mut args = vec![
+        "-XX:+UseG1GC".to_string(),
+        "-XX:+UnlockExperimentalVMOptions".to_string(),
+        "-XX:G1NewSizePercent=20".to_string(),
+        "-XX:G1MaxNewSizePercent=60".to_string(),
+        "-XX:MaxGCPauseMillis=50".to_string(),
+        "-XX:G1HeapRegionSize=16M".to_string(),
+        "-XX:+AlwaysPreTouch".to_string(),
+    ];
+
+    if java_major < 17 {
+        args.retain(|item| item != "-XX:+UnlockExperimentalVMOptions");
+    }
+
+    match mode {
+        OptimizationModePayload::Balanced => {}
+        OptimizationModePayload::MaxPerformance => {
+            args.push("-XX:InitiatingHeapOccupancyPercent=15".into())
+        }
+        OptimizationModePayload::LowPower => args.push("-XX:MaxGCPauseMillis=80".into()),
+    }
+
+    args
+}
+
+#[tauri::command]
+pub async fn optimize_instance_with_real_process(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    payload: OptimizeInstancePayload,
+) -> Result<OptimizationReport, LauncherError> {
+    let state = state.lock().await;
+    let mut instance = state.instance_manager.load(&payload.id).await?;
+    let mode = payload.mode.unwrap_or(OptimizationModePayload::Balanced);
+
+    let mut system = System::new_all();
+    system.refresh_memory();
+    let total_mb = system.total_memory() / (1024 * 1024);
+    let available_mb = system.available_memory() / (1024 * 1024);
+
+    let (
+        detected_mods,
+        duplicate_mods,
+        potentially_conflicting_mods,
+        missing_recommended_mods,
+        mut notes,
+    ) = collect_mod_analysis(&instance);
+
+    let raw_suggested_mb = recommended_memory_for_mod_count(detected_mods, &mode);
+    let (recommended_xmx_mb, mut clamp_notes) =
+        clamp_memory_to_safe_bounds(total_mb, available_mb, raw_suggested_mb);
+    notes.append(&mut clamp_notes);
+
+    let recommended_xms_mb = (recommended_xmx_mb / 2).max(1024);
+
+    let java_major = instance
+        .required_java_major
+        .unwrap_or_else(|| java::required_java_for_minecraft_version(&instance.minecraft_version));
+    let mut merged_jvm_args = instance.jvm_args.clone();
+    merged_jvm_args.extend(optimized_jvm_args(java_major, &mode));
+    merged_jvm_args = merged_jvm_args
+        .into_iter()
+        .filter(|arg| {
+            !arg.trim().is_empty() && !arg.starts_with("-Xmx") && !arg.starts_with("-Xms")
+        })
+        .collect::<Vec<_>>();
+    merged_jvm_args.sort();
+    merged_jvm_args.dedup();
+
+    instance.max_memory_mb = recommended_xmx_mb;
+    instance.jvm_args = merged_jvm_args;
+
+    let (removed_logs, freed_log_bytes) = clean_old_logs(&instance);
+    if removed_logs > 0 {
+        notes.push(format!(
+            "Se limpiaron {removed_logs} logs antiguos para reducir carga de disco."
+        ));
+    }
+
+    state.instance_manager.save(&instance).await?;
+
+    Ok(OptimizationReport {
+        instance: InstanceInfo::from(&instance),
+        recommended_xmx_mb,
+        recommended_xms_mb,
+        detected_mods,
+        duplicate_mods,
+        potentially_conflicting_mods,
+        missing_recommended_mods,
+        removed_logs,
+        freed_log_bytes,
+        mode: match mode {
+            OptimizationModePayload::Balanced => "balanced".into(),
+            OptimizationModePayload::MaxPerformance => "max_performance".into(),
+            OptimizationModePayload::LowPower => "low_power".into(),
+        },
+        notes,
+    })
+}
+
 #[tauri::command]
 pub async fn update_instance_launch_config(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
@@ -1515,10 +1796,7 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), LauncherE
                 let resolved_target = if target.is_absolute() {
                     target.clone()
                 } else {
-                    src_path
-                        .parent()
-                        .unwrap_or(source)
-                        .join(&target)
+                    src_path.parent().unwrap_or(source).join(&target)
                 };
 
                 if resolved_target.is_dir() {
