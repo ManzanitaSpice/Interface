@@ -47,19 +47,12 @@ impl VersionManifest {
         self.versions.iter().find(|v| v.id == id)
     }
 
-    /// List all release versions.
+    /// List all official stable versions (release only).
     pub fn releases(&self) -> Vec<&VersionEntry> {
         self.versions
             .iter()
             .filter(|v| v.version_type == "release")
-            .collect()
-    }
-
-    /// List all snapshot versions.
-    pub fn snapshots(&self) -> Vec<&VersionEntry> {
-        self.versions
-            .iter()
-            .filter(|v| v.version_type == "snapshot")
+            .filter(|v| !v.id.to_ascii_lowercase().contains("demo"))
             .collect()
     }
 }

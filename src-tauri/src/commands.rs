@@ -518,20 +518,13 @@ pub async fn get_minecraft_versions(
     let state = state.lock().await;
     let manifest = VersionManifest::fetch(&state.http_client).await?;
 
-    let mut versions: Vec<String> = manifest
+    let versions: Vec<String> = manifest
         .versions
         .iter()
         .filter(|entry| entry.version_type == "release")
+        .filter(|entry| !entry.id.to_ascii_lowercase().contains("demo"))
         .map(|entry| entry.id.clone())
         .collect();
-
-    if versions.is_empty() {
-        versions = manifest
-            .versions
-            .iter()
-            .map(|entry| entry.id.clone())
-            .collect();
-    }
 
     Ok(versions)
 }
