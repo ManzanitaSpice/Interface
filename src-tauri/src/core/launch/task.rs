@@ -340,6 +340,7 @@ fn ensure_loader_jvm_workarounds(instance: &Instance, args: &mut Vec<String>) {
     // metadata is incomplete.
     ensure_jvm_arg_present(args, "--add-modules=jdk.naming.dns");
     ensure_jvm_arg_present(args, "--add-opens=java.base/java.util.jar=ALL-UNNAMED");
+    set_jvm_system_property(args, "ignoreList", "bootstraplauncher,neon-fml");
 
     // Workaround for crashes in NeoForge Early Display (`rendererFuture` null)
     // seen on some GPU/overlay setups. Disabling the early progress window lets
@@ -687,6 +688,7 @@ mod tests {
             args,
             vec![
                 "-Xmx2048M",
+                "-DignoreList=bootstraplauncher,neon-fml",
                 "-Dfml.earlyprogresswindow=false",
                 "-Dforge.earlywindow=false",
                 "-Dneoforge.earlydisplay=false"
@@ -730,6 +732,7 @@ mod tests {
 
         assert!(args.contains(&"--add-modules=jdk.naming.dns".to_string()));
         assert!(args.contains(&"--add-opens=java.base/java.util.jar=ALL-UNNAMED".to_string()));
+        assert!(args.contains(&"-DignoreList=bootstraplauncher,neon-fml".to_string()));
         assert!(args.contains(&"-Dfml.earlyprogresswindow=false".to_string()));
         assert!(args.contains(&"-Dforge.earlywindow=false".to_string()));
         assert!(args.contains(&"-Dneoforge.earlydisplay=false".to_string()));
@@ -748,12 +751,19 @@ mod tests {
         instance.path = std::path::PathBuf::from("/tmp/test-instance");
 
         let mut args = vec![
+            "-DignoreList=something,else".to_string(),
             "-Dfml.earlyprogresswindow=true".to_string(),
             "-Dforge.earlywindow=true".to_string(),
             "-Dneoforge.earlydisplay=true".to_string(),
         ];
         ensure_loader_jvm_workarounds(&instance, &mut args);
 
+        assert_eq!(
+            args.iter()
+                .filter(|arg| arg.starts_with("-DignoreList="))
+                .count(),
+            1
+        );
         assert_eq!(
             args.iter()
                 .filter(|arg| arg.starts_with("-Dfml.earlyprogresswindow="))
@@ -772,6 +782,7 @@ mod tests {
                 .count(),
             1
         );
+        assert!(args.contains(&"-DignoreList=bootstraplauncher,neon-fml".to_string()));
         assert!(args.contains(&"-Dfml.earlyprogresswindow=false".to_string()));
         assert!(args.contains(&"-Dforge.earlywindow=false".to_string()));
         assert!(args.contains(&"-Dneoforge.earlydisplay=false".to_string()));
