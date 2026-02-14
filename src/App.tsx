@@ -194,6 +194,7 @@ function App() {
   const [loaderVersions, setLoaderVersions] = useState<LoaderVersionEntry[]>([]);
   const [loaderVersionsLoading, setLoaderVersionsLoading] = useState(false);
   const [loaderVersionsError, setLoaderVersionsError] = useState<string | null>(null);
+  const [loaderVersionSearch, setLoaderVersionSearch] = useState("");
   const [selectedLoaderVersion, setSelectedLoaderVersion] = useState<string | null>(null);
   const [newInstanceName, setNewInstanceName] = useState("");
   const [newInstanceGroup, setNewInstanceGroup] = useState("Test");
@@ -650,6 +651,12 @@ function App() {
     minecraftVersions,
   ]);
 
+  const filteredLoaderVersions = useMemo(() => {
+    const query = loaderVersionSearch.trim().toLowerCase();
+    if (!query) return loaderVersions;
+    return loaderVersions.filter((entry) => entry.version.toLowerCase().includes(query));
+  }, [loaderVersionSearch, loaderVersions]);
+
   const formatReleaseDate = (releaseTime?: string) => {
     if (!releaseTime) return "-";
     const parsedDate = new Date(releaseTime);
@@ -855,11 +862,20 @@ function App() {
               <button
                 key={section}
                 type="button"
-                className={`sidebar-btn ${activeCreateSection === section ? "active" : ""}`}
+                className={`sidebar-btn create-nav-button ${activeCreateSection === section ? "active" : ""}`}
                 onClick={() => selectCreateSection(section)}
               >
-                {/* Icon placeholder if we had them */}
-                {section === "Base" ? "Personalizado" : section}
+                {section === "Base" ? (
+                  <>
+                    <span className="create-nav-title">Personalizado</span>
+                    <span className="create-nav-subtitle">
+                      MC {selectedMinecraftVersion ?? "--"} · {selectedLoaderType ? prettyLoader(selectedLoaderType) : "Sin loader"}
+                      {selectedLoaderVersion ? ` ${selectedLoaderVersion}` : ""}
+                    </span>
+                  </>
+                ) : (
+                  section
+                )}
               </button>
             ))}
           </aside>
@@ -974,46 +990,57 @@ function App() {
                       </aside>
                     </section>
 
-                    <section className="create-block-advanced loader-block">
-                      <div className="loader-info-panel">
-                        {selectedLoaderType === "vanilla" || !selectedLoaderType ? (
-                          <div className="empty-loader-state">
-                            <h3>Ningún cargador de mods está seleccionado.</h3>
-                          </div>
-                        ) : (
-                          <div className="loader-version-list">
-                            <h3>{prettyLoader(selectedLoaderType)} seleccionado</h3>
-                            <p>Versión seleccionada: {selectedLoaderVersion ?? "Automática"}</p>
-                            {loaderVersionsError && <p className="execution-error">{loaderVersionsError}</p>}
-                            {loaderVersionsLoading ? (
-                              <p>Cargando versiones de loader...</p>
-                            ) : (
-                              <table className="version-table sticky-header">
-                                <thead>
-                                  <tr>
-                                    <th>Versión</th>
-                                    <th>Estado</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {loaderVersions.map((version) => (
-                                    <tr
-                                      key={version.version}
-                                      className={selectedLoaderVersion === version.version ? "selected" : ""}
-                                      onClick={() => setSelectedLoaderVersion(version.version)}
-                                    >
-                                      <td>{version.version}</td>
-                                      <td>{version.stable ? "Recomendada" : "Disponible"}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            )}
-                          </div>
+                    <section className="create-block-advanced minecraft-version-panel loader-block">
+                      <header className="panel-toolbar">
+                        <input
+                          type="text"
+                          placeholder="Buscar versión de loader..."
+                          value={loaderVersionSearch}
+                          onChange={(e) => setLoaderVersionSearch(e.target.value)}
+                          disabled={selectedLoaderType === "vanilla" || !selectedLoaderType}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLoaderVersionSearch("");
+                            setSelectedLoaderVersion(loaderVersions[0]?.version ?? null);
+                          }}
+                          disabled={selectedLoaderType === "vanilla" || !selectedLoaderType}
+                        >
+                          Limpiar selección
+                        </button>
+                      </header>
+
+                      <div className="minecraft-version-list loader-version-list">
+                        {(selectedLoaderType === "vanilla" || !selectedLoaderType) && (
+                          <p className="version-list-feedback">Selecciona un loader para ver sus versiones.</p>
                         )}
+                        {selectedLoaderType !== "vanilla" && selectedLoaderType && loaderVersionsError && (
+                          <p className="version-list-feedback execution-error">{loaderVersionsError}</p>
+                        )}
+                        {selectedLoaderType !== "vanilla" && selectedLoaderType && loaderVersionsLoading && (
+                          <p className="version-list-feedback">Cargando versiones de loader...</p>
+                        )}
+                        {selectedLoaderType !== "vanilla" && selectedLoaderType && !loaderVersionsLoading && filteredLoaderVersions.length === 0 && (
+                          <p className="version-list-feedback">No hay versiones que coincidan con la búsqueda.</p>
+                        )}
+                        {selectedLoaderType !== "vanilla" && selectedLoaderType && filteredLoaderVersions.map((version) => {
+                          const isSelected = selectedLoaderVersion === version.version;
+                          return (
+                            <button
+                              key={version.version}
+                              type="button"
+                              className={`minecraft-version-row ${isSelected ? "selected" : ""}`}
+                              onClick={() => setSelectedLoaderVersion(version.version)}
+                            >
+                              <span className="mc-version-main">{version.version}</span>
+                              <span className="mc-version-meta">{version.stable ? "Recomendada" : "Disponible"} · {prettyLoader(selectedLoaderType)}</span>
+                            </button>
+                          );
+                        })}
                       </div>
 
-                      <aside className="loader-selection-sidebar">
+                      <aside className="version-filters-sidebar loader-selection-sidebar">
                         <h4>Cargador de Mods</h4>
                         <div className="radio-group">
                           {LOADER_CHOICES.map((loader) => (
@@ -1028,6 +1055,10 @@ function App() {
                             </label>
                           ))}
                         </div>
+                        <p className="loader-selection-meta">
+                          Selección: {selectedLoaderType ? prettyLoader(selectedLoaderType) : "No seleccionado"}
+                          {selectedLoaderVersion ? ` · ${selectedLoaderVersion}` : ""}
+                        </p>
                       </aside>
                     </section>
                   </div>

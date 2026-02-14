@@ -297,19 +297,6 @@
     min-width: 300px;
 }
 
-/* Loader Block Styles */
-.loader-block {
-    min-height: 180px;
-}
-
-.loader-info-panel {
-    padding: 20px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-right: 1px solid var(--line-soft);
-    background: var(--bg-0);
-}
 
 .loader-selection-sidebar {
     padding: 12px;
@@ -338,6 +325,31 @@
 
 .radio-option input[type="radio"] {
     accent-color: var(--accent);
+}
+
+
+.create-nav-button {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  text-align: left;
+}
+
+.create-nav-title {
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.create-nav-subtitle {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+
+.loader-selection-meta {
+  margin: 12px 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
 }
 
 /* Footer */
@@ -444,8 +456,7 @@
         grid-template-columns: 1fr;
     }
 
-    .minecraft-version-list,
-    .loader-info-panel {
+    .minecraft-version-list {
         border-right: 0;
         border-bottom: 1px solid var(--line-soft);
     }
