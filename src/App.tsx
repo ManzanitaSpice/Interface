@@ -44,7 +44,7 @@ interface MinecraftVersionEntry {
   version_type: string;
 }
 
-type MinecraftVersionFilter = "all" | "release" | "snapshot" | "old_beta" | "old_alpha" | "experimental";
+type MinecraftVersionFilter = "all" | "playable";
 
 const SECTION_LABELS: { key: TopSection; label: string }[] = [
   { key: "menu", label: "Menu" },
@@ -134,12 +134,14 @@ function App() {
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [instanceSearch, setInstanceSearch] = useState("");
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const [createSectionHistory, setCreateSectionHistory] = useState<(typeof CREATE_SECTIONS)[number][]>(["Base"]);
-  const [createHistoryIndex, setCreateHistoryIndex] = useState(0);
+  const [showSortMenu, setShowSortMenu] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [showSearchInput, setShowSearchInput] = useState(false);
+  const [pendingDeleteInstance, setPendingDeleteInstance] = useState<InstanceInfo | null>(null);
   const [minecraftVersions, setMinecraftVersions] = useState<MinecraftVersionEntry[]>([]);
   const [minecraftFilter, setMinecraftFilter] = useState<MinecraftVersionFilter>("all");
   const [selectedMinecraftVersion, setSelectedMinecraftVersion] = useState<string | null>(null);
-  const [selectedLoaderType, setSelectedLoaderType] = useState<LoaderType | null>(null);
+  const [selectedLoaderType, setSelectedLoaderType] = useState<LoaderType | null>("vanilla");
   const [loaderVersions, setLoaderVersions] = useState<string[]>([]);
   const [selectedLoaderVersion, setSelectedLoaderVersion] = useState<string | null>(null);
   const [newInstanceName, setNewInstanceName] = useState("");
@@ -147,6 +149,9 @@ function App() {
   const [createError, setCreateError] = useState<string | null>(null);
   const executionLogRef = useRef<HTMLDivElement | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const sortMenuRef = useRef<HTMLDivElement | null>(null);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const loadInstances = async () => {
@@ -233,8 +238,17 @@ function App() {
   useEffect(() => {
     const onDocumentClick = (event: MouseEvent) => {
       if (!profileMenuRef.current) return;
-      if (profileMenuRef.current.contains(event.target as Node)) return;
-      setShowProfileMenu(false);
+      if (!profileMenuRef.current.contains(event.target as Node)) {
+        setShowProfileMenu(false);
+      }
+
+      if (sortMenuRef.current && !sortMenuRef.current.contains(event.target as Node)) {
+        setShowSortMenu(false);
+      }
+
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
+        setShowMoreMenu(false);
+      }
     };
 
     const onEscape = (event: KeyboardEvent) => {
@@ -251,6 +265,14 @@ function App() {
         setEditingInstance(null);
         return;
       }
+      if (showSortMenu) {
+        setShowSortMenu(false);
+        return;
+      }
+      if (showMoreMenu) {
+        setShowMoreMenu(false);
+        return;
+      }
       if (appMode === "create") {
         setAppMode("main");
       }
@@ -262,7 +284,12 @@ function App() {
       window.removeEventListener("click", onDocumentClick);
       window.removeEventListener("keydown", onEscape);
     };
-  }, [appMode, editingInstance, showInstancePanel, showProfileMenu]);
+  }, [appMode, editingInstance, showInstancePanel, showProfileMenu, showSortMenu, showMoreMenu]);
+
+  useEffect(() => {
+    if (!showSearchInput) return;
+    searchInputRef.current?.focus();
+  }, [showSearchInput]);
 
   const instanceCards = useMemo(() => {
     const query = instanceSearch.trim().toLowerCase();
@@ -301,12 +328,20 @@ function App() {
     await reloadInstances();
   };
 
-  const deleteSelectedInstance = async () => {
-    if (!selectedInstance) return;
-    const confirmed = window.confirm(`¿Borrar completamente la instancia ${selectedInstance.name} y todos sus archivos?`);
-    if (!confirmed) return;
-    await invoke("delete_instance", { id: selectedInstance.id });
-    await reloadInstances();
+  const deleteInstanceById = async (instanceToDelete: InstanceInfo) => {
+    if (!instanceToDelete) return;
+
+    try {
+      await invoke("delete_instance", { id: instanceToDelete.id });
+      setInstances((prev) => prev.filter((instance) => instance.id !== instanceToDelete.id));
+      setSelectedInstance(null);
+      setShowInstancePanel(false);
+      setPendingDeleteInstance(null);
+      await reloadInstances();
+    } catch (error) {
+      const message = typeof error === "string" ? error : "No se pudo borrar la instancia.";
+      setLaunchError(message);
+    }
   };
 
   const handleInstanceAction = async (action: InstanceAction) => {
@@ -332,33 +367,24 @@ function App() {
       return;
     }
     if (action === "Borrar") {
-      await deleteSelectedInstance();
+      setPendingDeleteInstance(selectedInstance);
     }
   };
 
   const goBackCreateSection = () => {
-    if (createHistoryIndex <= 0) return;
-    const nextIndex = createHistoryIndex - 1;
-    setCreateHistoryIndex(nextIndex);
-    setActiveCreateSection(createSectionHistory[nextIndex]);
+    const currentIndex = CREATE_SECTIONS.indexOf(activeCreateSection);
+    if (currentIndex <= 0) return;
+    setActiveCreateSection(CREATE_SECTIONS[currentIndex - 1]);
   };
 
   const goForwardCreateSection = () => {
-    if (createHistoryIndex >= createSectionHistory.length - 1) return;
-    const nextIndex = createHistoryIndex + 1;
-    setCreateHistoryIndex(nextIndex);
-    setActiveCreateSection(createSectionHistory[nextIndex]);
+    const currentIndex = CREATE_SECTIONS.indexOf(activeCreateSection);
+    if (currentIndex >= CREATE_SECTIONS.length - 1) return;
+    setActiveCreateSection(CREATE_SECTIONS[currentIndex + 1]);
   };
 
   const selectCreateSection = (section: (typeof CREATE_SECTIONS)[number]) => {
     setActiveCreateSection(section);
-    setCreateSectionHistory((prev) => {
-      const compact = prev.slice(0, createHistoryIndex + 1);
-      if (compact[compact.length - 1] === section) return compact;
-      const next = [...compact, section];
-      setCreateHistoryIndex(next.length - 1);
-      return next;
-    });
   };
 
   const launchInstance = async () => {
@@ -391,10 +417,7 @@ function App() {
 
   const filteredMinecraftVersions = useMemo(() => {
     if (minecraftFilter === "all") return minecraftVersions;
-    if (minecraftFilter === "experimental") {
-      return minecraftVersions.filter((entry) => entry.version_type !== "release");
-    }
-    return minecraftVersions.filter((entry) => entry.version_type === minecraftFilter);
+    return minecraftVersions.filter((entry) => ["release", "snapshot"].includes(entry.version_type));
   }, [minecraftFilter, minecraftVersions]);
 
   const createInstanceNow = async () => {
@@ -457,26 +480,44 @@ function App() {
         <div className="instances-toolbar" onClick={(event) => event.stopPropagation()}>
           <div className="instances-toolbar-left">
             <button type="button" onClick={() => setAppMode("create")}>Crear instancia</button>
-            <button type="button">Importar</button>
-            <button type="button">Crear grupo</button>
-          </div>
-          <div className="instances-toolbar-right">
+            <button type="button" onClick={() => setShowSearchInput((prev) => !prev)}>Buscar instancias</button>
+            <div className="toolbar-menu" ref={sortMenuRef}>
+              <button type="button" aria-label="Ordenar instancias" onClick={() => setShowSortMenu((prev) => !prev)}>Ordenar</button>
+              {showSortMenu && (
+                <div className="toolbar-dropdown" role="menu" aria-label="Ordenar instancias">
+                  <button type="button" role="menuitem">Vista</button>
+                  <button type="button" role="menuitem">Nombre</button>
+                  <button type="button" role="menuitem">Fecha</button>
+                </div>
+              )}
+            </div>
+            <div className="toolbar-menu" ref={moreMenuRef}>
+              <button type="button" aria-label="Mas acciones" onClick={() => setShowMoreMenu((prev) => !prev)}>Mas</button>
+              {showMoreMenu && (
+                <div className="toolbar-dropdown" role="menu" aria-label="Mas acciones">
+                  <button type="button" role="menuitem">Importar</button>
+                  <button type="button" role="menuitem" disabled>Futuro 1</button>
+                  <button type="button" role="menuitem" disabled>Futuro 2</button>
+                  <button type="button" role="menuitem" disabled>Futuro 3</button>
+                  <button type="button" role="menuitem" disabled>Futuro 4</button>
+                </div>
+              )}
+            </div>
             <label htmlFor="instances-search" className="sr-only">Buscar instancias</label>
-            <input
-              id="instances-search"
-              type="search"
-              placeholder="Buscar instancias"
-              value={instanceSearch}
-              onChange={(event) => setInstanceSearch(event.target.value)}
-            />
-            <button type="button" aria-label="Filtro rapido">Filtros</button>
-            <button type="button" aria-label="Ordenar instancias">Ordenar</button>
-            <button type="button" aria-label="Vista en cuadricula">Vista</button>
-            <button type="button" aria-label="Acciones masivas">Mas</button>
+            {showSearchInput && (
+              <input
+                ref={searchInputRef}
+                id="instances-search"
+                type="search"
+                placeholder="Buscar instancias"
+                value={instanceSearch}
+                onChange={(event) => setInstanceSearch(event.target.value)}
+              />
+            )}
           </div>
         </div>
 
-        <div className="instances-workspace">
+        <div className={`instances-workspace ${showInstancePanel && selectedInstance ? "with-panel" : ""}`}>
           <div className="instance-grid" onClick={(event) => event.stopPropagation()}>
             {instanceCards.map((instance) => {
               const tooltipText = `Version MC: ${instance.minecraft_version}\nLoader: ${prettyLoader(instance.loader_type)} ${instance.loader_version ?? "N/A"}\nAutor: Usuario Local\nPeso: ${formatBytes(instance.total_size_bytes)}`;
@@ -563,7 +604,7 @@ function App() {
                 </div>
                 <aside className="block-sidebar">
                   <h3>Filtro</h3>
-                  {[["all","Versiones"],["release","Reales"],["snapshot","Snapshots"],["old_beta","Betas"],["old_alpha","Alfas"],["experimental","Experimentales"]].map(([value, label]) => (
+                  {[["all","Todas"],["playable","Versiones jugables"]].map(([value, label]) => (
                     <button key={value} type="button" className={minecraftFilter === value ? "active" : ""} onClick={() => setMinecraftFilter(value as MinecraftVersionFilter)}>{label}</button>
                   ))}
                 </aside>
@@ -603,8 +644,8 @@ function App() {
             <p>Loader: {selectedLoaderType ? prettyLoader(selectedLoaderType) : "Sin seleccionar"}</p>
             <p>Version loader: {selectedLoaderType === "vanilla" ? "Integrado" : (selectedLoaderVersion ?? "Sin seleccionar")}</p>
             {createError && <p className="execution-error">{createError}</p>}
-            <button type="button" onClick={() => setAppMode("main")}>Cancelar</button>
             <button type="button" onClick={() => void createInstanceNow()} disabled={createInProgress}>{createInProgress ? "Creando..." : "Crear instancia"}</button>
+            <button type="button" onClick={() => setAppMode("main")}>Cancelar</button>
           </aside>
         </div>
       </div>
@@ -784,6 +825,22 @@ function App() {
       </nav>
 
       <main className="content-wrap">{renderSectionPage()}</main>
+
+      {pendingDeleteInstance && (
+        <div className="delete-modal-backdrop" onClick={() => setPendingDeleteInstance(null)}>
+          <div className="delete-modal" onClick={(event) => event.stopPropagation()}>
+            <h3>Eliminar instancia</h3>
+            <p>
+              ¿Seguro que quieres eliminar <strong>{pendingDeleteInstance.name}</strong>? Esta accion borrara
+              todos sus archivos y no se puede deshacer.
+            </p>
+            <div className="delete-modal-actions">
+              <button type="button" onClick={() => setPendingDeleteInstance(null)}>Cancelar</button>
+              <button type="button" className="danger" onClick={() => void deleteInstanceById(pendingDeleteInstance)}>Borrar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

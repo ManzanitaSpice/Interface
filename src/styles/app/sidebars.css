@@ -24,16 +24,27 @@
 }
 
 .instance-right-panel {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 210px;
+  position: sticky;
+  top: 116px;
+  align-self: start;
+  width: 100%;
+  min-height: calc(100vh - 130px);
   border: 1px solid var(--line);
-  background: #1a1c20;
+  background: linear-gradient(180deg, #20242b 0%, #171a20 100%);
   border-radius: 14px;
   padding: 14px;
   display: grid;
   align-content: start;
   gap: 8px;
   box-shadow: var(--shadow-lg);
+}
+
+.create-right-sidebar {
+  position: sticky;
+  top: 60px;
+  align-self: start;
+  min-height: calc(100vh - 72px);
+  border-left: 1px solid #333a44;
+  background: linear-gradient(180deg, #1f2329 0%, #171a1f 100%);
+  border-radius: 12px 0 0 12px;
 }
