@@ -116,24 +116,24 @@
   border: 1px solid #3b3d45;
   border-radius: 12px;
   overflow-y: auto;
-  padding: 14px 16px;
-  background: #1a1b1e;
+  padding: 12px;
+  background: #111215;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 .log-entry {
   display: grid;
-  grid-template-columns: 86px 1fr;
-  gap: 12px;
+  grid-template-columns: 76px 1fr;
+  gap: 8px;
   color: #dcddde;
-  margin-bottom: 7px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.02);
+  margin-bottom: 2px;
+  padding: 2px 0;
+  border-radius: 0;
+  background: transparent;
 }
-.log-entry-time { color: #a1a5ad; font-size: .85rem; }
-.log-entry-message { white-space: pre-wrap; word-break: break-word; line-height: 1.35; }
-.log-entry.error { color: #ff9d9d; background: rgba(153, 44, 44, 0.2); }
-.log-entry.warn { color: #f0d18a; background: rgba(121, 89, 33, 0.18); }
+.log-entry-time { color: #7f8692; font-size: .8rem; }
+.log-entry-message { white-space: pre-wrap; word-break: break-word; line-height: 1.3; }
+.log-entry.error { color: #ff9d9d; }
+.log-entry.warn { color: #f0d18a; }
 .empty-logs { color: #949ba4; }
 
 .settings-tabs { display: flex; gap: 10px; margin-bottom: 14px; }

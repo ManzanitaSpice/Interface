@@ -76,6 +76,13 @@ interface LogEntry {
   message: string;
 }
 
+const splitLogLines = (message: string) =>
+  message
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
+
 interface DownloadProgressEvent {
   url: string;
   bytes_downloaded: number;
@@ -411,9 +418,20 @@ function App() {
   }, [selectedInstanceId]);
 
   const addLog = (id: string, level: LogEntry["level"], message: string) => {
+    const lines = splitLogLines(message);
+    if (lines.length === 0) return;
+
+    const timestamp = new Date().toLocaleTimeString();
     setInstanceLogs((prev) => ({
       ...prev,
-      [id]: [...(prev[id] ?? []), { timestamp: new Date().toLocaleTimeString(), level, message }],
+      [id]: [
+        ...(prev[id] ?? []),
+        ...lines.map((line) => ({
+          timestamp,
+          level,
+          message: line,
+        })),
+      ],
     }));
   };
 

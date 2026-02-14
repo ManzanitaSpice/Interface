@@ -89,12 +89,30 @@ impl LoaderInstaller for ForgeInstaller {
         let required_java = required_java_for_minecraft(ctx.minecraft_version);
         let java_bin = crate::core::java::resolve_java_binary(required_java).await?;
 
+        let minecraft_dir = ctx.instance_dir.join("minecraft");
+        tokio::fs::create_dir_all(&minecraft_dir)
+            .await
+            .map_err(|e| LauncherError::Io {
+                path: minecraft_dir.clone(),
+                source: e,
+            })?;
+
+        let launcher_profiles_path = minecraft_dir.join("launcher_profiles.json");
+        if !launcher_profiles_path.exists() {
+            tokio::fs::write(&launcher_profiles_path, br#"{"profiles":{},"selectedProfile":null}"#)
+                .await
+                .map_err(|e| LauncherError::Io {
+                    path: launcher_profiles_path.clone(),
+                    source: e,
+                })?;
+        }
+
         let output = std::process::Command::new(&java_bin)
             .arg("-jar")
             .arg(&installer_path)
             .arg("--installClient")
-            .arg(ctx.instance_dir)
-            .current_dir(ctx.instance_dir)
+            .arg(&minecraft_dir)
+            .current_dir(&minecraft_dir)
             .output()
             .map_err(|e| LauncherError::JavaExecution(e.to_string()))?;
 
