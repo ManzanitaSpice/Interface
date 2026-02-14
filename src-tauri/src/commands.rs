@@ -49,6 +49,13 @@ fn diagnostic_message(diagnostic: LaunchDiagnostic) -> &'static str {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct MinecraftVersionInfo {
+    pub id: String,
+    pub release_time: String,
+    pub version_type: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateInstancePayload {
     pub name: String,
@@ -555,6 +562,27 @@ pub async fn get_minecraft_versions(
         .filter(|entry| entry.version_type == "release")
         .filter(|entry| !entry.id.to_ascii_lowercase().contains("demo"))
         .map(|entry| entry.id.clone())
+        .collect();
+
+    Ok(versions)
+}
+
+#[tauri::command]
+pub async fn get_minecraft_versions_detailed(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<MinecraftVersionInfo>, LauncherError> {
+    let state = state.lock().await;
+    let manifest = VersionManifest::fetch(&state.http_client).await?;
+
+    let versions = manifest
+        .versions
+        .into_iter()
+        .filter(|entry| !entry.id.to_ascii_lowercase().contains("demo"))
+        .map(|entry| MinecraftVersionInfo {
+            id: entry.id,
+            release_time: entry.release_time,
+            version_type: entry.version_type,
+        })
         .collect();
 
     Ok(versions)

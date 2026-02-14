@@ -21,6 +21,7 @@ pub struct VersionEntry {
     pub id: String,
     #[serde(rename = "type")]
     pub version_type: String,
+    pub release_time: String,
     pub url: String,
     #[serde(default)]
     pub sha1: Option<String>,
@@ -66,11 +67,13 @@ mod tests {
         let json = r#"{
             "id": "1.20.4",
             "type": "release",
+            "release_time": "2023-12-07T08:00:00+00:00",
             "url": "https://example.com/1.20.4.json",
             "sha1": "abc123"
         }"#;
         let entry: VersionEntry = serde_json::from_str(json).unwrap();
         assert_eq!(entry.id, "1.20.4");
         assert_eq!(entry.version_type, "release");
+        assert_eq!(entry.release_time, "2023-12-07T08:00:00+00:00");
     }
 }

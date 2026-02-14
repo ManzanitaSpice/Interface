@@ -30,6 +30,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_minecraft_versions,
+            commands::get_minecraft_versions_detailed,
             commands::get_loader_versions,
             commands::create_instance,
             commands::list_instances,

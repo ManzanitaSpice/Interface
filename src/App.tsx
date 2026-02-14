@@ -38,6 +38,14 @@ interface LaunchLogEvent {
   message: string;
 }
 
+interface MinecraftVersionEntry {
+  id: string;
+  release_time: string;
+  version_type: string;
+}
+
+type MinecraftVersionFilter = "all" | "release" | "snapshot" | "old_beta" | "old_alpha" | "experimental";
+
 const SECTION_LABELS: { key: TopSection; label: string }[] = [
   { key: "menu", label: "Menu" },
   { key: "instances", label: "Mis Instancias" },
@@ -85,6 +93,15 @@ const CREATE_SECTIONS = [
   "Revision",
 ] as const;
 
+const LOADER_CHOICES: { value: LoaderType | "liteloader"; label: string; supported: boolean }[] = [
+  { value: "vanilla", label: "Vanilla", supported: true },
+  { value: "neoforge", label: "NeoForge", supported: true },
+  { value: "forge", label: "Forge", supported: true },
+  { value: "fabric", label: "Fabric", supported: true },
+  { value: "quilt", label: "Quilt", supported: true },
+  { value: "liteloader", label: "LiteLoader", supported: false },
+];
+
 const INSTANCE_CONFIG_TABS: InstanceConfigTab[] = [
   "General",
   "Java",
@@ -119,6 +136,15 @@ function App() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [createSectionHistory, setCreateSectionHistory] = useState<(typeof CREATE_SECTIONS)[number][]>(["Base"]);
   const [createHistoryIndex, setCreateHistoryIndex] = useState(0);
+  const [minecraftVersions, setMinecraftVersions] = useState<MinecraftVersionEntry[]>([]);
+  const [minecraftFilter, setMinecraftFilter] = useState<MinecraftVersionFilter>("all");
+  const [selectedMinecraftVersion, setSelectedMinecraftVersion] = useState<string | null>(null);
+  const [selectedLoaderType, setSelectedLoaderType] = useState<LoaderType | null>(null);
+  const [loaderVersions, setLoaderVersions] = useState<string[]>([]);
+  const [selectedLoaderVersion, setSelectedLoaderVersion] = useState<string | null>(null);
+  const [newInstanceName, setNewInstanceName] = useState("");
+  const [createInProgress, setCreateInProgress] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const executionLogRef = useRef<HTMLDivElement | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -133,6 +159,43 @@ function App() {
     };
     void loadInstances();
   }, []);
+
+  useEffect(() => {
+    const loadMinecraftVersions = async () => {
+      try {
+        const versions = await invoke<MinecraftVersionEntry[]>("get_minecraft_versions_detailed");
+        setMinecraftVersions(versions);
+      } catch {
+        setMinecraftVersions([]);
+      }
+    };
+
+    void loadMinecraftVersions();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedMinecraftVersion || !selectedLoaderType || selectedLoaderType === "vanilla") {
+      setLoaderVersions([]);
+      setSelectedLoaderVersion(selectedLoaderType === "vanilla" ? "integrado" : null);
+      return;
+    }
+
+    const loadLoaderVersions = async () => {
+      try {
+        const versions = await invoke<string[]>("get_loader_versions", {
+          loaderType: selectedLoaderType,
+          minecraftVersion: selectedMinecraftVersion,
+        });
+        setLoaderVersions(versions);
+        setSelectedLoaderVersion(versions[0] ?? null);
+      } catch {
+        setLoaderVersions([]);
+        setSelectedLoaderVersion(null);
+      }
+    };
+
+    void loadLoaderVersions();
+  }, [selectedLoaderType, selectedMinecraftVersion]);
 
   useEffect(() => {
     let mounted = true;
@@ -326,6 +389,50 @@ function App() {
     }
   };
 
+  const filteredMinecraftVersions = useMemo(() => {
+    if (minecraftFilter === "all") return minecraftVersions;
+    if (minecraftFilter === "experimental") {
+      return minecraftVersions.filter((entry) => entry.version_type !== "release");
+    }
+    return minecraftVersions.filter((entry) => entry.version_type === minecraftFilter);
+  }, [minecraftFilter, minecraftVersions]);
+
+  const createInstanceNow = async () => {
+    if (!selectedMinecraftVersion || !selectedLoaderType) {
+      setCreateError("Selecciona versión de Minecraft y loader.");
+      return;
+    }
+    if (selectedLoaderType !== "vanilla" && !selectedLoaderVersion) {
+      setCreateError("No hay versión de loader compatible.");
+      return;
+    }
+    const name = newInstanceName.trim();
+    if (!name) {
+      setCreateError("Escribe un nombre de instancia.");
+      return;
+    }
+
+    setCreateInProgress(true);
+    setCreateError(null);
+    try {
+      await invoke("create_instance", {
+        payload: {
+          name,
+          minecraftVersion: selectedMinecraftVersion,
+          loaderType: selectedLoaderType,
+          loaderVersion: selectedLoaderType === "vanilla" ? null : selectedLoaderVersion,
+        },
+      });
+      await reloadInstances();
+      setAppMode("main");
+      setActiveSection("instances");
+    } catch (error) {
+      setCreateError(typeof error === "string" ? error : "No se pudo crear la instancia.");
+    } finally {
+      setCreateInProgress(false);
+    }
+  };
+
   const onSelectInstance = (instance: InstanceInfo) => {
     setSelectedInstance(instance);
     setLaunchError(null);
@@ -423,7 +530,7 @@ function App() {
           </div>
           <div className="topbar-info">Creando nueva instancia</div>
         </header>
-        <div className="create-layout">
+        <div className="create-layout create-layout-wide">
           <aside className="create-left-sidebar compact-sidebar">
             {CREATE_SECTIONS.map((section) => (
               <button
@@ -436,20 +543,74 @@ function App() {
               </button>
             ))}
           </aside>
-          <main className="create-main-content">
-            <h2>Crear instancia - {activeCreateSection}</h2>
-            <p>Esta vista ocupa la pantalla completa (excepto la barra principal superior).</p>
+          <main className="create-main-content create-main-grid">
+            <section className="create-block">
+              <header><h2>Bloque 1 · Versiones Minecraft</h2></header>
+              <div className="create-block-body">
+                <div className="create-list-wrap">
+                  <table className="version-table">
+                    <thead><tr><th>Version</th><th>Fecha de lanzado</th><th>Tipo</th></tr></thead>
+                    <tbody>
+                      {filteredMinecraftVersions.map((entry) => (
+                        <tr key={entry.id} className={selectedMinecraftVersion === entry.id ? "selected" : ""} onClick={() => setSelectedMinecraftVersion(entry.id)}>
+                          <td>{entry.id}</td>
+                          <td>{new Date(entry.release_time).toLocaleDateString("es-ES")}</td>
+                          <td>{entry.version_type}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <aside className="block-sidebar">
+                  <h3>Filtro</h3>
+                  {[["all","Versiones"],["release","Reales"],["snapshot","Snapshots"],["old_beta","Betas"],["old_alpha","Alfas"],["experimental","Experimentales"]].map(([value, label]) => (
+                    <button key={value} type="button" className={minecraftFilter === value ? "active" : ""} onClick={() => setMinecraftFilter(value as MinecraftVersionFilter)}>{label}</button>
+                  ))}
+                </aside>
+              </div>
+            </section>
+            <section className="create-block">
+              <header><h2>Bloque 2 · Loaders</h2></header>
+              <div className="create-block-body">
+                <div className="create-list-wrap">
+                  <table className="version-table">
+                    <thead><tr><th>Version</th><th>Compatibilidad</th><th>Estado</th></tr></thead>
+                    <tbody>
+                      {selectedLoaderType === null ? <tr><td colSpan={3}>Selecciona un loader.</td></tr> : selectedLoaderType === "vanilla" ? <tr className="selected"><td>Integrado</td><td>{selectedMinecraftVersion ?? "-"}</td><td>Recomendado</td></tr> : loaderVersions.length === 0 ? <tr><td colSpan={3}>Sin versiones compatibles.</td></tr> : loaderVersions.map((version, idx) => (
+                        <tr key={version} className={selectedLoaderVersion === version ? "selected" : ""} onClick={() => setSelectedLoaderVersion(version)}>
+                          <td>{version}</td><td>{selectedMinecraftVersion ?? "-"}</td><td>{idx === 0 ? "Recomendada / Más actual" : "Disponible"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <aside className="block-sidebar">
+                  <h3>Cargador de mods</h3>
+                  {LOADER_CHOICES.map((loader) => (
+                    <button key={loader.value} type="button" className={selectedLoaderType === loader.value ? "active" : ""} disabled={!loader.supported} onClick={() => loader.supported && setSelectedLoaderType(loader.value as LoaderType)}>
+                      {loader.label}
+                    </button>
+                  ))}
+                </aside>
+              </div>
+            </section>
           </main>
           <aside className="create-right-sidebar compact-sidebar">
-            <h3>Panel de {activeCreateSection}</h3>
+            <h3>Crear instancia</h3>
+            <label htmlFor="instance-name">Nombre</label>
+            <input id="instance-name" type="text" value={newInstanceName} onChange={(event) => setNewInstanceName(event.target.value)} placeholder="Mi instancia" />
+            <p>MC: {selectedMinecraftVersion ?? "Sin seleccionar"}</p>
+            <p>Loader: {selectedLoaderType ? prettyLoader(selectedLoaderType) : "Sin seleccionar"}</p>
+            <p>Version loader: {selectedLoaderType === "vanilla" ? "Integrado" : (selectedLoaderVersion ?? "Sin seleccionar")}</p>
+            {createError && <p className="execution-error">{createError}</p>}
             <button type="button" onClick={() => setAppMode("main")}>Cancelar</button>
-            <button type="button">Guardar borrador</button>
-            <button type="button">Crear instancia</button>
+            <button type="button" onClick={() => void createInstanceNow()} disabled={createInProgress}>{createInProgress ? "Creando..." : "Crear instancia"}</button>
           </aside>
         </div>
       </div>
     );
   }
+
 
   if (editingInstance) {
     return (
