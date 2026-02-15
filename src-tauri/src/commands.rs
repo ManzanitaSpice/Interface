@@ -36,6 +36,7 @@ enum LaunchDiagnostic {
     NeoForgeEarlyDisplayRendererFuture,
     NeoForgeEarlyDisplayStillEnabled,
     CorruptedLibraryArchive,
+    LoaderAsmTooOldForJava21,
 }
 
 fn detect_launch_diagnostic(line: &str) -> Option<LaunchDiagnostic> {
@@ -49,6 +50,12 @@ fn detect_launch_diagnostic(line: &str) -> Option<LaunchDiagnostic> {
 
     if line.contains("ZipException: zip END header not found") {
         return Some(LaunchDiagnostic::CorruptedLibraryArchive);
+    }
+
+    if line.contains("Unsupported class file major version 65")
+        || line.contains("org.objectweb.asm.ClassReader")
+    {
+        return Some(LaunchDiagnostic::LoaderAsmTooOldForJava21);
     }
 
     None
@@ -65,7 +72,59 @@ fn diagnostic_message(diagnostic: LaunchDiagnostic) -> &'static str {
         LaunchDiagnostic::CorruptedLibraryArchive => {
             "[DIAGNÓSTICO] Se detectó una librería dañada (zip END header not found). Cierra la instancia, borra la ruta `libraries/net/neoforged/neoform/...` indicada en el log y reinicia para forzar una descarga limpia."
         }
+        LaunchDiagnostic::LoaderAsmTooOldForJava21 => {
+            "[DIAGNÓSTICO] El loader usa ASM antiguo y no soporta bytecode Java 21 (major 65). Actualiza Forge/NeoForge de esta línea de Minecraft a una build más reciente (ASM 9.7+)."
+        }
     }
+}
+
+fn parse_numeric_version_parts(raw: &str) -> Vec<u32> {
+    raw.split(|c: char| !c.is_ascii_digit())
+        .filter(|segment| !segment.is_empty())
+        .filter_map(|segment| segment.parse::<u32>().ok())
+        .collect()
+}
+
+fn asm_version_supports_java_21(version: &str) -> bool {
+    let parts = parse_numeric_version_parts(version);
+    let major = parts.first().copied().unwrap_or(0);
+    let minor = parts.get(1).copied().unwrap_or(0);
+    major > 9 || (major == 9 && minor >= 7)
+}
+
+fn detect_loader_asm_incompatibility(
+    instance: &Instance,
+    required_java_major: u32,
+) -> Option<String> {
+    if required_java_major < 21 {
+        return None;
+    }
+
+    if !matches!(instance.loader, LoaderType::Forge | LoaderType::NeoForge) {
+        return None;
+    }
+
+    let asm_versions: Vec<String> = instance
+        .libraries
+        .iter()
+        .filter_map(|coord| crate::core::maven::MavenArtifact::parse(coord).ok())
+        .filter(|artifact| artifact.group_id == "org.ow2.asm")
+        .map(|artifact| artifact.version)
+        .collect();
+
+    let has_old_asm = asm_versions
+        .iter()
+        .any(|version| !asm_version_supports_java_21(version));
+
+    if !has_old_asm {
+        return None;
+    }
+
+    let versions = asm_versions.join(", ");
+    Some(format!(
+        "Loader incompatible con Java 21 detectado: ASM antiguo en librerías [{versions}]. Actualiza la versión de {:?} para {}.",
+        instance.loader, instance.minecraft_version
+    ))
 }
 
 #[derive(Debug, Serialize)]
@@ -518,6 +577,18 @@ fn verify_instance_runtime_readiness(
         .required_java_major
         .unwrap_or_else(|| java::required_java_for_minecraft_version(&instance.minecraft_version));
 
+    let loader_java_compat_issue = detect_loader_asm_incompatibility(instance, required_major);
+    let loader_java_ok = loader_java_compat_issue.is_none();
+    log_preflight_check(
+        app,
+        instance_id,
+        loader_java_ok,
+        format!("Compatibilidad loader↔Java validada (requerida Java {required_major})"),
+    );
+    if let Some(issue) = loader_java_compat_issue {
+        emit_launch_log(app, instance_id, "error", format!("[CHECK] {issue}"));
+    }
+
     // Verificar el binario asignado directamente evita falsos negativos cuando
     // la ruta no coincide exactamente con entradas indexadas/canonizadas.
     let java_info = java::runtime::inspect_java_binary(java_path);
@@ -649,6 +720,9 @@ fn verify_instance_runtime_readiness(
         failures.push(PreflightFailure::CorruptedFiles);
     }
     if !loader_ok || !main_class_ok {
+        failures.push(PreflightFailure::InvalidLoader);
+    }
+    if !loader_java_ok {
         failures.push(PreflightFailure::InvalidLoader);
     }
     if !args_ok {
@@ -1204,7 +1278,11 @@ pub async fn get_loader_versions(
 
 #[cfg(test)]
 mod tests {
-    use super::is_neoforge_compatible;
+    use super::{
+        asm_version_supports_java_21, detect_loader_asm_incompatibility, is_neoforge_compatible,
+        parse_numeric_version_parts,
+    };
+    use crate::core::instance::{Instance, LoaderType};
 
     #[test]
     fn neoforge_compatibility_matches_same_minor_line() {
@@ -1217,6 +1295,39 @@ mod tests {
         assert!(!is_neoforge_compatible("21.10.4", "1.21.1"));
         assert!(!is_neoforge_compatible("20.5.12", "1.20.1"));
         assert!(!is_neoforge_compatible("invalid", "1.20.1"));
+    }
+
+    #[test]
+    fn asm_java21_threshold_requires_9_7_or_newer() {
+        assert!(asm_version_supports_java_21("9.7"));
+        assert!(asm_version_supports_java_21("9.7.1"));
+        assert!(!asm_version_supports_java_21("9.6"));
+        assert!(!asm_version_supports_java_21("9.6.1"));
+    }
+
+    #[test]
+    fn parse_numeric_version_parts_ignores_suffixes() {
+        assert_eq!(parse_numeric_version_parts("9.7"), vec![9, 7]);
+        assert_eq!(parse_numeric_version_parts("9.6.1-neoforge"), vec![9, 6, 1]);
+    }
+
+    #[test]
+    fn detects_loader_asm_issue_for_java21_modded_instance() {
+        let mut instance = Instance::new(
+            "Test".into(),
+            "1.20.6".into(),
+            LoaderType::NeoForge,
+            Some("20.6.139".into()),
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.libraries = vec![
+            "org.ow2.asm:asm:9.6".into(),
+            "org.ow2.asm:asm-tree:9.6".into(),
+        ];
+
+        let issue = detect_loader_asm_incompatibility(&instance, 21);
+        assert!(issue.is_some());
     }
 }
 
