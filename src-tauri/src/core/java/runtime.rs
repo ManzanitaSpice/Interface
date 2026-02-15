@@ -725,6 +725,7 @@ async fn acquire_runtime_lock(lock_path: &Path) -> LauncherResult<RuntimeLockGua
 async fn cleanup_stale_lock(lock_path: &Path) {
     if let Ok(content) = tokio::fs::read_to_string(lock_path).await {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
+            #[cfg(target_os = "linux")]
             let pid = value
                 .get("pid")
                 .and_then(|v| v.as_u64())
@@ -978,6 +979,9 @@ async fn ensure_java_executable_once(
     if metadata.chmod_applied {
         return Ok(());
     }
+    #[cfg(not(unix))]
+    let _ = runtime_root;
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
