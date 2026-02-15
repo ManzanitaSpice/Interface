@@ -37,7 +37,7 @@ pub async fn launch(
         info!("Using Java override from instance config: {:?}", path);
         path.clone()
     } else {
-        java::resolve_runtime(java::RuntimeRole::Gamma, Some(&instance.minecraft_version)).await?
+        java::resolve_runtime(instance.game_runtime, Some(&instance.minecraft_version)).await?
     };
 
     let resolved_java_major = java::runtime::inspect_java_binary(&java_bin).map(|info| info.major);

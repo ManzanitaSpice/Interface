@@ -17,7 +17,7 @@ use crate::core::assets::AssetManager;
 use crate::core::auth::{AccountMode, AuthResearchInfo, LaunchAccountProfile};
 use crate::core::error::LauncherError;
 use crate::core::instance::{Instance, InstanceState, LoaderType};
-use crate::core::java::{self, JavaInstallation};
+use crate::core::java::{self, JavaInstallation, RuntimeRole};
 use crate::core::launch;
 use crate::core::loaders;
 use crate::core::state::{AppState, JavaRuntimePreference, LauncherSettings};
@@ -411,6 +411,10 @@ async fn validate_or_resolve_java(
     if let Some(custom_path) = state.launcher_settings.selected_java_path.as_ref() {
         if is_valid(custom_path) {
             instance.java_path = Some(custom_path.clone());
+            if !instance.loader_requires_delta {
+                instance.bootstrap_runtime = RuntimeRole::Gamma;
+            }
+            instance.game_runtime = RuntimeRole::Gamma;
             return Ok(());
         }
     }
@@ -420,6 +424,10 @@ async fn validate_or_resolve_java(
             let system_java = std::path::PathBuf::from("java");
             if is_valid(&system_java) {
                 instance.java_path = Some(system_java);
+                if !instance.loader_requires_delta {
+                    instance.bootstrap_runtime = RuntimeRole::Gamma;
+                }
+                instance.game_runtime = RuntimeRole::Gamma;
                 return Ok(());
             }
             return Err(LauncherError::Other(
@@ -431,6 +439,10 @@ async fn validate_or_resolve_java(
             let embedded_java = state.embedded_java_path();
             if is_valid(&embedded_java) {
                 instance.java_path = Some(embedded_java);
+                if !instance.loader_requires_delta {
+                    instance.bootstrap_runtime = RuntimeRole::Gamma;
+                }
+                instance.game_runtime = RuntimeRole::Gamma;
                 return Ok(());
             }
         }
@@ -445,6 +457,10 @@ async fn validate_or_resolve_java(
     )
     .await?;
     instance.java_path = Some(resolved);
+    if !instance.loader_requires_delta {
+        instance.bootstrap_runtime = RuntimeRole::Gamma;
+    }
+    instance.game_runtime = RuntimeRole::Gamma;
     Ok(())
 }
 
@@ -738,7 +754,7 @@ fn verify_instance_runtime_readiness(
         failures.push(PreflightFailure::InvalidLoader);
     }
     if !loader_java_ok {
-        failures.push(PreflightFailure::InvalidLoader);
+        failures.push(PreflightFailure::IncompatibleLoaderJava);
     }
     if !args_ok {
         failures.push(PreflightFailure::Unknown);
@@ -755,6 +771,7 @@ enum PreflightFailure {
     MissingLibraries,
     CorruptedFiles,
     InvalidLoader,
+    IncompatibleLoaderJava,
     Unknown,
 }
 
@@ -767,9 +784,24 @@ impl PreflightFailure {
             PreflightFailure::MissingLibraries => "MissingLibraries",
             PreflightFailure::CorruptedFiles => "CorruptedFiles",
             PreflightFailure::InvalidLoader => "InvalidLoader",
+            PreflightFailure::IncompatibleLoaderJava => "IncompatibleLoaderJava",
             PreflightFailure::Unknown => "Unknown",
         }
     }
+}
+
+fn has_loader_java_incompatibility(failures: &[PreflightFailure]) -> bool {
+    failures
+        .iter()
+        .any(|failure| matches!(failure, PreflightFailure::IncompatibleLoaderJava))
+}
+
+fn user_forced_gamma_only(settings: &LauncherSettings, _instance: &Instance) -> bool {
+    settings
+        .selected_java_path
+        .as_ref()
+        .and_then(|path| path.to_str())
+        .is_some_and(|path| path.to_ascii_lowercase().contains("java-gamma"))
 }
 
 async fn attempt_preflight_repair(
@@ -817,6 +849,33 @@ async fn attempt_preflight_repair(
             PreflightFailure::InvalidLoader => {
                 force_full_prepare = true;
             }
+            PreflightFailure::IncompatibleLoaderJava => {
+                emit_launch_log(
+                    app,
+                    &instance.id,
+                    "info",
+                    "[REPAIR] El loader requiere Java de herramientas distinto. Se ajustó automáticamente.".into(),
+                );
+                instance.loader_requires_delta = true;
+                instance.bootstrap_runtime = RuntimeRole::Delta;
+                instance.game_runtime = RuntimeRole::Gamma;
+                let delta_runtime = java::resolve_runtime_in_dir(
+                    &state.data_dir,
+                    RuntimeRole::Delta,
+                    RuntimeRole::Delta.expected_major(Some(&instance.minecraft_version)),
+                    Some(&instance.minecraft_version),
+                )
+                .await?;
+                emit_launch_log(
+                    app,
+                    &instance.id,
+                    "info",
+                    format!(
+                        "[REPAIR] Reasignando runtime de fase: bootstrap=delta ({}) | game=gamma.",
+                        delta_runtime.display()
+                    ),
+                );
+            }
             PreflightFailure::Unknown => {
                 needs_prepare = true;
             }
@@ -833,10 +892,69 @@ async fn attempt_preflight_repair(
             app,
             &instance.id,
             "info",
-            "[REPAIR] Reejecutando preparación para reconstruir estructura y descargar faltantes."
-                .into(),
+            "[REPAIR] Reasignando runtime de fase y reintentando solo la fase fallida.".into(),
         );
         prepare_instance_for_launch(state, instance).await?;
+    }
+
+    Ok(())
+}
+
+async fn run_bootstrap_runtime_probe(
+    app: &tauri::AppHandle,
+    state: &crate::core::state::AppState,
+    instance: &Instance,
+) -> Result<(), LauncherError> {
+    let runtime_role = instance.bootstrap_runtime;
+    let runtime_path = match runtime_role {
+        RuntimeRole::Gamma => instance.java_path.clone().ok_or_else(|| {
+            LauncherError::Other("No hay Java Gamma asignada a la instancia".into())
+        })?,
+        RuntimeRole::Delta => {
+            java::resolve_runtime_in_dir(
+                &state.data_dir,
+                RuntimeRole::Delta,
+                RuntimeRole::Delta.expected_major(Some(&instance.minecraft_version)),
+                Some(&instance.minecraft_version),
+            )
+            .await?
+        }
+    };
+
+    let java_home = runtime_path
+        .parent()
+        .and_then(|bin| bin.parent())
+        .ok_or_else(|| {
+            LauncherError::Other("No se pudo resolver JAVA_HOME para bootstrap".into())
+        })?;
+
+    emit_launch_log(
+        app,
+        &instance.id,
+        "info",
+        format!(
+            "[BOOTSTRAP] Runtime de fase asignado: {:?} | binario: {} | JAVA_HOME: {}",
+            runtime_role,
+            runtime_path.display(),
+            java_home.display()
+        ),
+    );
+
+    let output = Command::new(&runtime_path)
+        .arg("-version")
+        .env("JAVA_HOME", java_home)
+        .output()
+        .map_err(|source| LauncherError::Io {
+            path: runtime_path.clone(),
+            source,
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(LauncherError::Other(format!(
+            "Runtime de bootstrap inválido ({:?}): {}",
+            runtime_role, stderr
+        )));
     }
 
     Ok(())
@@ -1725,21 +1843,26 @@ pub async fn launch_instance(
         let mut preflight_failures =
             verify_instance_runtime_readiness(&app_handle, &instance, &libs_dir)?;
         if !preflight_failures.is_empty() {
-            emit_launch_log(
-                &app_handle,
-                &id,
-                "warn",
-                "[PREPARACIÓN] Preflight con fallos: se iniciará autoreparación (máx. 2 intentos)."
-                    .into(),
-            );
+            if has_loader_java_incompatibility(&preflight_failures)
+                && user_forced_gamma_only(&state_guard.launcher_settings, &instance)
+            {
+                let err = LauncherError::Other(
+                    "El loader requiere Delta para bootstrap, pero el usuario forzó solo Gamma."
+                        .into(),
+                );
+                emit_launch_progress(&app_handle, &id, 100, "Preflight fallido", "error");
+                emit_launch_log(&app_handle, &id, "error", format!("[ERROR] {err}"));
+                instance.state = InstanceState::Error;
+                state_guard.instance_manager.save(&instance).await?;
+                return Err(err);
+            }
 
-            let mut repaired = false;
-            for attempt in 1..=2 {
+            if has_loader_java_incompatibility(&preflight_failures) {
                 emit_launch_log(
                     &app_handle,
                     &id,
-                    "info",
-                    format!("[REPAIR] Intento automático {attempt}/2."),
+                    "warn",
+                    "[PREPARACIÓN] Preflight detectó incompatibilidad loader↔Java; autoreparación por reintento desactivada (0 intentos).".into(),
                 );
                 attempt_preflight_repair(
                     &app_handle,
@@ -1750,26 +1873,69 @@ pub async fn launch_instance(
                 .await?;
                 preflight_failures =
                     verify_instance_runtime_readiness(&app_handle, &instance, &libs_dir)?;
-                if preflight_failures.is_empty() {
-                    repaired = true;
+            } else {
+                emit_launch_log(
+                    &app_handle,
+                    &id,
+                    "warn",
+                    "[PREPARACIÓN] Preflight con fallos transitorios: se iniciará autoreparación (máx. 2 intentos)."
+                        .into(),
+                );
+
+                let mut repaired = false;
+                for attempt in 1..=2 {
                     emit_launch_log(
                         &app_handle,
                         &id,
                         "info",
-                        "[REPAIR] Instancia reparada y validada correctamente.".into(),
+                        format!("[REPAIR] Intento automático {attempt}/2."),
                     );
-                    break;
+                    attempt_preflight_repair(
+                        &app_handle,
+                        &state_guard,
+                        &mut instance,
+                        &preflight_failures,
+                    )
+                    .await?;
+                    preflight_failures =
+                        verify_instance_runtime_readiness(&app_handle, &instance, &libs_dir)?;
+                    if preflight_failures.is_empty() {
+                        repaired = true;
+                        emit_launch_log(
+                            &app_handle,
+                            &id,
+                            "info",
+                            "[REPAIR] Instancia reparada y validada correctamente.".into(),
+                        );
+                        break;
+                    }
+                }
+
+                if !repaired && !preflight_failures.is_empty() {
+                    let labels = preflight_failures
+                        .iter()
+                        .map(|failure| failure.label())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let err = LauncherError::Other(format!(
+                        "Preflight fallido tras autoreparación. Fallos persistentes: {labels}"
+                    ));
+                    emit_launch_progress(&app_handle, &id, 100, "Preflight fallido", "error");
+                    emit_launch_log(&app_handle, &id, "error", format!("[ERROR] {err}"));
+                    instance.state = InstanceState::Error;
+                    state_guard.instance_manager.save(&instance).await?;
+                    return Err(err);
                 }
             }
 
-            if !repaired {
+            if !preflight_failures.is_empty() {
                 let labels = preflight_failures
                     .iter()
                     .map(|failure| failure.label())
                     .collect::<Vec<_>>()
                     .join(", ");
                 let err = LauncherError::Other(format!(
-                    "Preflight fallido tras autoreparación. Fallos persistentes: {labels}"
+                    "Preflight fallido. Fallos persistentes: {labels}"
                 ));
                 emit_launch_progress(&app_handle, &id, 100, "Preflight fallido", "error");
                 emit_launch_log(&app_handle, &id, "error", format!("[ERROR] {err}"));
@@ -1780,6 +1946,8 @@ pub async fn launch_instance(
 
             state_guard.instance_manager.save(&instance).await?;
         }
+
+        run_bootstrap_runtime_probe(&app_handle, &state_guard, &instance).await?;
 
         let classpath = launch::build_classpath(&instance, &libs_dir, &instance.libraries)?;
         emit_launch_log(&app_handle, &id, "info", "[FASE] análisis de jars".into());

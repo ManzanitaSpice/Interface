@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::core::auth::LaunchAccountProfile;
+use crate::core::java::RuntimeRole;
 
 /// Supported mod loaders — strongly typed, no magic strings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -78,9 +79,26 @@ pub struct Instance {
     pub game_args: Vec<String>,
     /// Java major version required/recommended for this instance.
     pub required_java_major: Option<u32>,
+    /// Runtime role used for launch tooling/bootstrap phase.
+    #[serde(default = "default_bootstrap_runtime")]
+    pub bootstrap_runtime: RuntimeRole,
+    /// Runtime role used for final game launch.
+    #[serde(default = "default_game_runtime")]
+    pub game_runtime: RuntimeRole,
+    /// Marks loaders that need Delta tooling runtime.
+    #[serde(default)]
+    pub loader_requires_delta: bool,
     /// Account profile used to resolve launch placeholders for premium/offline modes.
     #[serde(default)]
     pub account: LaunchAccountProfile,
+}
+
+fn default_bootstrap_runtime() -> RuntimeRole {
+    RuntimeRole::Gamma
+}
+
+fn default_game_runtime() -> RuntimeRole {
+    RuntimeRole::Gamma
 }
 
 impl Instance {
@@ -114,6 +132,9 @@ impl Instance {
             jvm_args: Vec::new(),
             game_args: Vec::new(),
             required_java_major: None,
+            bootstrap_runtime: default_bootstrap_runtime(),
+            game_runtime: default_game_runtime(),
+            loader_requires_delta: false,
             account: LaunchAccountProfile::default(),
         }
     }
