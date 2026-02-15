@@ -135,9 +135,12 @@ impl LoaderInstaller for NeoForgeInstaller {
             serde_json::from_reader(file)?
         };
 
-        let required_java =
-            crate::core::java::required_java_for_minecraft_version(ctx.minecraft_version);
-        let java_bin = crate::core::java::resolve_java_binary(required_java).await?;
+        let java_bin = crate::core::java::resolve_runtime(
+            crate::core::java::RuntimeRole::Delta,
+            Some(ctx.minecraft_version),
+        )
+        .await?;
+        log_runtime_role("Delta", &java_bin, ctx.instance_dir);
 
         // Download libraries from install_profile
         let mut libraries = BTreeSet::new();
@@ -229,7 +232,12 @@ impl LoaderInstaller for NeoForgeInstaller {
             let main_class = read_main_class_from_jar(&jar_path)
                 .unwrap_or_else(|_| "net.minecraftforge.installertools.ConsoleTool".to_string());
 
+            let java_home = java_bin
+                .parent()
+                .and_then(|bin| bin.parent())
+                .unwrap_or(ctx.instance_dir);
             let output = std::process::Command::new(&java_bin)
+                .env("JAVA_HOME", java_home)
                 .arg("-cp")
                 .arg(&classpath)
                 .arg(&main_class)
@@ -313,9 +321,35 @@ impl LoaderInstaller for NeoForgeInstaller {
             libraries: libraries.into_iter().collect(),
             asset_index_id: None,
             asset_index_url: None,
-            java_major: Some(required_java),
+            java_major: Some(crate::core::java::required_java_for_minecraft_version(
+                ctx.minecraft_version,
+            )),
         })
     }
+}
+
+fn log_runtime_role(role: &str, java_bin: &Path, cwd: &Path) {
+    let version = std::process::Command::new(java_bin)
+        .arg("-version")
+        .current_dir(cwd)
+        .output()
+        .ok()
+        .map(|out| {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            stderr
+                .lines()
+                .next()
+                .unwrap_or("java -version unavailable")
+                .to_string()
+        })
+        .unwrap_or_else(|| "java -version unavailable".to_string());
+    info!(
+        "[RUNTIME] role={} java_bin={} version={} cwd={}",
+        role,
+        java_bin.display(),
+        version,
+        cwd.display()
+    );
 }
 
 async fn download_with_archive_validation(

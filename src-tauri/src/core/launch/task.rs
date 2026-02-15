@@ -37,7 +37,7 @@ pub async fn launch(
         info!("Using Java override from instance config: {:?}", path);
         path.clone()
     } else {
-        java::resolve_java_binary(required_java_major).await?
+        java::resolve_runtime(java::RuntimeRole::Gamma, Some(&instance.minecraft_version)).await?
     };
 
     let resolved_java_major = java::runtime::inspect_java_binary(&java_bin).map(|info| info.major);
@@ -81,6 +81,11 @@ pub async fn launch(
     }
 
     let mut cmd = std::process::Command::new(&java_bin);
+    let java_home = java_bin
+        .parent()
+        .and_then(|bin| bin.parent())
+        .unwrap_or(&game_dir);
+    cmd.env("JAVA_HOME", java_home);
 
     // ── JVM Arguments ──
     let xmx_mb = instance.max_memory_mb.max(1024);
