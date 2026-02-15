@@ -9,6 +9,7 @@ use tauri::Manager;
 use crate::core::downloader::Downloader;
 use crate::core::http::build_http_client;
 use crate::core::instance::InstanceManager;
+use crate::core::java;
 
 const APP_DIR_NAME: &str = "InterfaceOficial";
 const BOOTSTRAP_FILE: &str = "launcher_bootstrap.json";
@@ -69,6 +70,7 @@ impl AppState {
                 }
             }
         }
+        let _ = tauri::async_runtime::block_on(java::ensure_embedded_runtime_registered(&data_dir));
         let instances_dir = data_dir.join("instances");
         let instance_manager = InstanceManager::new(instances_dir);
 
@@ -135,6 +137,9 @@ impl AppState {
         self.launcher_settings = load_settings_from_disk(&self.data_dir).unwrap_or_default();
 
         self.install_embedded_runtime(app_handle)?;
+        let _ = tauri::async_runtime::block_on(java::ensure_embedded_runtime_registered(
+            &self.data_dir,
+        ));
         self.save_settings()?;
         self.save_install_marker()?;
         save_bootstrap_config(&self.data_dir)?;
@@ -161,6 +166,9 @@ impl AppState {
         self.instance_manager = InstanceManager::new(self.instances_dir());
 
         self.install_embedded_runtime(app_handle)?;
+        let _ = tauri::async_runtime::block_on(java::ensure_embedded_runtime_registered(
+            &self.data_dir,
+        ));
         self.save_settings()?;
         self.save_install_marker()?;
         save_bootstrap_config(&self.data_dir)?;
