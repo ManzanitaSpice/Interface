@@ -567,6 +567,9 @@ function App() {
 
   const launchInstance = async () => {
     if (!selectedInstance) return;
+    setEditingInstance(selectedInstance);
+    setActiveEditSection("Ejecucion");
+    setShowInstancePanel(false);
     setLaunchError(null);
     setLaunchLogs([]);
     setLaunchProgress({
@@ -578,9 +581,6 @@ function App() {
 
     try {
       await invoke("launch_instance", { id: selectedInstance.id });
-      setEditingInstance(selectedInstance);
-      setActiveEditSection("Ejecucion");
-      setShowInstancePanel(false);
     } catch (error) {
       const errorMessage = typeof error === "string" ? error : "No se pudo iniciar la instancia.";
       setLaunchError(errorMessage);
