@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fs::File;
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
@@ -10,112 +9,63 @@ use zip::ZipArchive;
 
 use crate::core::error::{LauncherError, LauncherResult};
 
+const APP_DIR_NAME: &str = "InterfaceOficial";
+const ADOPTIUM_JRE8_X64_URL: &str =
+    "https://github.com/adoptium/temurin8-binaries/releases/latest/download/OpenJDK8U-jre_x64_windows_hotspot.zip";
 const ADOPTIUM_JRE17_X64_URL: &str =
     "https://github.com/adoptium/temurin17-binaries/releases/latest/download/OpenJDK17U-jre_x64_windows_hotspot.zip";
 const ADOPTIUM_JRE21_X64_URL: &str =
     "https://github.com/adoptium/temurin21-binaries/releases/latest/download/OpenJDK21U-jre_x64_windows_hotspot.zip";
 
-/// A detected Java installation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JavaInstallation {
     pub path: PathBuf,
     pub version: String,
     pub major: u32,
     pub is_64bit: bool,
+    pub vendor: String,
 }
 
-fn preferred_embedded_runtime_dir() -> Option<PathBuf> {
-    let exe_path = std::env::current_exe().ok()?;
-    let exe_dir = exe_path.parent()?;
-    Some(exe_dir.join("resources").join("runtime"))
+pub fn managed_runtime_dir(data_dir: &Path, major: u32) -> PathBuf {
+    data_dir
+        .join("runtimes")
+        .join(format!("java{}", runtime_track(major)))
 }
 
-/// Resolve the embedded Java path from executable location.
-///
-/// Build (Windows/Tauri): `<exe_dir>/resources/runtime/bin/java.exe`
-/// Dev fallback: `<repo>/src-tauri/resources/runtime/bin/java.exe`
-pub fn detect_embedded_java_binary() -> Option<PathBuf> {
-    let exe_path = std::env::current_exe().ok()?;
-    let exe_dir = exe_path.parent()?;
-
-    let mut candidates = vec![
-        exe_dir
-            .join("resources")
-            .join("runtime")
-            .join("bin")
-            .join(java_exe()),
-        exe_dir
-            .join("..")
-            .join("Resources")
-            .join("runtime")
-            .join("bin")
-            .join(java_exe()),
-    ];
-
-    for ancestor in exe_dir.ancestors() {
-        candidates.push(
-            ancestor
-                .join("src-tauri")
-                .join("resources")
-                .join("runtime")
-                .join("bin")
-                .join(java_exe()),
-        );
-    }
-
-    for candidate in candidates {
-        if candidate.exists() {
-            let canonical = std::fs::canonicalize(&candidate).unwrap_or(candidate);
-            info!("Embedded Java detected at {:?}", canonical);
-            return Some(canonical);
-        }
-    }
-
-    warn!("Embedded Java binary not found next to current executable");
-    None
-}
-
-/// Returns embedded Java if available; otherwise fallback to system Java.
 pub async fn resolve_java_binary(required_major: u32) -> LauncherResult<PathBuf> {
-    if let Some(embedded) = detect_embedded_java_binary() {
-        if let Some(probed) = probe_java(&embedded) {
-            if probed.major >= required_major {
-                info!("Using embedded Java {} at {:?}", probed.major, probed.path);
-                return Ok(probed.path);
-            }
-
-            warn!(
-                "Embedded Java {} is lower than required {}. Falling back to system Java.",
-                probed.major, required_major
-            );
-        } else {
-            warn!(
-                "Embedded Java exists but is not usable (failed `java -version`): {:?}",
-                embedded
-            );
-        }
-    }
-
-    if let Some(runtime_dir) = preferred_embedded_runtime_dir() {
-        if let Ok(downloaded) = ensure_embedded_runtime(&runtime_dir, required_major).await {
-            if let Some(probed) = probe_java(&downloaded) {
-                if probed.major >= required_major {
-                    info!(
-                        "Using freshly downloaded embedded Java {} at {:?}",
-                        probed.major, probed.path
-                    );
-                    return Ok(probed.path);
-                }
-            }
-        }
-    }
-
-    find_java_binary(required_major).await
+    let data_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(APP_DIR_NAME);
+    resolve_java_binary_in_dir(&data_dir, required_major).await
 }
 
-/// Ensure a JRE 17 exists in `runtime_root`, downloading and extracting it when missing.
-pub async fn ensure_embedded_jre17(runtime_root: &Path) -> LauncherResult<PathBuf> {
-    ensure_embedded_runtime(runtime_root, 17).await
+pub async fn resolve_java_binary_in_dir(
+    data_dir: &Path,
+    required_major: u32,
+) -> LauncherResult<PathBuf> {
+    let runtime_major = runtime_track(required_major);
+    let runtime_root = managed_runtime_dir(data_dir, runtime_major);
+    ensure_embedded_runtime(&runtime_root, runtime_major).await
+}
+
+pub async fn detect_java_installations() -> Vec<JavaInstallation> {
+    detect_java_installations_sync()
+}
+
+pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
+    let data_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(APP_DIR_NAME);
+
+    [8_u32, 17_u32, 21_u32]
+        .into_iter()
+        .filter_map(|major| {
+            let candidate = managed_runtime_dir(&data_dir, major)
+                .join("bin")
+                .join(java_exe());
+            probe_java(&candidate).filter(|info| info.major == major && info.is_64bit)
+        })
+        .collect()
 }
 
 async fn ensure_embedded_runtime(
@@ -123,15 +73,26 @@ async fn ensure_embedded_runtime(
     required_major: u32,
 ) -> LauncherResult<PathBuf> {
     let java_bin = runtime_root.join("bin").join(java_exe());
-    if java_bin.exists() && is_usable_java_binary(&java_bin) {
-        info!("Embedded runtime already available at {:?}", java_bin);
+    if runtime_is_valid(&java_bin, required_major) {
+        info!(
+            "Managed runtime java{} already available at {:?}",
+            required_major, java_bin
+        );
         return Ok(java_bin);
     }
 
-    warn!(
-        "Embedded runtime missing or invalid at {:?}. Downloading JRE {}...",
-        runtime_root, required_major
-    );
+    if runtime_root.exists() {
+        warn!(
+            "Runtime {:?} is invalid, removing it before re-download",
+            runtime_root
+        );
+        tokio::fs::remove_dir_all(runtime_root)
+            .await
+            .map_err(|source| LauncherError::Io {
+                path: runtime_root.to_path_buf(),
+                source,
+            })?;
+    }
 
     tokio::fs::create_dir_all(runtime_root)
         .await
@@ -140,11 +101,11 @@ async fn ensure_embedded_runtime(
             source,
         })?;
 
-    let runtime_url = if required_major >= 21 {
-        ADOPTIUM_JRE21_X64_URL
-    } else {
-        ADOPTIUM_JRE17_X64_URL
-    };
+    let runtime_url = runtime_url(required_major);
+    info!(
+        "Downloading managed runtime java{} from {}",
+        required_major, runtime_url
+    );
 
     let response = reqwest::get(runtime_url).await?;
     let status = response.status();
@@ -162,22 +123,47 @@ async fn ensure_embedded_runtime(
         .await
         .map_err(|e| LauncherError::Other(format!("Join error extracting JRE: {e}")))??;
 
-    if !java_bin.exists() {
+    if !runtime_is_valid(&java_bin, required_major) {
+        let _ = tokio::fs::remove_dir_all(runtime_root).await;
         return Err(LauncherError::Other(format!(
-            "JRE extracted but {} was not found",
+            "Downloaded runtime {} failed validation",
             java_bin.display()
         )));
     }
 
-    if !is_usable_java_binary(&java_bin) {
-        return Err(LauncherError::Other(format!(
-            "Downloaded embedded Java at {} failed validation",
-            java_bin.display()
-        )));
-    }
-
-    info!("Embedded JRE installed successfully at {:?}", java_bin);
+    info!(
+        "Managed runtime java{} installed successfully at {:?}",
+        required_major, java_bin
+    );
     Ok(java_bin)
+}
+
+fn runtime_is_valid(java_bin: &Path, required_major: u32) -> bool {
+    let Some(info) = probe_java(&java_bin.to_path_buf()) else {
+        return false;
+    };
+
+    info.major == required_major
+        && info.is_64bit
+        && (info.vendor.contains("Temurin") || info.vendor.contains("Adoptium"))
+}
+
+fn runtime_url(required_major: u32) -> &'static str {
+    match runtime_track(required_major) {
+        8 => ADOPTIUM_JRE8_X64_URL,
+        17 => ADOPTIUM_JRE17_X64_URL,
+        _ => ADOPTIUM_JRE21_X64_URL,
+    }
+}
+
+fn runtime_track(required_major: u32) -> u32 {
+    if required_major <= 8 {
+        8
+    } else if required_major >= 21 {
+        21
+    } else {
+        17
+    }
 }
 
 fn extract_jre_zip(bytes: &[u8], runtime_root: &Path) -> LauncherResult<()> {
@@ -245,136 +231,6 @@ fn extract_jre_zip(bytes: &[u8], runtime_root: &Path) -> LauncherResult<()> {
     Ok(())
 }
 
-/// Detect all Java installations available on the system.
-pub async fn detect_java_installations() -> Vec<JavaInstallation> {
-    detect_java_installations_sync()
-}
-
-/// Blocking implementation used by async wrappers.
-pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
-    let mut installations = Vec::new();
-    let mut seen = HashSet::new();
-
-    let mut push_candidate = |candidate: PathBuf| {
-        if !candidate.exists() {
-            return;
-        }
-        if let Some(info) = probe_java(&candidate) {
-            let key = info.path.to_string_lossy().to_string();
-            if seen.insert(key) {
-                installations.push(info);
-            }
-        }
-    };
-
-    if let Ok(java_home) = std::env::var("JAVA_HOME") {
-        push_candidate(PathBuf::from(&java_home).join("bin").join(java_exe()));
-    }
-
-    if let Ok(path_var) = std::env::var("PATH") {
-        let separator = if cfg!(windows) { ';' } else { ':' };
-        for dir in path_var.split(separator) {
-            push_candidate(PathBuf::from(dir).join(java_exe()));
-        }
-    }
-
-    let path_command = if cfg!(windows) { "where" } else { "which" };
-    let path_args: Vec<&str> = if cfg!(windows) {
-        vec!["java"]
-    } else {
-        vec!["-a", "java"]
-    };
-    if let Ok(output) = Command::new(path_command).args(path_args).output() {
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            let candidate = line.trim();
-            if !candidate.is_empty() {
-                push_candidate(PathBuf::from(candidate));
-            }
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let search_roots = vec![
-            r"C:\Program Files\Java",
-            r"C:\Program Files\Eclipse Adoptium",
-            r"C:\Program Files\Microsoft",
-            r"C:\Program Files\Zulu",
-            r"C:\Program Files\BellSoft",
-        ];
-
-        for root in search_roots {
-            let root_path = PathBuf::from(root);
-            if root_path.is_dir() {
-                if let Ok(entries) = std::fs::read_dir(&root_path) {
-                    for entry in entries.flatten() {
-                        push_candidate(entry.path().join("bin").join("java.exe"));
-                    }
-                }
-            }
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let search_roots = vec![
-            "/usr/lib/jvm",
-            "/usr/local/lib/jvm",
-            "/Library/Java/JavaVirtualMachines",
-        ];
-
-        for root in search_roots {
-            let root_path = PathBuf::from(root);
-            if root_path.is_dir() {
-                if let Ok(entries) = std::fs::read_dir(&root_path) {
-                    for entry in entries.flatten() {
-                        push_candidate(entry.path().join("bin").join("java"));
-                        push_candidate(entry.path().join("Contents/Home/bin/java"));
-                    }
-                }
-            }
-        }
-    }
-
-    installations.sort_by(|a, b| {
-        b.major
-            .cmp(&a.major)
-            .then_with(|| b.is_64bit.cmp(&a.is_64bit))
-            .then_with(|| b.version.cmp(&a.version))
-            .then_with(|| a.path.cmp(&b.path))
-    });
-
-    info!("Detected {} Java installations", installations.len());
-    installations
-}
-
-/// Find a suitable Java binary for a given major version (e.g. 17, 21).
-pub async fn find_java_binary(major: u32) -> LauncherResult<PathBuf> {
-    let installations = detect_java_installations().await;
-
-    if let Some(exact_64) = installations
-        .iter()
-        .find(|i| i.major == major && i.is_64bit)
-    {
-        return Ok(exact_64.path.clone());
-    }
-
-    if let Some(exact) = installations.iter().find(|i| i.major == major) {
-        return Ok(exact.path.clone());
-    }
-
-    if let Some(newer_64) = installations.iter().find(|i| i.major > major && i.is_64bit) {
-        return Ok(newer_64.path.clone());
-    }
-
-    if let Some(newer) = installations.iter().find(|i| i.major > major) {
-        return Ok(newer.path.clone());
-    }
-
-    Err(LauncherError::JavaNotFound(major))
-}
-
-/// Maps Minecraft version to the Java major required by modern launchers.
 pub fn required_java_for_minecraft_version(minecraft_version: &str) -> u32 {
     let mut parts = minecraft_version.split('.');
     let major = parts
@@ -390,7 +246,6 @@ pub fn required_java_for_minecraft_version(minecraft_version: &str) -> u32 {
         .and_then(|p| p.parse::<u32>().ok())
         .unwrap_or(0);
 
-    // Java 21 is required from Minecraft 1.20.5 onward (including all 1.21+).
     if major > 1 || minor >= 21 || (minor == 20 && patch >= 5) {
         21
     } else if minor >= 17 {
@@ -405,19 +260,28 @@ pub fn is_usable_java_binary(path: &Path) -> bool {
     probe_java(&path_buf).is_some()
 }
 
+pub fn inspect_java_binary(path: &Path) -> Option<JavaInstallation> {
+    probe_java(&path.to_path_buf())
+}
+
 fn probe_java(path: &PathBuf) -> Option<JavaInstallation> {
     let output = Command::new(path).arg("-version").output().ok()?;
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let version_output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
     debug!(
         "Probing {:?}: {}",
         path,
-        stderr.lines().next().unwrap_or("")
+        version_output.lines().next().unwrap_or("")
     );
 
-    let version_str = parse_version_string(&stderr)?;
+    let version_str = parse_version_string(&version_output)?;
     let major = parse_major_version(&version_str);
-    let is_64bit = stderr.contains("64-Bit");
+    let is_64bit = version_output.contains("64-Bit");
+    let vendor = parse_vendor(&version_output);
 
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
 
@@ -426,6 +290,7 @@ fn probe_java(path: &PathBuf) -> Option<JavaInstallation> {
         version: version_str,
         major,
         is_64bit,
+        vendor,
     })
 }
 
@@ -438,6 +303,18 @@ fn parse_version_string(output: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn parse_vendor(output: &str) -> String {
+    for line in output.lines() {
+        if line.contains("Temurin") {
+            return "Temurin".to_string();
+        }
+        if line.contains("Adoptium") {
+            return "Adoptium".to_string();
+        }
+    }
+    "unknown".to_string()
 }
 
 fn parse_major_version(version: &str) -> u32 {
@@ -492,5 +369,13 @@ mod tests {
         assert_eq!(required_java_for_minecraft_version("1.20.6"), 21);
         assert_eq!(required_java_for_minecraft_version("1.21.1"), 21);
         assert_eq!(required_java_for_minecraft_version("25w03a"), 17);
+    }
+
+    #[test]
+    fn java_runtime_track_mapping() {
+        assert_eq!(runtime_track(8), 8);
+        assert_eq!(runtime_track(11), 17);
+        assert_eq!(runtime_track(17), 17);
+        assert_eq!(runtime_track(21), 21);
     }
 }

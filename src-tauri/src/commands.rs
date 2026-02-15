@@ -287,47 +287,28 @@ async fn validate_instance_state_before_launch(
 
 async fn validate_or_resolve_java(instance: &mut Instance) -> Result<(), LauncherError> {
     let required_major = instance.required_java_major.unwrap_or(17);
-    if let Some(custom_path) = &instance.java_path {
-        let installations = java::runtime::detect_java_installations_sync();
-        if let Some(found) = installations
-            .iter()
-            .find(|candidate| candidate.path == *custom_path)
-        {
-            if found.major != required_major {
-                return Err(LauncherError::Other(format!(
-                    "La Java configurada ({}) no coincide con la versión requerida {}",
-                    found.version, required_major
-                )));
-            }
-            if !found.is_64bit {
-                return Err(LauncherError::Other(
-                    "La Java configurada debe ser de 64 bits".into(),
-                ));
-            }
-            return Ok(());
-        }
-
-        if !custom_path.exists() {
-            instance.java_path = None;
-        }
-    }
-
     let resolved = java::resolve_java_binary(required_major).await?;
-    let detected = java::runtime::detect_java_installations_sync();
-    let resolved_info = detected.iter().find(|candidate| candidate.path == resolved);
 
-    if let Some(info) = resolved_info {
-        if info.major != required_major {
-            return Err(LauncherError::Other(format!(
-                "La Java resuelta ({}) no coincide con la versión requerida {}",
-                info.version, required_major
-            )));
-        }
-        if !info.is_64bit {
-            return Err(LauncherError::Other(
-                "La Java resuelta debe ser de 64 bits".into(),
-            ));
-        }
+    let resolved_info = java::runtime::inspect_java_binary(&resolved).ok_or_else(|| {
+        LauncherError::Other("No se pudo validar el runtime de Java resuelto".into())
+    })?;
+
+    if resolved_info.major != required_major {
+        return Err(LauncherError::Other(format!(
+            "La Java resuelta ({}) no coincide con la versión requerida {}",
+            resolved_info.version, required_major
+        )));
+    }
+    if !resolved_info.is_64bit {
+        return Err(LauncherError::Other(
+            "La Java resuelta debe ser de 64 bits".into(),
+        ));
+    }
+    if !(resolved_info.vendor.contains("Temurin") || resolved_info.vendor.contains("Adoptium")) {
+        return Err(LauncherError::Other(format!(
+            "Vendor de Java no soportado para runtime administrado: {}",
+            resolved_info.vendor
+        )));
     }
 
     instance.java_path = Some(resolved);
