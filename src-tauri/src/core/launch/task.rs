@@ -34,6 +34,7 @@ pub async fn launch(
         .unwrap_or_else(|| java::required_java_for_minecraft_version(&instance.minecraft_version));
 
     let java_bin = if let Some(path) = instance.java_path.as_ref() {
+        info!("Using Java override from instance config: {:?}", path);
         path.clone()
     } else {
         java::resolve_java_binary(required_java_major).await?
@@ -58,6 +59,26 @@ pub async fn launch(
     let natives_dir = instance.natives_dir();
     let game_dir = instance.game_dir();
     let assets_dir = game_dir.join("assets");
+
+    assert!(
+        java_bin.exists(),
+        "Resolved java_bin does not exist: {:?}",
+        java_bin
+    );
+
+    let java_canonical = std::fs::canonicalize(&java_bin).unwrap_or_else(|_| java_bin.clone());
+    info!("JAVA CANONICAL: {:?}", java_canonical);
+    info!("JAVA BIN USADO: {:?}", java_bin);
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let executable = std::fs::metadata(&java_bin)
+            .ok()
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false);
+        info!("JAVA EXECUTABLE: {}", executable);
+    }
 
     let mut cmd = std::process::Command::new(&java_bin);
 
@@ -124,6 +145,7 @@ pub async fn launch(
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
+    log_runtime_java_version(&java_bin, &game_dir);
     info!("Launching Minecraft with Java: {:?}", java_bin);
     debug!("Command: {:?}", cmd);
     debug!("Command (copy/paste): {}", format_command_for_logs(&cmd));
@@ -172,6 +194,12 @@ fn sanitize_jvm_args(
             .replace("${mc_version}", &instance.minecraft_version)
             .replace("${launcher_name}", "InterfaceOficial")
             .replace("${launcher_version}", "0.1.0");
+
+        if resolved.starts_with("-Djava.home=") {
+            info!("Dropping JVM override argument: {}", resolved);
+            i += 1;
+            continue;
+        }
 
         // Any remaining placeholders indicate data we cannot currently resolve.
         // Skip to avoid passing invalid runtime arguments to Java.
@@ -465,10 +493,7 @@ fn set_jvm_system_property(args: &mut Vec<String>, property: &str, value: &str) 
 fn configure_native_library_env(cmd: &mut std::process::Command, natives_dir: &std::path::Path) {
     let native_path = safe_path_str(natives_dir);
 
-    if cfg!(target_os = "windows") {
-        let merged = append_env_path("PATH", &native_path);
-        cmd.env("PATH", merged);
-    } else if cfg!(target_os = "linux") {
+    if cfg!(target_os = "linux") {
         let merged = append_env_path("LD_LIBRARY_PATH", &native_path);
         cmd.env("LD_LIBRARY_PATH", merged);
     } else if cfg!(target_os = "macos") {
@@ -489,6 +514,28 @@ fn configure_platform_spawn(cmd: &mut std::process::Command) {
         cmd.env_remove("WT_SESSION");
         cmd.env_remove("TERM");
         cmd.env_remove("ConEmuANSI");
+    }
+}
+
+fn log_runtime_java_version(java_bin: &std::path::Path, game_dir: &std::path::Path) {
+    let mut version_cmd = std::process::Command::new(java_bin);
+    version_cmd.arg("-version");
+    version_cmd.current_dir(game_dir);
+
+    let output = version_cmd.output();
+    match output {
+        Ok(out) => {
+            info!(
+                "JAVA VERSION REAL:\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        Err(err) => {
+            info!(
+                "JAVA VERSION REAL: failed to execute {:?}: {}",
+                java_bin, err
+            );
+        }
     }
 }
 

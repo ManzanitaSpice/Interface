@@ -364,6 +364,10 @@ pub async fn resolve_java_binary_in_dir(
     required_major: u32,
 ) -> LauncherResult<PathBuf> {
     let runtime_major = runtime_track(required_major);
+    info!(
+        "Resolving Java runtime track: required_major={} -> runtime_major={}",
+        required_major, runtime_major
+    );
     let runtimes_root = data_dir.join("runtimes");
     tokio::fs::create_dir_all(&runtimes_root)
         .await
@@ -441,7 +445,7 @@ pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
         );
     }
 
-    if let Ok(output) = Command::new("java").arg("-version").output() {
+    if let Ok(output) = Command::new(java_exe()).arg("-version").output() {
         let temp_path = if cfg!(windows) {
             PathBuf::from("java.exe")
         } else {
@@ -1582,11 +1586,46 @@ mod select {
         arch: &str,
     ) -> LauncherResult<Option<RuntimeCandidate>> {
         let mut candidates = scan_runtime_candidates(runtimes_root, arch).await?;
+        for candidate in &candidates {
+            info!(
+                "CANDIDATE: {:?} -> {}",
+                candidate.java_bin, candidate.metadata.version
+            );
+            info!("RUNTIME METADATA: {:?}", candidate.metadata);
+        }
+
         candidates.retain(|candidate| {
-            candidate.metadata.major == required_major
-                && runtime_is_valid(&candidate.java_bin, required_major)
-                && runtime_hash_matches(candidate)
-                && parse_java_version(&candidate.metadata.version).is_some()
+            let major_matches = candidate.metadata.major == required_major;
+            let valid_runtime = runtime_is_valid(&candidate.java_bin, required_major);
+            let hash_matches = runtime_hash_matches(candidate);
+            let version_parsed = parse_java_version(&candidate.metadata.version).is_some();
+
+            if !major_matches {
+                info!(
+                    "Discarding runtime {:?}: metadata.major={} required={}",
+                    candidate.java_bin, candidate.metadata.major, required_major
+                );
+            }
+            if !valid_runtime {
+                info!(
+                    "Discarding runtime {:?}: runtime_is_valid=false",
+                    candidate.java_bin
+                );
+            }
+            if !hash_matches {
+                info!(
+                    "Discarding runtime {:?}: runtime hash mismatch",
+                    candidate.java_bin
+                );
+            }
+            if !version_parsed {
+                info!(
+                    "Discarding runtime {:?}: invalid metadata version {}",
+                    candidate.java_bin, candidate.metadata.version
+                );
+            }
+
+            major_matches && valid_runtime && hash_matches && version_parsed
         });
 
         candidates.sort_by(|a, b| {
@@ -1653,6 +1692,7 @@ mod select {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };
+            info!("RUNTIME METADATA: {:?}", metadata);
 
             if metadata.arch != arch {
                 continue;
