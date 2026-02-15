@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use async_trait::async_trait;
-use futures::stream::{self, StreamExt};
+use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tracing::info;

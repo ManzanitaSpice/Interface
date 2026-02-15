@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use futures::stream::{self, StreamExt};
+use futures_util::stream::{self, StreamExt};
 use reqwest::Client;
 use sha1::{Digest, Sha1};
 use tauri::{AppHandle, Emitter};

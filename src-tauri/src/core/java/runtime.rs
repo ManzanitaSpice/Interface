@@ -1312,12 +1312,11 @@ mod download {
         let output_for_write = output_path.to_path_buf();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
-            let write_buf = chunk.to_vec();
             let out = output_for_write.clone();
             file = tokio::task::spawn_blocking(move || -> LauncherResult<std::fs::File> {
                 use std::io::Write;
                 let mut f = file;
-                f.write_all(&write_buf)
+                f.write_all(&chunk)
                     .map_err(|source| LauncherError::Io { path: out, source })?;
                 Ok(f)
             })
