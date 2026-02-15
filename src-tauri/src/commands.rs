@@ -400,7 +400,7 @@ fn verify_instance_runtime_readiness(
     app: &tauri::AppHandle,
     instance: &Instance,
     libs_dir: &Path,
-) -> Result<(), LauncherError> {
+) -> Result<Vec<PreflightFailure>, LauncherError> {
     let instance_id = instance.id.as_str();
 
     let instance_dir_ok = instance.path.is_dir();
@@ -431,10 +431,14 @@ fn verify_instance_runtime_readiness(
 
     let client_jar = instance.path.join("client.jar");
     let client_jar_ok = client_jar.is_file();
+    let client_jar_corrupted = client_jar_ok
+        && fs::metadata(&client_jar)
+            .map(|metadata| metadata.len() == 0)
+            .unwrap_or(false);
     log_preflight_check(
         app,
         instance_id,
-        client_jar_ok,
+        client_jar_ok && !client_jar_corrupted,
         format!("Bootstrap client.jar presente: {}", client_jar.display()),
     );
 
@@ -593,22 +597,123 @@ fn verify_instance_runtime_readiness(
         format!("JARs extra en mods detectados: {external_mod_jars}"),
     );
 
-    if !instance_dir_ok
-        || !game_dir_ok
-        || !assets_ok
-        || !client_jar_ok
-        || !loader_ok
-        || !main_class_ok
-        || !java_exists
-        || !java_major_ok
-        || !java_64_ok
-        || !args_ok
-        || !maven_ok
-    {
-        return Err(LauncherError::Other(
-            "Preflight fallido: revisión de estructura/Java/argumentos/dependencias incompleta"
+    let mut failures = Vec::new();
+
+    if !java_exists {
+        failures.push(PreflightFailure::MissingJava);
+    }
+    if java_exists && (!java_major_ok || !java_64_ok) {
+        failures.push(PreflightFailure::WrongJavaVersion);
+    }
+    if !instance_dir_ok || !game_dir_ok || !assets_ok || !client_jar_ok {
+        failures.push(PreflightFailure::MissingStructure);
+    }
+    if !maven_ok {
+        failures.push(PreflightFailure::MissingLibraries);
+    }
+    if client_jar_corrupted {
+        failures.push(PreflightFailure::CorruptedFiles);
+    }
+    if !loader_ok || !main_class_ok {
+        failures.push(PreflightFailure::InvalidLoader);
+    }
+    if !args_ok {
+        failures.push(PreflightFailure::Unknown);
+    }
+
+    Ok(failures)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreflightFailure {
+    MissingJava,
+    WrongJavaVersion,
+    MissingStructure,
+    MissingLibraries,
+    CorruptedFiles,
+    InvalidLoader,
+    Unknown,
+}
+
+impl PreflightFailure {
+    fn label(self) -> &'static str {
+        match self {
+            PreflightFailure::MissingJava => "MissingJava",
+            PreflightFailure::WrongJavaVersion => "WrongJavaVersion",
+            PreflightFailure::MissingStructure => "MissingStructure",
+            PreflightFailure::MissingLibraries => "MissingLibraries",
+            PreflightFailure::CorruptedFiles => "CorruptedFiles",
+            PreflightFailure::InvalidLoader => "InvalidLoader",
+            PreflightFailure::Unknown => "Unknown",
+        }
+    }
+}
+
+async fn attempt_preflight_repair(
+    app: &tauri::AppHandle,
+    state: &crate::core::state::AppState,
+    instance: &mut Instance,
+    failures: &[PreflightFailure],
+) -> Result<(), LauncherError> {
+    let labels = failures
+        .iter()
+        .map(|failure| failure.label())
+        .collect::<Vec<_>>()
+        .join(", ");
+    emit_launch_log(
+        app,
+        &instance.id,
+        "warn",
+        format!("[REPAIR] Preflight falló. Clasificación detectada: {labels}"),
+    );
+
+    let mut needs_prepare = false;
+    let mut force_full_prepare = false;
+
+    for failure in failures {
+        match failure {
+            PreflightFailure::MissingJava | PreflightFailure::WrongJavaVersion => {
+                emit_launch_log(
+                    app,
+                    &instance.id,
+                    "info",
+                    "[REPAIR] Resolviendo runtime de Java administrado compatible.".into(),
+                );
+                validate_or_resolve_java(instance).await?;
+            }
+            PreflightFailure::MissingStructure | PreflightFailure::MissingLibraries => {
+                needs_prepare = true;
+            }
+            PreflightFailure::CorruptedFiles => {
+                let client_jar = instance.path.join("client.jar");
+                if client_jar.exists() {
+                    let _ = tokio::fs::remove_file(&client_jar).await;
+                }
+                force_full_prepare = true;
+            }
+            PreflightFailure::InvalidLoader => {
+                force_full_prepare = true;
+            }
+            PreflightFailure::Unknown => {
+                needs_prepare = true;
+            }
+        }
+    }
+
+    if force_full_prepare {
+        instance.main_class = None;
+        needs_prepare = true;
+    }
+
+    if needs_prepare {
+        emit_launch_log(
+            app,
+            &instance.id,
+            "info",
+            "[REPAIR] Reejecutando preparación para reconstruir estructura y descargar faltantes."
                 .into(),
-        ));
+        );
+        prepare_instance_for_launch(state, instance).await?;
     }
 
     Ok(())
@@ -1455,7 +1560,64 @@ pub async fn launch_instance(
             "info",
             "[PREPARACIÓN] Ejecutando checklist preflight (estructura, Java, args, Maven, loader, bootstrap).".into(),
         );
-        verify_instance_runtime_readiness(&app_handle, &instance, &libs_dir)?;
+        let mut preflight_failures =
+            verify_instance_runtime_readiness(&app_handle, &instance, &libs_dir)?;
+        if !preflight_failures.is_empty() {
+            emit_launch_log(
+                &app_handle,
+                &id,
+                "warn",
+                "[PREPARACIÓN] Preflight con fallos: se iniciará autoreparación (máx. 2 intentos)."
+                    .into(),
+            );
+
+            let mut repaired = false;
+            for attempt in 1..=2 {
+                emit_launch_log(
+                    &app_handle,
+                    &id,
+                    "info",
+                    format!("[REPAIR] Intento automático {attempt}/2."),
+                );
+                attempt_preflight_repair(
+                    &app_handle,
+                    &state_guard,
+                    &mut instance,
+                    &preflight_failures,
+                )
+                .await?;
+                preflight_failures =
+                    verify_instance_runtime_readiness(&app_handle, &instance, &libs_dir)?;
+                if preflight_failures.is_empty() {
+                    repaired = true;
+                    emit_launch_log(
+                        &app_handle,
+                        &id,
+                        "info",
+                        "[REPAIR] Instancia reparada y validada correctamente.".into(),
+                    );
+                    break;
+                }
+            }
+
+            if !repaired {
+                let labels = preflight_failures
+                    .iter()
+                    .map(|failure| failure.label())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let err = LauncherError::Other(format!(
+                    "Preflight fallido tras autoreparación. Fallos persistentes: {labels}"
+                ));
+                emit_launch_progress(&app_handle, &id, 100, "Preflight fallido", "error");
+                emit_launch_log(&app_handle, &id, "error", format!("[ERROR] {err}"));
+                instance.state = InstanceState::Error;
+                state_guard.instance_manager.save(&instance).await?;
+                return Err(err);
+            }
+
+            state_guard.instance_manager.save(&instance).await?;
+        }
 
         let classpath = launch::build_classpath(&instance, &libs_dir, &instance.libraries)?;
         let _natives_dir =
