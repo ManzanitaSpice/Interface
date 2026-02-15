@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::process::Command;
 use std::sync::Arc;
 use std::{fs, path::Path};
@@ -336,6 +337,198 @@ async fn validate_or_resolve_java(instance: &mut Instance) -> Result<(), Launche
     }
 
     instance.java_path = Some(resolved);
+    Ok(())
+}
+
+fn log_preflight_check(
+    app: &tauri::AppHandle,
+    instance_id: &str,
+    ok: bool,
+    detail: impl Into<String>,
+) {
+    let prefix = if ok { "✅" } else { "❌" };
+    let level = if ok { "info" } else { "error" };
+    emit_launch_log(
+        app,
+        instance_id,
+        level,
+        format!("[CHECK] {prefix} {}", detail.into()),
+    );
+}
+
+fn verify_instance_runtime_readiness(
+    app: &tauri::AppHandle,
+    instance: &Instance,
+    libs_dir: &Path,
+) -> Result<(), LauncherError> {
+    let instance_id = instance.id.as_str();
+
+    let instance_dir_ok = instance.path.is_dir();
+    log_preflight_check(
+        app,
+        instance_id,
+        instance_dir_ok,
+        format!("Estructura base de instancia: {}", instance.path.display()),
+    );
+
+    let game_dir = instance.game_dir();
+    let game_dir_ok = game_dir.is_dir();
+    log_preflight_check(
+        app,
+        instance_id,
+        game_dir_ok,
+        format!("Carpeta minecraft disponible: {}", game_dir.display()),
+    );
+
+    let assets_dir = game_dir.join("assets");
+    let assets_ok = assets_dir.is_dir();
+    log_preflight_check(
+        app,
+        instance_id,
+        assets_ok,
+        format!("Carpeta assets disponible: {}", assets_dir.display()),
+    );
+
+    let client_jar = instance.path.join("client.jar");
+    let client_jar_ok = client_jar.is_file();
+    log_preflight_check(
+        app,
+        instance_id,
+        client_jar_ok,
+        format!("Bootstrap client.jar presente: {}", client_jar.display()),
+    );
+
+    let loader_ok = matches!(instance.loader, LoaderType::Vanilla)
+        || instance
+            .loader_version
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty());
+    log_preflight_check(
+        app,
+        instance_id,
+        loader_ok,
+        format!(
+            "Loader configurado ({:?} {:?})",
+            instance.loader, instance.loader_version
+        ),
+    );
+
+    let main_class_ok = instance.main_class.is_some();
+    log_preflight_check(
+        app,
+        instance_id,
+        main_class_ok,
+        format!("Main class resuelta: {:?}", instance.main_class),
+    );
+
+    let java_path = instance
+        .java_path
+        .as_ref()
+        .ok_or_else(|| LauncherError::Other("No hay Java asignada a la instancia".into()))?;
+    let java_exists = java_path.is_file();
+    log_preflight_check(
+        app,
+        instance_id,
+        java_exists,
+        format!(
+            "Binario Java inyectado en instancia: {}",
+            java_path.display()
+        ),
+    );
+
+    let java_installations = java::runtime::detect_java_installations_sync();
+    let required_major = instance.required_java_major.unwrap_or(17);
+    let java_info = java_installations
+        .iter()
+        .find(|candidate| candidate.path == *java_path);
+    let java_major_ok = java_info.is_some_and(|candidate| candidate.major >= required_major);
+    log_preflight_check(
+        app,
+        instance_id,
+        java_major_ok,
+        format!(
+            "Java compatible con Minecraft {} (requerida {}, actual {:?})",
+            instance.minecraft_version,
+            required_major,
+            java_info.map(|candidate| candidate.major)
+        ),
+    );
+
+    let java_64_ok = java_info.is_some_and(|candidate| candidate.is_64bit);
+    log_preflight_check(app, instance_id, java_64_ok, "Java de 64 bits validada");
+
+    let unresolved_jvm = instance
+        .jvm_args
+        .iter()
+        .filter(|arg| arg.contains("${"))
+        .count();
+    let unresolved_game = instance
+        .game_args
+        .iter()
+        .filter(|arg| arg.contains("${"))
+        .count();
+    let args_ok = unresolved_jvm == 0 && unresolved_game == 0;
+    log_preflight_check(
+        app,
+        instance_id,
+        args_ok,
+        format!(
+            "Argumentos listos (JVM sin placeholders: {}, Game sin placeholders: {})",
+            unresolved_jvm == 0,
+            unresolved_game == 0
+        ),
+    );
+
+    let mut missing_maven_artifacts = 0usize;
+    for coord in &instance.libraries {
+        if let Ok(artifact) = crate::core::maven::MavenArtifact::parse(coord) {
+            if !libs_dir.join(artifact.local_path()).exists() {
+                missing_maven_artifacts += 1;
+            }
+        }
+    }
+    let maven_ok = missing_maven_artifacts == 0;
+    log_preflight_check(
+        app,
+        instance_id,
+        maven_ok,
+        format!("Dependencias Maven listas (faltantes: {missing_maven_artifacts})"),
+    );
+
+    let external_mod_jars = fs::read_dir(instance.mods_dir())
+        .ok()
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.path().extension() == Some(OsStr::new("jar")))
+                .count()
+        })
+        .unwrap_or(0);
+    log_preflight_check(
+        app,
+        instance_id,
+        true,
+        format!("JARs extra en mods detectados: {external_mod_jars}"),
+    );
+
+    if !instance_dir_ok
+        || !game_dir_ok
+        || !assets_ok
+        || !client_jar_ok
+        || !loader_ok
+        || !main_class_ok
+        || !java_exists
+        || !java_major_ok
+        || !java_64_ok
+        || !args_ok
+        || !maven_ok
+    {
+        return Err(LauncherError::Other(
+            "Preflight fallido: revisión de estructura/Java/argumentos/dependencias incompleta"
+                .into(),
+        ));
+    }
+
     Ok(())
 }
 
@@ -925,19 +1118,18 @@ pub async fn create_instance(
         instance.libraries.sort();
         instance.libraries.dedup();
 
-        match state.launcher_settings.java_runtime {
-            JavaRuntimePreference::System => {
-                if let Some(ref selected) = state.launcher_settings.selected_java_path {
-                    instance.java_path = Some(selected.clone());
-                }
-            }
-            JavaRuntimePreference::Embedded => {
-                let embedded = state.embedded_java_path();
-                if crate::core::java::runtime::is_usable_java_binary(&embedded) {
-                    instance.java_path = Some(embedded);
-                }
-            }
-            JavaRuntimePreference::Auto => {}
+        validate_or_resolve_java(&mut instance).await?;
+        if let Some(java_path) = &instance.java_path {
+            emit_create_log(
+                &app,
+                &instance.id,
+                "info",
+                format!(
+                    "✅ Java seleccionada automáticamente para {}: {}",
+                    instance.minecraft_version,
+                    java_path.display()
+                ),
+            );
         }
 
         Ok(())
@@ -1175,6 +1367,14 @@ pub async fn launch_instance(
         );
 
         let libs_dir = state_guard.libraries_dir();
+        emit_launch_log(
+            &app_handle,
+            &id,
+            "info",
+            "[PREPARACIÓN] Ejecutando checklist preflight (estructura, Java, args, Maven, loader, bootstrap).".into(),
+        );
+        verify_instance_runtime_readiness(&app_handle, &instance, &libs_dir)?;
+
         let classpath = launch::build_classpath(&instance, &libs_dir, &instance.libraries)?;
         let _natives_dir =
             launch::extract_natives(&instance, &libs_dir, &instance.libraries).await?;
