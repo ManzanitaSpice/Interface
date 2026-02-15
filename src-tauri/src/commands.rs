@@ -316,7 +316,9 @@ async fn validate_instance_state_before_launch(
 }
 
 async fn validate_or_resolve_java(instance: &mut Instance) -> Result<(), LauncherError> {
-    let required_major = instance.required_java_major.unwrap_or(17);
+    let required_major = instance
+        .required_java_major
+        .unwrap_or_else(|| java::required_java_for_minecraft_version(&instance.minecraft_version));
     let resolved = java::resolve_java_binary(required_major).await?;
 
     let resolved_info = java::runtime::inspect_java_binary(&resolved).ok_or_else(|| {
@@ -474,11 +476,13 @@ fn verify_instance_runtime_readiness(
         ),
     );
 
-    let java_installations = java::runtime::detect_java_installations_sync();
-    let required_major = instance.required_java_major.unwrap_or(17);
-    let java_info = java_installations
-        .iter()
-        .find(|candidate| candidate.path == *java_path);
+    let required_major = instance
+        .required_java_major
+        .unwrap_or_else(|| java::required_java_for_minecraft_version(&instance.minecraft_version));
+
+    // Verificar el binario asignado directamente evita falsos negativos cuando
+    // la ruta no coincide exactamente con entradas indexadas/canonizadas.
+    let java_info = java::runtime::inspect_java_binary(java_path);
     let java_major_ok = java_info.is_some_and(|candidate| candidate.major >= required_major);
     log_preflight_check(
         app,
@@ -488,11 +492,13 @@ fn verify_instance_runtime_readiness(
             "Java compatible con Minecraft {} (requerida {}, actual {:?})",
             instance.minecraft_version,
             required_major,
-            java_info.map(|candidate| candidate.major)
+            java_info.as_ref().map(|candidate| candidate.major)
         ),
     );
 
-    let java_64_ok = java_info.is_some_and(|candidate| candidate.is_64bit);
+    let java_64_ok = java_info
+        .as_ref()
+        .is_some_and(|candidate| candidate.is_64bit);
     log_preflight_check(app, instance_id, java_64_ok, "Java de 64 bits validada");
 
     let known_jvm_placeholders = HashSet::from([

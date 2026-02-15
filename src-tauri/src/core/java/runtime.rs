@@ -653,7 +653,8 @@ fn probe_java(path: &PathBuf) -> Option<JavaInstallation> {
 
     let version_str = parse_version_string(&version_output)?;
     let major = parse_major_version(&version_str);
-    let is_64bit = version_output.contains("64-Bit");
+    let lower_output = version_output.to_ascii_lowercase();
+    let is_64bit = lower_output.contains("64-bit") || lower_output.contains("64 bit");
     let vendor = parse_vendor(&version_output);
 
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
