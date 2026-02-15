@@ -204,13 +204,7 @@ async fn install_runtime(
             source,
         })?;
 
-    let temp_root_for_extract = temp_root.clone();
-    let zip_path_for_extract = zip_path.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        extract_jre_zip_from_file(&zip_path_for_extract, &temp_root_for_extract)
-    })
-    .await
-    .map_err(|e| LauncherError::Other(format!("Join error extracting runtime: {e}")))??;
+    extract_jre_zip_from_file_async(&zip_path, &temp_root).await?;
 
     let java_bin = temp_root.join("bin").join(java_exe());
     if !runtime_is_valid(&java_bin, required_major) {
@@ -552,6 +546,20 @@ fn extract_jre_zip_from_file(zip_path: &Path, runtime_root: &Path) -> LauncherRe
         source,
     })?;
     extract_jre_zip(&bytes, runtime_root)
+}
+
+async fn extract_jre_zip_from_file_async(
+    zip_path: &Path,
+    runtime_root: &Path,
+) -> LauncherResult<()> {
+    let zip_path = zip_path.to_path_buf();
+    let runtime_root = runtime_root.to_path_buf();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        extract_jre_zip_from_file(&zip_path, &runtime_root)
+    })
+    .await
+    .map_err(|e| LauncherError::Other(format!("Join error extracting runtime: {e}")))?
 }
 
 pub fn required_java_for_minecraft_version(minecraft_version: &str) -> u32 {
