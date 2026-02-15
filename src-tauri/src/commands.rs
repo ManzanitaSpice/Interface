@@ -1191,7 +1191,9 @@ async fn prepare_instance_for_launch(
         instance.required_java_major = vanilla_result.java_major;
 
         if instance.loader != LoaderType::Vanilla {
-            if vanilla_result.java_major >= 21
+            if vanilla_result
+                .java_major
+                .is_some_and(|java_major| java_major >= 21)
                 && matches!(instance.loader, LoaderType::Forge | LoaderType::NeoForge)
             {
                 if let Some(recommended_version) =
@@ -1722,7 +1724,9 @@ pub async fn create_instance(
         instance.required_java_major = vanilla_result.java_major;
 
         if instance.loader != LoaderType::Vanilla {
-            if vanilla_result.java_major >= 21
+            if vanilla_result
+                .java_major
+                .is_some_and(|java_major| java_major >= 21)
                 && matches!(instance.loader, LoaderType::Forge | LoaderType::NeoForge)
             {
                 if let Some(recommended_version) =
