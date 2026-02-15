@@ -25,6 +25,17 @@ pub struct JavaInstallation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedRuntimeInfo {
+    pub identifier: String,
+    pub major: u32,
+    pub vendor: String,
+    pub version: String,
+    pub arch: String,
+    pub root: PathBuf,
+    pub java_bin: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct RuntimeMetadata {
     identifier: String,
     major: u32,
@@ -86,6 +97,37 @@ pub fn managed_runtime_dir(data_dir: &Path, major: u32) -> PathBuf {
 pub async fn resolve_java_binary(required_major: u32) -> LauncherResult<PathBuf> {
     let base_dir = launcher_base_dir();
     resolve_java_binary_in_dir(&base_dir, required_major).await
+}
+
+pub async fn managed_runtime_info(
+    required_major: u32,
+) -> LauncherResult<Option<ManagedRuntimeInfo>> {
+    let base_dir = launcher_base_dir();
+    managed_runtime_info_in_dir(&base_dir, required_major).await
+}
+
+pub async fn managed_runtime_info_in_dir(
+    data_dir: &Path,
+    required_major: u32,
+) -> LauncherResult<Option<ManagedRuntimeInfo>> {
+    let runtime_major = runtime_track(required_major);
+    let arch = platform_arch();
+    let runtimes_root = data_dir.join("runtimes");
+
+    let Some(candidate) = best_compatible_runtime(&runtimes_root, runtime_major, &arch).await?
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(ManagedRuntimeInfo {
+        identifier: candidate.metadata.identifier,
+        major: candidate.metadata.major,
+        vendor: candidate.metadata.vendor,
+        version: candidate.metadata.version,
+        arch: candidate.metadata.arch,
+        root: candidate.root,
+        java_bin: candidate.java_bin,
+    }))
 }
 
 pub async fn resolve_java_binary_in_dir(
