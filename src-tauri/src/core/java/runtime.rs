@@ -6,7 +6,6 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
@@ -376,10 +375,10 @@ pub async fn resolve_java_binary_in_dir(
 
     let arch = platform::platform_arch();
 
-    if let Some(cached) = read_resolution_cache(data_dir, runtime_major)?
-        && runtime_is_valid(&cached, runtime_major)
-    {
-        return Ok(cached);
+    if let Some(cached) = read_resolution_cache(data_dir, runtime_major)? {
+        if runtime_is_valid(&cached, runtime_major) {
+            return Ok(cached);
+        }
     }
 
     if let Some(existing) =
@@ -724,26 +723,27 @@ async fn acquire_runtime_lock(lock_path: &Path) -> LauncherResult<RuntimeLockGua
 }
 
 async fn cleanup_stale_lock(lock_path: &Path) {
-    if let Ok(content) = tokio::fs::read_to_string(lock_path).await
-        && let Ok(value) = serde_json::from_str::<serde_json::Value>(&content)
-    {
-        let pid = value
-            .get("pid")
-            .and_then(|v| v.as_u64())
-            .unwrap_or_default() as u32;
-        let timestamp = value
-            .get("timestamp")
-            .and_then(|v| v.as_i64())
-            .unwrap_or_default();
-        let expired = Utc::now().timestamp().saturating_sub(timestamp) > RUNTIME_LOCK_STALE_SECS;
+    if let Ok(content) = tokio::fs::read_to_string(lock_path).await {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
+            let pid = value
+                .get("pid")
+                .and_then(|v| v.as_u64())
+                .unwrap_or_default() as u32;
+            let timestamp = value
+                .get("timestamp")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_default();
+            let expired =
+                Utc::now().timestamp().saturating_sub(timestamp) > RUNTIME_LOCK_STALE_SECS;
 
-        #[cfg(target_os = "linux")]
-        let dead = !PathBuf::from(format!("/proc/{pid}")).exists();
-        #[cfg(not(target_os = "linux"))]
-        let dead = false;
+            #[cfg(target_os = "linux")]
+            let dead = !PathBuf::from(format!("/proc/{pid}")).exists();
+            #[cfg(not(target_os = "linux"))]
+            let dead = false;
 
-        if expired || dead {
-            let _ = tokio::fs::remove_file(lock_path).await;
+            if expired || dead {
+                let _ = tokio::fs::remove_file(lock_path).await;
+            }
         }
     }
 }
@@ -794,13 +794,13 @@ fn ensure_min_disk_space(path: &Path, minimum_bytes: u64) -> LauncherResult<()> 
             }
         }
     }
-    if let Some(bytes) = available
-        && bytes < minimum_bytes
-    {
-        return Err(LauncherError::Other(format!(
-            "Espacio insuficiente para instalar runtime: disponible={} requerido={}",
-            bytes, minimum_bytes
-        )));
+    if let Some(bytes) = available {
+        if bytes < minimum_bytes {
+            return Err(LauncherError::Other(format!(
+                "Espacio insuficiente para instalar runtime: disponible={} requerido={}",
+                bytes, minimum_bytes
+            )));
+        }
     }
     Ok(())
 }
@@ -962,10 +962,10 @@ fn find_java_binary_recursive(root: &Path) -> Option<PathBuf> {
             if path.file_name().and_then(|n| n.to_str()) == Some(java_exe()) {
                 return Some(path);
             }
-        } else if file_type.is_dir()
-            && let Some(found) = find_java_binary_recursive(&path)
-        {
-            return Some(found);
+        } else if file_type.is_dir() {
+            if let Some(found) = find_java_binary_recursive(&path) {
+                return Some(found);
+            }
         }
     }
     None
@@ -1152,10 +1152,10 @@ mod probe {
 
     fn parse_version_string(output: &str) -> Option<String> {
         for line in output.lines() {
-            if let Some(start) = line.find('"')
-                && let Some(end) = line[start + 1..].find('"')
-            {
-                return Some(line[start + 1..start + 1 + end].to_string());
+            if let Some(start) = line.find('"') {
+                if let Some(end) = line[start + 1..].find('"') {
+                    return Some(line[start + 1..start + 1 + end].to_string());
+                }
             }
         }
         None
@@ -1179,6 +1179,7 @@ mod probe {
 
 mod download {
     use super::*;
+    use futures_util::StreamExt;
 
     pub async fn fetch_runtime_spec(
         required_major: u32,
@@ -1259,12 +1260,14 @@ mod download {
                 .unwrap_or_default();
         }
 
-        if checkpoint_path.exists()
-            && let Ok(bytes) = tokio::fs::read(&checkpoint_path).await
-            && let Ok(checkpoint) = serde_json::from_slice::<DownloadCheckpoint>(&bytes)
-            && checkpoint.downloaded_bytes > start_offset
-        {
-            start_offset = checkpoint.downloaded_bytes;
+        if checkpoint_path.exists() {
+            if let Ok(bytes) = tokio::fs::read(&checkpoint_path).await {
+                if let Ok(checkpoint) = serde_json::from_slice::<DownloadCheckpoint>(&bytes) {
+                    if checkpoint.downloaded_bytes > start_offset {
+                        start_offset = checkpoint.downloaded_bytes;
+                    }
+                }
+            }
         }
 
         let client = http_client()?;
@@ -1312,6 +1315,7 @@ mod download {
         let output_for_write = output_path.to_path_buf();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
+            let chunk_len = chunk.len();
             let out = output_for_write.clone();
             file = tokio::task::spawn_blocking(move || -> LauncherResult<std::fs::File> {
                 use std::io::Write;
@@ -1323,8 +1327,8 @@ mod download {
             .await
             .map_err(|e| LauncherError::Other(format!("Task join error: {e}")))??;
 
-            downloaded = downloaded.saturating_add(chunk.len() as u64);
-            if downloaded % (4 * 1024 * 1024) < chunk.len() as u64 {
+            downloaded = downloaded.saturating_add(chunk_len as u64);
+            if downloaded % (4 * 1024 * 1024) < chunk_len as u64 {
                 let payload = serde_json::to_vec(&DownloadCheckpoint {
                     downloaded_bytes: downloaded,
                 })?;
