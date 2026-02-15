@@ -193,7 +193,7 @@ function App() {
   const [showSearchInput, setShowSearchInput] = useState(false);
   const [expandedInstanceId, setExpandedInstanceId] = useState<string | null>(null);
   const [optimizingInstanceId, setOptimizingInstanceId] = useState<string | null>(null);
-  const [optimizationMode, setOptimizationMode] = useState<OptimizationMode>("balanced");
+  const [optimizationMode] = useState<OptimizationMode>("balanced");
   const [pendingDeleteInstances, setPendingDeleteInstances] = useState<InstanceInfo[] | null>(null);
   const [deleteInProgress, setDeleteInProgress] = useState(false);
   const [deleteFeedback, setDeleteFeedback] = useState<{ type: "idle" | "progress" | "success" | "error"; message: string; needsElevation?: boolean }>({
@@ -778,18 +778,11 @@ function App() {
           <div className="instances-toolbar-left">
             <button type="button" onClick={() => setAppMode("create")}>Crear instancia</button>
             <button type="button" onClick={() => setShowSearchInput((prev) => !prev)}>Buscar instancias</button>
-            <select
-              value={optimizationMode}
-              onChange={(event) => setOptimizationMode(event.target.value as OptimizationMode)}
-              aria-label="Modo de optimización"
-            >
-              <option value="balanced">⚡ Equilibrado</option>
-              <option value="max_performance">🚀 Máximo rendimiento</option>
-              <option value="low_power">💻 Bajo consumo</option>
-            </select>
-            <button type="button" className="danger" disabled={selectedInstances.length === 0} onClick={openDeleteSelectedModal}>
-              Eliminar seleccionadas ({selectedInstances.length})
-            </button>
+            {selectedInstances.length > 1 && (
+              <button type="button" className="danger" onClick={openDeleteSelectedModal}>
+                Eliminar seleccionadas ({selectedInstances.length})
+              </button>
+            )}
             <div className="toolbar-menu" ref={sortMenuRef}>
               <button type="button" aria-label="Ordenar instancias" onClick={() => setShowSortMenu((prev) => !prev)}>Ordenar</button>
               {showSortMenu && (
