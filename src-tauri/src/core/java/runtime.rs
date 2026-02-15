@@ -700,6 +700,11 @@ pub fn required_java_for_minecraft_version(minecraft_version: &str) -> u32 {
     }
 }
 
+pub fn is_java_compatible_major(installed_major: u32, required_major: u32) -> bool {
+    installed_major >= required_major
+        && runtime_track(installed_major) == runtime_track(required_major)
+}
+
 pub fn is_usable_java_binary(path: &Path) -> bool {
     let path_buf = path.to_path_buf();
     probe_java(&path_buf).is_some()
@@ -953,5 +958,15 @@ mod tests {
             compare_java_versions("21.0.10+7-LTS", "21.0.3+11"),
             Some(Ordering::Greater)
         );
+    }
+
+    #[test]
+    fn java_compatibility_rejects_wrong_track() {
+        assert!(is_java_compatible_major(21, 17));
+        assert!(is_java_compatible_major(17, 17));
+        assert!(is_java_compatible_major(8, 8));
+        assert!(!is_java_compatible_major(21, 8));
+        assert!(!is_java_compatible_major(17, 8));
+        assert!(!is_java_compatible_major(17, 21));
     }
 }
