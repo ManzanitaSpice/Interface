@@ -282,12 +282,6 @@ async fn validate_instance_state_before_launch(
         ));
     }
 
-    if instance.required_java_major.is_none() {
-        return Err(LauncherError::Other(
-            "Instancia inválida: falta required_java_major".into(),
-        ));
-    }
-
     Ok(())
 }
 
