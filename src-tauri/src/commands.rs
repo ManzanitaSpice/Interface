@@ -217,6 +217,24 @@ pub struct JavaRuntimeMetadataPayload {
 }
 
 #[derive(Debug, Serialize)]
+pub struct RuntimeListPayload {
+    pub runtimes: Vec<java::ManagedRuntimeInfo>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RuntimeResolvePayload {
+    pub required_java_major: u32,
+    pub java_path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RuntimeValidatePayload {
+    pub path: String,
+    pub required_java_major: u32,
+    pub valid: bool,
+}
+
+#[derive(Debug, Serialize)]
 pub struct JavaCheckReport {
     pub path: String,
     pub usable: bool,
@@ -2377,6 +2395,58 @@ pub async fn check_java_binary(payload: JavaPathPayload) -> Result<JavaCheckRepo
 }
 
 #[tauri::command]
+pub async fn list_runtimes(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+) -> Result<RuntimeListPayload, LauncherError> {
+    let state = state.lock().await;
+    let manager = java::runtime::RuntimeManager::from_global_paths()?;
+    let runtimes = manager.list_runtimes().await?;
+    let _ = &state;
+    Ok(RuntimeListPayload { runtimes })
+}
+
+#[tauri::command]
+pub async fn resolve_java(
+    required_java_major: u32,
+) -> Result<RuntimeResolvePayload, LauncherError> {
+    let manager = java::runtime::RuntimeManager::from_global_paths()?;
+    let java_path = manager.resolve_java(required_java_major).await?;
+    Ok(RuntimeResolvePayload {
+        required_java_major,
+        java_path: java_path.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
+pub async fn validate_java(
+    payload: JavaPathPayload,
+    required_java_major: u32,
+) -> Result<RuntimeValidatePayload, LauncherError> {
+    let manager = java::runtime::RuntimeManager::from_global_paths()?;
+    let path = std::path::PathBuf::from(&payload.path);
+    let canonical = std::fs::canonicalize(&path).unwrap_or(path);
+    let valid = manager.validate_java(&canonical, required_java_major);
+    Ok(RuntimeValidatePayload {
+        path: canonical.to_string_lossy().to_string(),
+        required_java_major,
+        valid,
+    })
+}
+
+#[tauri::command]
+pub async fn clear_runtimes() -> Result<bool, LauncherError> {
+    let manager = java::runtime::RuntimeManager::from_global_paths()?;
+    manager.clear_runtimes().await?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn runtime_diagnostic() -> Result<java::RuntimeDiagnostic, LauncherError> {
+    let manager = java::runtime::RuntimeManager::from_global_paths()?;
+    manager.diagnostics().await
+}
+
+#[tauri::command]
 pub async fn get_first_launch_status(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<FirstLaunchStatus, LauncherError> {
@@ -2451,10 +2521,24 @@ pub async fn update_launcher_settings(
     let mut state = state.lock().await;
 
     state.launcher_settings.java_runtime = payload.java_runtime;
-    state.launcher_settings.selected_java_path = payload
-        .selected_java_path
-        .as_ref()
-        .map(std::path::PathBuf::from);
+    state.launcher_settings.selected_java_path = if let Some(custom) =
+        payload.selected_java_path.as_ref()
+    {
+        let candidate = std::path::PathBuf::from(custom);
+        let canonical = std::fs::canonicalize(&candidate).map_err(|source| LauncherError::Io {
+            path: candidate.clone(),
+            source,
+        })?;
+        if crate::core::java::runtime::inspect_java_binary(&canonical).is_none() {
+            return Err(LauncherError::Other(format!(
+                "Ruta Java inválida para override manual: {}",
+                canonical.display()
+            )));
+        }
+        Some(canonical)
+    } else {
+        None
+    };
 
     state.save_settings().map_err(|e| {
         LauncherError::Other(format!("No se pudo guardar launcher_settings.json: {e}"))
