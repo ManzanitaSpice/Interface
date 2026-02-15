@@ -46,7 +46,9 @@ pub async fn launch(
         required_java_major, instance.minecraft_version
     );
 
-    if resolved_java_major.map_or(true, |major| major < required_java_major) {
+    let java_compatible = resolved_java_major
+        .is_some_and(|major| java::is_java_compatible_major(major, required_java_major));
+    if !java_compatible {
         return Err(LauncherError::Other(format!(
             "Java incompatible para Minecraft {}: requerida {}, detectada {:?}",
             instance.minecraft_version, required_java_major, resolved_java_major

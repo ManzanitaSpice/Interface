@@ -324,8 +324,9 @@ async fn validate_or_resolve_java(
         .unwrap_or_else(|| java::required_java_for_minecraft_version(&instance.minecraft_version));
 
     let is_valid = |candidate: &std::path::PathBuf| {
-        java::runtime::inspect_java_binary(candidate)
-            .is_some_and(|info| info.major >= required_major && info.is_64bit)
+        java::runtime::inspect_java_binary(candidate).is_some_and(|info| {
+            java::is_java_compatible_major(info.major, required_major) && info.is_64bit
+        })
     };
 
     if let Some(custom_path) = state.launcher_settings.selected_java_path.as_ref() {
@@ -503,16 +504,15 @@ fn verify_instance_runtime_readiness(
     // la ruta no coincide exactamente con entradas indexadas/canonizadas.
     let java_info = java::runtime::inspect_java_binary(java_path);
     let detected_java_major = java_info.as_ref().map(|candidate| candidate.major);
-    let java_major_ok = detected_java_major.is_some_and(|major| major >= required_major);
+    let java_major_ok = detected_java_major
+        .is_some_and(|major| java::is_java_compatible_major(major, required_major));
     log_preflight_check(
         app,
         instance_id,
         java_major_ok,
         format!(
             "Java compatible con Minecraft {} (requerida {}, actual {:?})",
-            instance.minecraft_version,
-            required_major,
-            detected_java_major
+            instance.minecraft_version, required_major, detected_java_major
         ),
     );
 
@@ -2339,15 +2339,19 @@ pub async fn get_required_java_version(
 
 #[tauri::command]
 pub async fn install_managed_java(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
     payload: MinecraftVersionPayload,
 ) -> Result<JavaCheckReport, LauncherError> {
+    let state = state.lock().await;
     let required_java_major = java::required_java_for_minecraft_version(&payload.minecraft_version);
-    let java_path = java::resolve_java_binary(required_java_major).await?;
+    let java_path = java::resolve_java_binary_in_dir(&state.data_dir, required_java_major).await?;
     let details = java::runtime::inspect_java_binary(&java_path);
 
     Ok(JavaCheckReport {
         path: java_path.to_string_lossy().to_string(),
-        usable: details.is_some(),
+        usable: details
+            .as_ref()
+            .is_some_and(|info| java::is_java_compatible_major(info.major, required_java_major)),
         details,
     })
 }
