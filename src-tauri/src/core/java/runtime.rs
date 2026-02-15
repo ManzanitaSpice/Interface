@@ -101,7 +101,7 @@ pub async fn resolve_java_binary(required_major: u32) -> LauncherResult<PathBuf>
 
 pub async fn ensure_embedded_runtime_registered(data_dir: &Path) -> LauncherResult<()> {
     let embedded_root = data_dir.join("runtime");
-    let embedded_java = embedded_root.join("bin").join(java_exe());
+    let embedded_java = locate_java_binary(&embedded_root);
     let Some(info) = probe_java(&embedded_java) else {
         return Ok(());
     };
@@ -140,6 +140,7 @@ pub async fn ensure_embedded_runtime_registered(data_dir: &Path) -> LauncherResu
     if !runtime_root.exists() {
         copy_dir_recursive(&embedded_root, &runtime_root)?;
     }
+    ensure_java_executable(&runtime_root)?;
     write_runtime_metadata(&runtime_root, &metadata).await?;
     update_runtime_index(&runtimes_root, &metadata).await?;
     Ok(())
@@ -301,8 +302,15 @@ async fn install_runtime(
         })?;
 
     extract_jre_zip_from_file_async(&zip_path, &temp_root).await?;
+    ensure_java_executable(&temp_root)?;
 
-    let java_bin = temp_root.join("bin").join(java_exe());
+    let java_bin = locate_java_binary(&temp_root);
+    info!("Java bin path: {:?}", java_bin);
+    info!("Java bin exists: {}", java_bin.exists());
+    info!(
+        "Java bin canonical: {:?}",
+        std::fs::canonicalize(&java_bin).ok()
+    );
     if !runtime_is_valid(&java_bin, required_major) {
         let _ = tokio::fs::remove_file(&zip_path).await;
         let _ = tokio::fs::remove_dir_all(&temp_root).await;
@@ -338,24 +346,44 @@ async fn fetch_runtime_spec(
     required_major: u32,
     arch: &str,
 ) -> LauncherResult<DownloadRuntimeSpec> {
-    let api_url = format!(
-        "{}/{}/hotspot?architecture={}&image_type=jre&os={}&vendor=eclipse",
-        ADOPTIUM_API_BASE,
-        required_major,
-        arch,
-        platform_os()
-    );
-    let response = reqwest::get(&api_url).await?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(LauncherError::DownloadFailed {
-            url: api_url,
-            status: status.as_u16(),
-        });
+    let mut last_download_error: Option<LauncherError> = None;
+    let mut release: Option<AdoptiumRelease> = None;
+
+    for image_type in ["jre", "jdk"] {
+        let api_url = format!(
+            "{}/{}/hotspot?architecture={}&image_type={}&os={}&vendor=eclipse",
+            ADOPTIUM_API_BASE,
+            required_major,
+            arch,
+            image_type,
+            platform_os()
+        );
+
+        match reqwest::get(&api_url).await {
+            Ok(response) => {
+                let status = response.status();
+                if !status.is_success() {
+                    last_download_error = Some(LauncherError::DownloadFailed {
+                        url: api_url,
+                        status: status.as_u16(),
+                    });
+                    continue;
+                }
+
+                let releases: Vec<AdoptiumRelease> = response.json().await?;
+                if let Some(found) = releases.into_iter().next() {
+                    release = Some(found);
+                    break;
+                }
+            }
+            Err(source) => return Err(source.into()),
+        }
     }
 
-    let releases: Vec<AdoptiumRelease> = response.json().await?;
-    let Some(release) = releases.into_iter().next() else {
+    let Some(release) = release else {
+        if let Some(error) = last_download_error {
+            return Err(error);
+        }
         return Err(LauncherError::Other(format!(
             "No runtime release found for Java {} ({arch})",
             required_major
@@ -559,9 +587,7 @@ fn runtime_is_valid(java_bin: &Path, required_major: u32) -> bool {
         return false;
     };
 
-    info.major == required_major
-        && info.is_64bit
-        && (info.vendor.contains("Temurin") || info.vendor.contains("Adoptium"))
+    info.major == required_major && info.is_64bit && info.vendor != "unknown"
 }
 
 fn runtime_track(required_major: u32) -> u32 {
@@ -786,6 +812,9 @@ fn parse_vendor(output: &str) -> String {
         if line.contains("Adoptium") {
             return "Adoptium".to_string();
         }
+        if line.contains("OpenJDK") {
+            return "OpenJDK".to_string();
+        }
     }
     "unknown".to_string()
 }
@@ -863,14 +892,59 @@ fn java_exe() -> &'static str {
 }
 
 fn launcher_base_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf))
-        .unwrap_or_else(|| {
-            dirs::data_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(APP_DIR_NAME)
-        })
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(APP_DIR_NAME)
+}
+
+fn locate_java_binary(runtime_root: &Path) -> PathBuf {
+    let expected = runtime_root.join("bin").join(java_exe());
+    if expected.exists() {
+        return expected;
+    }
+
+    find_java_binary_recursive(runtime_root).unwrap_or(expected)
+}
+
+fn find_java_binary_recursive(root: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(root).ok()?;
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let file_type = entry.file_type().ok()?;
+
+        if file_type.is_file() {
+            if path.file_name().and_then(|n| n.to_str()) == Some(java_exe()) {
+                return Some(path);
+            }
+        } else if file_type.is_dir()
+            && let Some(found) = find_java_binary_recursive(&path)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn ensure_java_executable(runtime_root: &Path) -> LauncherResult<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let java_bin = locate_java_binary(runtime_root);
+        if java_bin.exists() {
+            let mut perms = std::fs::metadata(&java_bin)
+                .map_err(|source| LauncherError::Io {
+                    path: java_bin.clone(),
+                    source,
+                })?
+                .permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&java_bin, perms).map_err(|source| LauncherError::Io {
+                path: java_bin,
+                source,
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) -> LauncherResult<()> {
