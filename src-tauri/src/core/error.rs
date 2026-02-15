@@ -91,6 +91,73 @@ impl serde::Serialize for LauncherError {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        use serde::ser::SerializeMap;
+
+        let mut map = serializer.serialize_map(Some(5))?;
+        map.serialize_entry("message", &self.to_string())?;
+        map.serialize_entry("i18n_key", self.i18n_key())?;
+        map.serialize_entry("severity", self.severity())?;
+        map.serialize_entry("recoverable", &self.is_recoverable())?;
+        map.serialize_entry("kind", self.kind())?;
+        map.end()
+    }
+}
+
+impl LauncherError {
+    pub fn i18n_key(&self) -> &'static str {
+        match self {
+            LauncherError::Io { .. } => "error.io",
+            LauncherError::Http(_) => "error.http",
+            LauncherError::DownloadFailed { .. } => "error.download_failed",
+            LauncherError::Sha1Mismatch { .. } => "error.sha1_mismatch",
+            LauncherError::InvalidMavenCoordinate(_) => "error.invalid_maven_coordinate",
+            LauncherError::PomParse(_) => "error.pom_parse",
+            LauncherError::Xml(_) => "error.xml",
+            LauncherError::Json(_) => "error.json",
+            LauncherError::InstanceNotFound(_) => "error.instance_not_found",
+            LauncherError::InstanceAlreadyExists(_) => "error.instance_already_exists",
+            LauncherError::JavaNotFound(_) => "error.java_not_found",
+            LauncherError::JavaExecution(_) => "error.java_execution",
+            LauncherError::Loader(_) => "error.loader",
+            LauncherError::LoaderApi(_) => "error.loader_api",
+            LauncherError::Zip(_) => "error.zip",
+            LauncherError::Other(_) => "error.other",
+        }
+    }
+
+    pub fn severity(&self) -> &'static str {
+        if self.is_recoverable() {
+            "recoverable"
+        } else {
+            "fatal"
+        }
+    }
+
+    pub fn kind(&self) -> &'static str {
+        match self {
+            LauncherError::Io { .. } => "io",
+            LauncherError::Http(_) | LauncherError::DownloadFailed { .. } => "network",
+            LauncherError::Sha1Mismatch { .. } => "integrity",
+            LauncherError::InvalidMavenCoordinate(_) | LauncherError::PomParse(_) => "maven",
+            LauncherError::Xml(_) | LauncherError::Json(_) => "parsing",
+            LauncherError::InstanceNotFound(_) | LauncherError::InstanceAlreadyExists(_) => {
+                "instance"
+            }
+            LauncherError::JavaNotFound(_) | LauncherError::JavaExecution(_) => "java",
+            LauncherError::Loader(_) | LauncherError::LoaderApi(_) => "loader",
+            LauncherError::Zip(_) => "archive",
+            LauncherError::Other(_) => "generic",
+        }
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            LauncherError::Http(_)
+                | LauncherError::DownloadFailed { .. }
+                | LauncherError::LoaderApi(_)
+                | LauncherError::Io { .. }
+                | LauncherError::JavaNotFound(_)
+        )
     }
 }

@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::io::{Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -22,6 +23,11 @@ const RUNTIME_SCHEMA_VERSION: u32 = 3;
 const RUNTIME_LOCK_STALE_SECS: i64 = 60 * 10;
 const RUNTIME_KEEP_PER_MAJOR: usize = 2;
 const RUNTIME_USER_AGENT: &str = "InterfaceOficial-RuntimeManager/1.0";
+const ADOPTIUM_CACHE_FILE: &str = "adoptium_cache.json";
+const ADOPTIUM_CACHE_TTL_SECS: i64 = 60 * 30;
+const GLOBAL_BACKOFF_429_FILE: &str = "adoptium_backoff_429.json";
+const GLOBAL_BACKOFF_429_SECS: i64 = 30;
+const MIN_FREE_DISK_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
@@ -84,6 +90,7 @@ struct RuntimeMetadata {
     sha256_java: String,
     installed_at: String,
     source_url: String,
+    launcher_version: String,
     chmod_applied: bool,
     java_bin_rel: Option<String>,
 }
@@ -122,7 +129,7 @@ struct AdoptiumVersion {
     openjdk_version: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DownloadRuntimeSpec {
     major: u32,
     arch: String,
@@ -135,6 +142,27 @@ struct DownloadRuntimeSpec {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct ResolutionCache {
     by_major: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AdoptiumCache {
+    entries: HashMap<String, CachedRuntimeSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedRuntimeSpec {
+    stored_at: i64,
+    spec: DownloadRuntimeSpec,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DownloadCheckpoint {
+    downloaded_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Backoff429State {
+    until_ts: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -271,6 +299,7 @@ pub async fn ensure_embedded_runtime_registered(data_dir: &Path) -> LauncherResu
         sha256_java: java_sha256,
         installed_at: Utc::now().to_rfc3339(),
         source_url: "embedded://bundled".to_string(),
+        launcher_version: env!("CARGO_PKG_VERSION").to_string(),
         chmod_applied: true,
         java_bin_rel: None,
     };
@@ -343,6 +372,7 @@ pub async fn resolve_java_binary_in_dir(
             path: runtimes_root.clone(),
             source,
         })?;
+    cleanup_abandoned_runtime_locks(&runtimes_root).await;
 
     let arch = platform::platform_arch();
 
@@ -369,9 +399,25 @@ pub async fn resolve_java_binary_in_dir(
         return Ok(existing.java_bin);
     }
 
-    let installed = install_runtime(&runtimes_root, runtime_major, &arch).await?;
-    write_resolution_cache(data_dir, runtime_major, &installed).await?;
-    Ok(installed)
+    match install_runtime(&runtimes_root, runtime_major, &arch).await {
+        Ok(installed) => {
+            write_resolution_cache(data_dir, runtime_major, &installed).await?;
+            Ok(installed)
+        }
+        Err(err) => {
+            if let Some(existing) =
+                select::any_compatible_runtime(&runtimes_root, runtime_major, &arch).await?
+            {
+                warn!(
+                    "Runtime install failed, using cached runtime {}: {}",
+                    existing.metadata.identifier, err
+                );
+                write_resolution_cache(data_dir, runtime_major, &existing.java_bin).await?;
+                return Ok(existing.java_bin);
+            }
+            Err(err)
+        }
+    }
 }
 
 pub async fn detect_java_installations() -> Vec<JavaInstallation> {
@@ -468,6 +514,7 @@ async fn install_runtime(
 
     let download_start = Instant::now();
     info!("Downloading runtime {} from {}", identifier, spec.url);
+    ensure_min_disk_space(runtimes_root, MIN_FREE_DISK_BYTES)?;
     download::download_to_file_with_hash(&spec.url, &zip_path, &spec.sha256).await?;
     info!(
         "Runtime download finished in {:?}",
@@ -475,6 +522,7 @@ async fn install_runtime(
     );
 
     let extract_start = Instant::now();
+    ensure_min_disk_space(runtimes_root, MIN_FREE_DISK_BYTES)?;
     extract::extract_zip_file(&zip_path, &temp_root)?;
     info!(
         "Runtime extraction finished in {:?}",
@@ -492,6 +540,7 @@ async fn install_runtime(
         sha256_java: String::new(),
         installed_at: Utc::now().to_rfc3339(),
         source_url: spec.url.clone(),
+        launcher_version: env!("CARGO_PKG_VERSION").to_string(),
         chmod_applied: false,
         java_bin_rel: None,
     };
@@ -717,6 +766,56 @@ fn runtime_is_valid(java_bin: &Path, required_major: u32) -> bool {
     };
 
     info.major == required_major && info.is_64bit
+}
+
+fn runtime_hash_matches(candidate: &RuntimeCandidate) -> bool {
+    let expected = candidate.metadata.sha256_java.trim();
+    if expected.is_empty() {
+        return true;
+    }
+    match sha256_file(&candidate.java_bin) {
+        Ok(actual) => actual.eq_ignore_ascii_case(expected),
+        Err(_) => false,
+    }
+}
+
+fn ensure_min_disk_space(path: &Path, minimum_bytes: u64) -> LauncherResult<()> {
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut best_len = 0usize;
+    let mut available = None;
+    for disk in disks.list() {
+        let mount = disk.mount_point();
+        if canonical.starts_with(mount) {
+            let len = mount.as_os_str().len();
+            if len >= best_len {
+                best_len = len;
+                available = Some(disk.available_space());
+            }
+        }
+    }
+    if let Some(bytes) = available
+        && bytes < minimum_bytes
+    {
+        return Err(LauncherError::Other(format!(
+            "Espacio insuficiente para instalar runtime: disponible={} requerido={}",
+            bytes, minimum_bytes
+        )));
+    }
+    Ok(())
+}
+
+async fn cleanup_abandoned_runtime_locks(runtimes_root: &Path) {
+    let mut entries = match tokio::fs::read_dir(runtimes_root).await {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("lock") {
+            cleanup_stale_lock(&path).await;
+        }
+    }
 }
 
 fn runtime_track(required_major: u32) -> u32 {
@@ -1085,9 +1184,14 @@ mod download {
         required_major: u32,
         arch: &str,
     ) -> LauncherResult<DownloadRuntimeSpec> {
+        let cache_key = format!("{}:{}:{}", required_major, arch, platform::platform_os());
+        if let Some(spec) = read_cached_spec(&cache_key)? {
+            return Ok(spec);
+        }
+
         let client = http_client()?;
         let mut last_download_error: Option<LauncherError> = None;
-        let mut release: Option<AdoptiumRelease> = None;
+        let mut resolved_spec: Option<DownloadRuntimeSpec> = None;
 
         for image_type in ["jre", "jdk"] {
             let api_url = format!(
@@ -1099,7 +1203,7 @@ mod download {
                 platform::platform_os()
             );
 
-            match get_with_retry(&client, &api_url, 3).await {
+            match get_with_retry(&client, &api_url, 3, 0).await {
                 Ok(response) => {
                     let status = response.status();
                     if !status.is_success() {
@@ -1112,7 +1216,14 @@ mod download {
 
                     let releases: Vec<AdoptiumRelease> = response.json().await?;
                     if let Some(found) = releases.into_iter().next() {
-                        release = Some(found);
+                        resolved_spec = Some(DownloadRuntimeSpec {
+                            major: required_major,
+                            arch: arch.to_string(),
+                            vendor: "Temurin".to_string(),
+                            version: clean_openjdk_version(&found.version.openjdk_version),
+                            url: found.binary.package.link,
+                            sha256: found.binary.package.checksum,
+                        });
                         break;
                     }
                 }
@@ -1120,7 +1231,7 @@ mod download {
             }
         }
 
-        let Some(release) = release else {
+        let Some(spec) = resolved_spec else {
             if let Some(error) = last_download_error {
                 return Err(error);
             }
@@ -1130,14 +1241,8 @@ mod download {
             )));
         };
 
-        Ok(DownloadRuntimeSpec {
-            major: required_major,
-            arch: arch.to_string(),
-            vendor: "Temurin".to_string(),
-            version: clean_openjdk_version(&release.version.openjdk_version),
-            url: release.binary.package.link,
-            sha256: release.binary.package.checksum,
-        })
+        write_cached_spec(&cache_key, &spec)?;
+        Ok(spec)
     }
 
     pub async fn download_to_file_with_hash(
@@ -1145,44 +1250,179 @@ mod download {
         output_path: &Path,
         expected_sha256: &str,
     ) -> LauncherResult<()> {
+        let checkpoint_path = output_path.with_extension("checkpoint.json");
+        let mut start_offset = 0_u64;
+        if output_path.exists() {
+            start_offset = tokio::fs::metadata(output_path)
+                .await
+                .map(|m| m.len())
+                .unwrap_or_default();
+        }
+
+        if checkpoint_path.exists()
+            && let Ok(bytes) = tokio::fs::read(&checkpoint_path).await
+            && let Ok(checkpoint) = serde_json::from_slice::<DownloadCheckpoint>(&bytes)
+            && checkpoint.downloaded_bytes > start_offset
+        {
+            start_offset = checkpoint.downloaded_bytes;
+        }
+
         let client = http_client()?;
-        let response = get_with_retry(&client, url, 3).await?;
+        let response = get_with_retry(&client, url, 3, start_offset).await?;
         let status = response.status();
-        if !status.is_success() {
+        if !(status.is_success() || status.as_u16() == 206) {
             return Err(LauncherError::DownloadFailed {
                 url: url.to_string(),
                 status: status.as_u16(),
             });
         }
 
-        let mut stream = response.bytes_stream();
-        let mut file = tokio::fs::File::create(output_path)
-            .await
-            .map_err(|source| LauncherError::Io {
-                path: output_path.to_path_buf(),
-                source,
-            })?;
-        let mut hasher = Sha256::new();
-
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            hasher.update(&chunk);
-            file.write_all(&chunk)
-                .await
-                .map_err(|source| LauncherError::Io {
-                    path: output_path.to_path_buf(),
+        let output = output_path.to_path_buf();
+        let checkpoint = checkpoint_path.clone();
+        let mut file = tokio::task::spawn_blocking(move || -> LauncherResult<std::fs::File> {
+            let mut options = std::fs::OpenOptions::new();
+            options.create(true).write(true);
+            if start_offset > 0 && status.as_u16() == 206 {
+                options.read(true);
+                let mut file = options.open(&output).map_err(|source| LauncherError::Io {
+                    path: output.clone(),
                     source,
                 })?;
+                file.seek(SeekFrom::Start(start_offset))
+                    .map_err(|source| LauncherError::Io {
+                        path: output.clone(),
+                        source,
+                    })?;
+                Ok(file)
+            } else {
+                options.truncate(true);
+                let file = options.open(&output).map_err(|source| LauncherError::Io {
+                    path: output.clone(),
+                    source,
+                })?;
+                let _ = std::fs::remove_file(&checkpoint);
+                Ok(file)
+            }
+        })
+        .await
+        .map_err(|e| LauncherError::Other(format!("Task join error: {e}")))??;
+
+        let mut stream = response.bytes_stream();
+        let mut downloaded = start_offset;
+        let output_for_write = output_path.to_path_buf();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            let write_buf = chunk.to_vec();
+            let out = output_for_write.clone();
+            file = tokio::task::spawn_blocking(move || -> LauncherResult<std::fs::File> {
+                use std::io::Write;
+                let mut f = file;
+                f.write_all(&write_buf)
+                    .map_err(|source| LauncherError::Io { path: out, source })?;
+                Ok(f)
+            })
+            .await
+            .map_err(|e| LauncherError::Other(format!("Task join error: {e}")))??;
+
+            downloaded = downloaded.saturating_add(chunk.len() as u64);
+            if downloaded % (4 * 1024 * 1024) < chunk.len() as u64 {
+                let payload = serde_json::to_vec(&DownloadCheckpoint {
+                    downloaded_bytes: downloaded,
+                })?;
+                tokio::fs::write(&checkpoint_path, payload)
+                    .await
+                    .map_err(|source| LauncherError::Io {
+                        path: checkpoint_path.clone(),
+                        source,
+                    })?;
+            }
         }
 
-        let actual = format!("{:x}", hasher.finalize());
+        let actual = sha256_file(output_path)?;
         if !actual.eq_ignore_ascii_case(expected_sha256) {
             return Err(LauncherError::Other(format!(
                 "SHA-256 mismatch for {:?}: expected {}, got {}",
                 output_path, expected_sha256, actual
             )));
         }
+        let _ = tokio::fs::remove_file(&checkpoint_path).await;
         Ok(())
+    }
+
+    fn read_cached_spec(cache_key: &str) -> LauncherResult<Option<DownloadRuntimeSpec>> {
+        let path = cache_path();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(_) => return Ok(None),
+        };
+        let cache: AdoptiumCache = serde_json::from_slice(&bytes).unwrap_or_default();
+        let Some(entry) = cache.entries.get(cache_key) else {
+            return Ok(None);
+        };
+        if Utc::now().timestamp().saturating_sub(entry.stored_at) > ADOPTIUM_CACHE_TTL_SECS {
+            return Ok(None);
+        }
+        Ok(Some(entry.spec.clone()))
+    }
+
+    fn write_cached_spec(cache_key: &str, spec: &DownloadRuntimeSpec) -> LauncherResult<()> {
+        let path = cache_path();
+        let mut cache = match std::fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice::<AdoptiumCache>(&bytes).unwrap_or_default(),
+            Err(_) => AdoptiumCache::default(),
+        };
+        cache.entries.insert(
+            cache_key.to_string(),
+            CachedRuntimeSpec {
+                stored_at: Utc::now().timestamp(),
+                spec: spec.clone(),
+            },
+        );
+        let payload = serde_json::to_vec_pretty(&cache)?;
+        std::fs::write(path, payload)?;
+        Ok(())
+    }
+
+    fn cache_path() -> PathBuf {
+        launcher_base_dir().join(ADOPTIUM_CACHE_FILE)
+    }
+
+    fn backoff_path() -> PathBuf {
+        launcher_base_dir().join(GLOBAL_BACKOFF_429_FILE)
+    }
+
+    fn windows_retry_multiplier() -> u64 {
+        if !cfg!(windows) {
+            return 1;
+        }
+        if detect_windows_av_or_sandbox() {
+            2
+        } else {
+            1
+        }
+    }
+
+    fn detect_windows_av_or_sandbox() -> bool {
+        if !cfg!(windows) {
+            return false;
+        }
+        let names = [
+            "MsMpEng",
+            "avg",
+            "avast",
+            "kaspersky",
+            "sandboxie",
+            "vboxservice",
+            "vmtoolsd",
+        ];
+        let mut system = sysinfo::System::new_all();
+        system.refresh_all();
+        system.processes().values().any(|process| {
+            let proc_name = process.name().to_string_lossy().to_ascii_lowercase();
+            names
+                .iter()
+                .any(|n| proc_name.contains(&n.to_ascii_lowercase()))
+        })
     }
 
     fn http_client() -> LauncherResult<&'static reqwest::Client> {
@@ -1199,19 +1439,53 @@ mod download {
         Ok(CLIENT.get().expect("http client set"))
     }
 
+    async fn enforce_global_backoff_if_needed() {
+        let path = backoff_path();
+        let Ok(bytes) = tokio::fs::read(path).await else {
+            return;
+        };
+        let Ok(state) = serde_json::from_slice::<Backoff429State>(&bytes) else {
+            return;
+        };
+        let now = Utc::now().timestamp();
+        if state.until_ts > now {
+            tokio::time::sleep(Duration::from_secs((state.until_ts - now) as u64)).await;
+        }
+    }
+
+    async fn persist_global_backoff_429() {
+        let state = Backoff429State {
+            until_ts: Utc::now().timestamp() + GLOBAL_BACKOFF_429_SECS,
+        };
+        if let Ok(payload) = serde_json::to_vec(&state) {
+            let _ = tokio::fs::write(backoff_path(), payload).await;
+        }
+    }
+
     async fn get_with_retry(
         client: &reqwest::Client,
         url: &str,
         retries: u32,
+        start_offset: u64,
     ) -> LauncherResult<reqwest::Response> {
+        enforce_global_backoff_if_needed().await;
         let mut last_error: Option<LauncherError> = None;
         for attempt in 0..=retries {
-            match client.get(url).send().await {
-                Ok(response) => return Ok(response),
+            let mut req = client.get(url);
+            if start_offset > 0 {
+                req = req.header(reqwest::header::RANGE, format!("bytes={start_offset}-"));
+            }
+            match req.send().await {
+                Ok(response) => {
+                    if response.status().as_u16() == 429 {
+                        persist_global_backoff_429().await;
+                    }
+                    return Ok(response);
+                }
                 Err(err) => {
                     last_error = Some(err.into());
                     if attempt < retries {
-                        let backoff_ms = 2_u64.pow(attempt + 1) * 250;
+                        let backoff_ms = 2_u64.pow(attempt + 1) * 250 * windows_retry_multiplier();
                         tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                     }
                 }
@@ -1304,6 +1578,7 @@ mod select {
         candidates.retain(|candidate| {
             candidate.metadata.major == required_major
                 && runtime_is_valid(&candidate.java_bin, required_major)
+                && runtime_hash_matches(candidate)
                 && parse_java_version(&candidate.metadata.version).is_some()
         });
 
@@ -1313,6 +1588,25 @@ mod select {
                 .reverse()
         });
 
+        Ok(candidates.into_iter().next())
+    }
+
+    pub async fn any_compatible_runtime(
+        runtimes_root: &Path,
+        required_major: u32,
+        arch: &str,
+    ) -> LauncherResult<Option<RuntimeCandidate>> {
+        let mut candidates = scan_runtime_candidates(runtimes_root, arch).await?;
+        candidates.retain(|candidate| {
+            candidate.metadata.major == required_major
+                && runtime_is_valid(&candidate.java_bin, required_major)
+        });
+        candidates.sort_by(|a, b| {
+            a.metadata
+                .installed_at
+                .cmp(&b.metadata.installed_at)
+                .reverse()
+        });
         Ok(candidates.into_iter().next())
     }
 
