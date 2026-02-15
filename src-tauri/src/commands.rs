@@ -122,8 +122,8 @@ fn detect_loader_asm_incompatibility(
 
     let versions = asm_versions.join(", ");
     Some(format!(
-        "Loader incompatible con Java 21 detectado: ASM antiguo en librerías [{versions}]. Actualiza la versión de {:?} para {}.",
-        instance.loader, instance.minecraft_version
+        "El loader seleccionado requiere Java de herramientas diferente al de ejecución. Loader incompatible con Java 21 detectado: ASM antiguo en librerías [{versions}]. Actualiza la versión de {:?} para {}.",
+        instance.loader, instance.minecraft_version,
     ))
 }
 
@@ -282,12 +282,14 @@ pub struct RuntimeListPayload {
 
 #[derive(Debug, Serialize)]
 pub struct RuntimeResolvePayload {
+    pub role: java::RuntimeRole,
     pub required_java_major: u32,
     pub java_path: String,
 }
 
 #[derive(Debug, Serialize)]
 pub struct RuntimeValidatePayload {
+    pub role: java::RuntimeRole,
     pub path: String,
     pub required_java_major: u32,
     pub valid: bool,
@@ -435,7 +437,13 @@ async fn validate_or_resolve_java(
         JavaRuntimePreference::Auto => {}
     }
 
-    let resolved = java::resolve_java_binary_in_dir(&state.data_dir, required_major).await?;
+    let resolved = java::resolve_runtime_in_dir(
+        &state.data_dir,
+        java::RuntimeRole::Gamma,
+        required_major,
+        Some(&instance.minecraft_version),
+    )
+    .await?;
     instance.java_path = Some(resolved);
     Ok(())
 }
@@ -587,6 +595,13 @@ fn verify_instance_runtime_readiness(
     );
     if let Some(issue) = loader_java_compat_issue {
         emit_launch_log(app, instance_id, "error", format!("[CHECK] {issue}"));
+        emit_launch_log(
+            app,
+            instance_id,
+            "warn",
+            "[CHECK] Loader marcado como requiere Delta para fases sensibles (ASM/JAR analysis)."
+                .into(),
+        );
     }
 
     // Verificar el binario asignado directamente evita falsos negativos cuando
@@ -1667,6 +1682,7 @@ pub async fn launch_instance(
             "info",
             "[PREPARACIÓN] Validación completada. Preparando archivos, Java y librerías.".into(),
         );
+        emit_launch_log(&app_handle, &id, "info", "[FASE] preparación".into());
 
         instance.state = InstanceState::Installing;
         state_guard.instance_manager.save(&instance).await?;
@@ -1697,6 +1713,7 @@ pub async fn launch_instance(
             "info",
             "[DESCARGA] Recursos y dependencias listos. Construyendo classpath y extrayendo nativos.".into(),
         );
+        emit_launch_log(&app_handle, &id, "info", "[FASE] bootstrap".into());
 
         let libs_dir = state_guard.libraries_dir();
         emit_launch_log(
@@ -1765,6 +1782,7 @@ pub async fn launch_instance(
         }
 
         let classpath = launch::build_classpath(&instance, &libs_dir, &instance.libraries)?;
+        emit_launch_log(&app_handle, &id, "info", "[FASE] análisis de jars".into());
         let _natives_dir =
             launch::extract_natives(&instance, &libs_dir, &instance.libraries).await?;
 
@@ -1775,6 +1793,7 @@ pub async fn launch_instance(
             "Lanzando proceso de Minecraft",
             "running",
         );
+        emit_launch_log(&app_handle, &id, "info", "[FASE] launch del juego".into());
 
         let child = match launch::launch(&instance, &classpath, &libs_dir).await {
             Ok(child) => child,
@@ -2523,6 +2542,7 @@ pub async fn resolve_java(
     let manager = java::runtime::RuntimeManager::from_global_paths()?;
     let java_path = manager.resolve_java(required_java_major).await?;
     Ok(RuntimeResolvePayload {
+        role: java::RuntimeRole::Gamma,
         required_java_major,
         java_path: java_path.to_string_lossy().to_string(),
     })
@@ -2538,6 +2558,7 @@ pub async fn validate_java(
     let canonical = std::fs::canonicalize(&path).unwrap_or(path);
     let valid = manager.validate_java(&canonical, required_java_major);
     Ok(RuntimeValidatePayload {
+        role: java::RuntimeRole::Gamma,
         path: canonical.to_string_lossy().to_string(),
         required_java_major,
         valid,

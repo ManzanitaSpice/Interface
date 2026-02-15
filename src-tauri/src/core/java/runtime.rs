@@ -18,7 +18,8 @@ use super::paths::{runtime_paths, RuntimePaths};
 
 const ADOPTIUM_API_BASE: &str = "https://api.adoptium.net/v3/assets/latest";
 const RESOLVED_CACHE_FILE: &str = "resolved_java.json";
-const RUNTIME_SCHEMA_VERSION: u32 = 3;
+const RUNTIME_SCHEMA_VERSION: u32 = 4;
+const RUNTIME_LAYOUT_VERSION: &str = "v1";
 const RUNTIME_LOCK_STALE_SECS: i64 = 60 * 10;
 const RUNTIME_KEEP_PER_MAJOR: usize = 2;
 const RUNTIME_USER_AGENT: &str = "InterfaceOficial-RuntimeManager/1.0";
@@ -77,6 +78,30 @@ pub struct ManagedRuntimeInfo {
     pub java_bin: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum RuntimeRole {
+    Gamma,
+    Delta,
+}
+
+impl RuntimeRole {
+    fn as_dir_name(self) -> &'static str {
+        match self {
+            Self::Gamma => "java-gamma",
+            Self::Delta => "java-delta",
+        }
+    }
+
+    pub fn expected_major(self, minecraft_version: Option<&str>) -> u32 {
+        match self {
+            Self::Gamma => minecraft_version
+                .map(required_java_for_minecraft_version)
+                .unwrap_or(21),
+            Self::Delta => 17,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RuntimeMetadata {
     schema_version: u32,
@@ -92,6 +117,27 @@ struct RuntimeMetadata {
     launcher_version: String,
     chmod_applied: bool,
     java_bin_rel: Option<String>,
+    #[serde(default = "default_role")]
+    role: RuntimeRole,
+    #[serde(default)]
+    max_known_bytecode_major: Option<u32>,
+    #[serde(default)]
+    validated_at: Option<String>,
+    #[serde(default)]
+    validation: Option<RuntimeValidation>,
+}
+
+fn default_role() -> RuntimeRole {
+    RuntimeRole::Gamma
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RuntimeValidation {
+    java_version_output: String,
+    major_detected: u32,
+    is_64bit: bool,
+    expected_major: u32,
+    valid: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -193,26 +239,49 @@ impl RuntimeManager {
     }
 
     pub async fn list_runtimes(&self) -> LauncherResult<Vec<ManagedRuntimeInfo>> {
-        let runtimes_root = self.paths.app_data_dir().join("runtimes");
         let mut out = Vec::new();
-        let candidates =
-            select::scan_runtime_candidates(&runtimes_root, &platform::platform_arch()).await?;
-        for candidate in candidates {
-            out.push(ManagedRuntimeInfo {
-                identifier: candidate.metadata.identifier,
-                major: candidate.metadata.major,
-                vendor: candidate.metadata.vendor,
-                version: candidate.metadata.version,
-                arch: candidate.metadata.arch,
-                root: candidate.root,
-                java_bin: candidate.java_bin,
-            });
+        for role in [RuntimeRole::Gamma, RuntimeRole::Delta] {
+            let runtimes_root = runtimes_root_for_role(self.paths.app_data_dir(), role);
+            let candidates =
+                select::scan_runtime_candidates(&runtimes_root, &platform::platform_arch()).await?;
+            for candidate in candidates {
+                out.push(ManagedRuntimeInfo {
+                    identifier: candidate.metadata.identifier,
+                    major: candidate.metadata.major,
+                    vendor: candidate.metadata.vendor,
+                    version: candidate.metadata.version,
+                    arch: candidate.metadata.arch,
+                    root: candidate.root,
+                    java_bin: candidate.java_bin,
+                });
+            }
         }
         Ok(out)
     }
 
     pub async fn resolve_java(&self, required_major: u32) -> LauncherResult<PathBuf> {
-        resolve_java_binary_in_dir(self.paths.app_data_dir(), required_major).await
+        resolve_runtime_in_dir(
+            self.paths.app_data_dir(),
+            RuntimeRole::Gamma,
+            required_major,
+            None,
+        )
+        .await
+    }
+
+    pub async fn resolve_runtime(
+        &self,
+        role: RuntimeRole,
+        minecraft_version: Option<&str>,
+    ) -> LauncherResult<PathBuf> {
+        let required_major = role.expected_major(minecraft_version);
+        resolve_runtime_in_dir(
+            self.paths.app_data_dir(),
+            role,
+            required_major,
+            minecraft_version,
+        )
+        .await
     }
 
     pub fn validate_java(&self, path: &Path, required_major: u32) -> bool {
@@ -238,14 +307,25 @@ impl RuntimeManager {
     }
 
     pub async fn diagnostics(&self) -> LauncherResult<RuntimeDiagnostic> {
-        let runtimes_root = self.paths.app_data_dir().join("runtimes");
-        let indexed = read_runtime_index(&runtimes_root).await?.runtimes.len();
+        let runtimes_root = self
+            .paths
+            .app_data_dir()
+            .join("runtimes")
+            .join(RUNTIME_LAYOUT_VERSION);
+        let gamma = read_runtime_index(&runtimes_root.join(RuntimeRole::Gamma.as_dir_name()))
+            .await?
+            .runtimes
+            .len();
+        let delta = read_runtime_index(&runtimes_root.join(RuntimeRole::Delta.as_dir_name()))
+            .await?
+            .runtimes
+            .len();
         Ok(RuntimeDiagnostic {
             app_data_dir: self.paths.app_data_dir().to_string_lossy().to_string(),
             resource_dir: self.paths.resource_dir().to_string_lossy().to_string(),
             temp_dir: self.paths.temp_dir().to_string_lossy().to_string(),
             runtimes_root: runtimes_root.to_string_lossy().to_string(),
-            indexed_runtimes: indexed,
+            indexed_runtimes: gamma + delta,
         })
     }
 
@@ -255,14 +335,33 @@ impl RuntimeManager {
 }
 
 pub fn managed_runtime_dir(data_dir: &Path, major: u32) -> PathBuf {
+    let role = RuntimeRole::Gamma;
     data_dir
         .join("runtimes")
+        .join(RUNTIME_LAYOUT_VERSION)
+        .join(role.as_dir_name())
         .join(format!("java{}", runtime_track(major)))
+}
+
+fn runtimes_root_for_role(data_dir: &Path, role: RuntimeRole) -> PathBuf {
+    data_dir
+        .join("runtimes")
+        .join(RUNTIME_LAYOUT_VERSION)
+        .join(role.as_dir_name())
 }
 
 pub async fn resolve_java_binary(required_major: u32) -> LauncherResult<PathBuf> {
     let base_dir = launcher_base_dir();
-    resolve_java_binary_in_dir(&base_dir, required_major).await
+    resolve_runtime_in_dir(&base_dir, RuntimeRole::Gamma, required_major, None).await
+}
+
+pub async fn resolve_runtime(
+    role: RuntimeRole,
+    minecraft_version: Option<&str>,
+) -> LauncherResult<PathBuf> {
+    let base_dir = launcher_base_dir();
+    let required_major = role.expected_major(minecraft_version);
+    resolve_runtime_in_dir(&base_dir, role, required_major, minecraft_version).await
 }
 
 pub async fn ensure_embedded_runtime_registered(data_dir: &Path) -> LauncherResult<()> {
@@ -277,6 +376,7 @@ pub async fn ensure_embedded_runtime_registered(data_dir: &Path) -> LauncherResu
     }
 
     let runtime_major = runtime_track(info.major);
+    let role = RuntimeRole::Gamma;
     let java_sha256 = sha256_file(&embedded_java)?;
     let metadata = RuntimeMetadata {
         schema_version: RUNTIME_SCHEMA_VERSION,
@@ -301,9 +401,19 @@ pub async fn ensure_embedded_runtime_registered(data_dir: &Path) -> LauncherResu
         launcher_version: env!("CARGO_PKG_VERSION").to_string(),
         chmod_applied: true,
         java_bin_rel: None,
+        role,
+        max_known_bytecode_major: Some(runtime_major + 44),
+        validated_at: Some(Utc::now().to_rfc3339()),
+        validation: Some(RuntimeValidation {
+            java_version_output: info.version.clone(),
+            major_detected: info.major,
+            is_64bit: info.is_64bit,
+            expected_major: runtime_major,
+            valid: info.major == runtime_major && info.is_64bit,
+        }),
     };
 
-    let runtimes_root = data_dir.join("runtimes");
+    let runtimes_root = runtimes_root_for_role(data_dir, role);
     tokio::fs::create_dir_all(&runtimes_root)
         .await
         .map_err(|source| LauncherError::Io {
@@ -325,6 +435,14 @@ pub async fn managed_runtime_info_in_dir(
     data_dir: &Path,
     required_major: u32,
 ) -> LauncherResult<Option<ManagedRuntimeInfo>> {
+    managed_runtime_info_by_role_in_dir(data_dir, RuntimeRole::Gamma, required_major).await
+}
+
+pub async fn managed_runtime_info_by_role_in_dir(
+    data_dir: &Path,
+    role: RuntimeRole,
+    required_major: u32,
+) -> LauncherResult<Option<ManagedRuntimeInfo>> {
     info!(
         "java runtime startup platform_os={} platform_arch={}",
         platform::platform_os(),
@@ -332,7 +450,7 @@ pub async fn managed_runtime_info_in_dir(
     );
     let runtime_major = runtime_track(required_major);
     let arch = platform::platform_arch();
-    let runtimes_root = data_dir.join("runtimes");
+    let runtimes_root = runtimes_root_for_role(data_dir, role);
 
     let Some(candidate) =
         select::best_compatible_runtime(&runtimes_root, runtime_major, &arch).await?
@@ -363,12 +481,22 @@ pub async fn resolve_java_binary_in_dir(
     data_dir: &Path,
     required_major: u32,
 ) -> LauncherResult<PathBuf> {
+    resolve_runtime_in_dir(data_dir, RuntimeRole::Gamma, required_major, None).await
+}
+
+pub async fn resolve_runtime_in_dir(
+    data_dir: &Path,
+    role: RuntimeRole,
+    required_major: u32,
+    minecraft_version: Option<&str>,
+) -> LauncherResult<PathBuf> {
+    let role = runtime_role_override().unwrap_or(role);
     let runtime_major = runtime_track(required_major);
     info!(
-        "Resolving Java runtime track: required_major={} -> runtime_major={}",
-        required_major, runtime_major
+        "Resolving Java runtime track: role={:?} required_major={} -> runtime_major={} mc_version={:?}",
+        role, required_major, runtime_major, minecraft_version
     );
-    let runtimes_root = data_dir.join("runtimes");
+    let runtimes_root = runtimes_root_for_role(data_dir, role);
     tokio::fs::create_dir_all(&runtimes_root)
         .await
         .map_err(|source| LauncherError::Io {
@@ -379,7 +507,7 @@ pub async fn resolve_java_binary_in_dir(
 
     let arch = platform::platform_arch();
 
-    if let Some(cached) = read_resolution_cache(data_dir, runtime_major)? {
+    if let Some(cached) = read_resolution_cache(data_dir, role, runtime_major)? {
         if runtime_is_valid(&cached, runtime_major) {
             return Ok(cached);
         }
@@ -388,23 +516,26 @@ pub async fn resolve_java_binary_in_dir(
     if let Some(existing) =
         select::best_compatible_runtime(&runtimes_root, runtime_major, &arch).await?
     {
-        write_resolution_cache(data_dir, runtime_major, &existing.java_bin).await?;
+        write_resolution_cache(data_dir, role, runtime_major, &existing.java_bin).await?;
         return Ok(existing.java_bin);
     }
 
-    let lock_path = runtimes_root.join(format!(".downloading_java{}_{}.lock", runtime_major, arch));
+    let lock_path = runtimes_root.join(format!(
+        ".downloading_{:?}_java{}_{}.lock",
+        role, runtime_major, arch
+    ));
     let _lock = acquire_runtime_lock(&lock_path).await?;
 
     if let Some(existing) =
         select::best_compatible_runtime(&runtimes_root, runtime_major, &arch).await?
     {
-        write_resolution_cache(data_dir, runtime_major, &existing.java_bin).await?;
+        write_resolution_cache(data_dir, role, runtime_major, &existing.java_bin).await?;
         return Ok(existing.java_bin);
     }
 
-    match install_runtime(&runtimes_root, runtime_major, &arch).await {
+    match install_runtime(&runtimes_root, role, runtime_major, &arch).await {
         Ok(installed) => {
-            write_resolution_cache(data_dir, runtime_major, &installed).await?;
+            write_resolution_cache(data_dir, role, runtime_major, &installed).await?;
             Ok(installed)
         }
         Err(err) => {
@@ -415,11 +546,20 @@ pub async fn resolve_java_binary_in_dir(
                     "Runtime install failed, using cached runtime {}: {}",
                     existing.metadata.identifier, err
                 );
-                write_resolution_cache(data_dir, runtime_major, &existing.java_bin).await?;
+                write_resolution_cache(data_dir, role, runtime_major, &existing.java_bin).await?;
                 return Ok(existing.java_bin);
             }
             Err(err)
         }
+    }
+}
+
+fn runtime_role_override() -> Option<RuntimeRole> {
+    let raw = std::env::var("INTERFACE_RUNTIME_DEBUG_FORCE_ROLE").ok()?;
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "gamma" => Some(RuntimeRole::Gamma),
+        "delta" => Some(RuntimeRole::Delta),
+        _ => None,
     }
 }
 
@@ -485,6 +625,7 @@ pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
 #[instrument(skip(runtimes_root))]
 async fn install_runtime(
     runtimes_root: &Path,
+    role: RuntimeRole,
     required_major: u32,
     arch: &str,
 ) -> LauncherResult<PathBuf> {
@@ -546,13 +687,18 @@ async fn install_runtime(
         launcher_version: env!("CARGO_PKG_VERSION").to_string(),
         chmod_applied: false,
         java_bin_rel: None,
+        role,
+        max_known_bytecode_major: Some(required_major + 44),
+        validated_at: None,
+        validation: None,
     };
 
     ensure_java_executable_once(&temp_root, &metadata).await?;
     metadata.chmod_applied = true;
 
     let java_bin = locate_java_binary(&temp_root);
-    if !runtime_is_valid(&java_bin, required_major) {
+    let validation = build_runtime_validation(&java_bin, required_major);
+    if !validation.valid {
         let _ = tokio::fs::remove_file(&zip_path).await;
         let _ = tokio::fs::remove_dir_all(&temp_root).await;
         return Err(LauncherError::Other(format!(
@@ -560,6 +706,9 @@ async fn install_runtime(
             java_bin.display()
         )));
     }
+
+    metadata.validated_at = Some(Utc::now().to_rfc3339());
+    metadata.validation = Some(validation);
 
     metadata.sha256_java = sha256_file(&java_bin)?;
     metadata.java_bin_rel = java_bin
@@ -1051,8 +1200,8 @@ fn sha256_file(path: &Path) -> LauncherResult<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn resolved_cache_path(data_dir: &Path) -> PathBuf {
-    data_dir.join(RESOLVED_CACHE_FILE)
+fn resolved_cache_path(data_dir: &Path, role: RuntimeRole) -> PathBuf {
+    data_dir.join(format!("{:?}_{}", role, RESOLVED_CACHE_FILE).to_ascii_lowercase())
 }
 
 fn launcher_base_dir() -> PathBuf {
@@ -1061,8 +1210,12 @@ fn launcher_base_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
-fn read_resolution_cache(data_dir: &Path, major: u32) -> LauncherResult<Option<PathBuf>> {
-    let path = resolved_cache_path(data_dir);
+fn read_resolution_cache(
+    data_dir: &Path,
+    role: RuntimeRole,
+    major: u32,
+) -> LauncherResult<Option<PathBuf>> {
+    let path = resolved_cache_path(data_dir, role);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(_) => return Ok(None),
@@ -1077,10 +1230,11 @@ fn read_resolution_cache(data_dir: &Path, major: u32) -> LauncherResult<Option<P
 
 async fn write_resolution_cache(
     data_dir: &Path,
+    role: RuntimeRole,
     major: u32,
     java_bin: &Path,
 ) -> LauncherResult<()> {
-    let path = resolved_cache_path(data_dir);
+    let path = resolved_cache_path(data_dir, role);
     let mut cache = match tokio::fs::read(&path).await {
         Ok(bytes) => serde_json::from_slice::<ResolutionCache>(&bytes).unwrap_or_default(),
         Err(_) => ResolutionCache::default(),
@@ -1092,6 +1246,33 @@ async fn write_resolution_cache(
     let payload = serde_json::to_vec_pretty(&cache)?;
     tokio::fs::write(path, payload).await?;
     Ok(())
+}
+
+fn build_runtime_validation(java_bin: &Path, expected_major: u32) -> RuntimeValidation {
+    let output = Command::new(java_bin).arg("-version").output();
+    let java_version_output = output
+        .as_ref()
+        .map(|o| {
+            format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&o.stderr),
+                String::from_utf8_lossy(&o.stdout)
+            )
+        })
+        .unwrap_or_else(|_| "failed to execute java -version".to_string());
+
+    let info = probe::probe_java(java_bin);
+    let major_detected = info.as_ref().map(|i| i.major).unwrap_or_default();
+    let is_64bit = info.as_ref().is_some_and(|i| i.is_64bit);
+    let valid = major_detected == expected_major && is_64bit;
+
+    RuntimeValidation {
+        java_version_output,
+        major_detected,
+        is_64bit,
+        expected_major,
+        valid,
+    }
 }
 
 mod platform {
@@ -1661,13 +1842,18 @@ mod select {
         arch: &str,
     ) -> LauncherResult<Vec<RuntimeCandidate>> {
         let mut candidates = Vec::new();
-        let mut entries =
-            tokio::fs::read_dir(runtimes_root)
-                .await
-                .map_err(|source| LauncherError::Io {
+        let mut entries = match tokio::fs::read_dir(runtimes_root).await {
+            Ok(entries) => entries,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(candidates);
+            }
+            Err(source) => {
+                return Err(LauncherError::Io {
                     path: runtimes_root.to_path_buf(),
                     source,
-                })?;
+                })
+            }
+        };
 
         while let Some(entry) = entries
             .next_entry()
