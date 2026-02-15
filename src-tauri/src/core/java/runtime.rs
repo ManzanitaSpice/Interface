@@ -15,7 +15,7 @@ const ADOPTIUM_JRE8_X64_URL: &str =
 const ADOPTIUM_JRE17_X64_URL: &str =
     "https://github.com/adoptium/temurin17-binaries/releases/latest/download/OpenJDK17U-jre_x64_windows_hotspot.zip";
 const ADOPTIUM_JRE21_X64_URL: &str =
-    "https://github.com/adoptium/temurin21-binaries/releases/latest/download/OpenJDK21U-jre_x64_windows_hotspot.zip";
+    "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JavaInstallation {
@@ -33,10 +33,8 @@ pub fn managed_runtime_dir(data_dir: &Path, major: u32) -> PathBuf {
 }
 
 pub async fn resolve_java_binary(required_major: u32) -> LauncherResult<PathBuf> {
-    let data_dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(APP_DIR_NAME);
-    resolve_java_binary_in_dir(&data_dir, required_major).await
+    let base_dir = launcher_base_dir();
+    resolve_java_binary_in_dir(&base_dir, required_major).await
 }
 
 pub async fn resolve_java_binary_in_dir(
@@ -53,9 +51,7 @@ pub async fn detect_java_installations() -> Vec<JavaInstallation> {
 }
 
 pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
-    let data_dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(APP_DIR_NAME);
+    let data_dir = launcher_base_dir();
 
     [8_u32, 17_u32, 21_u32]
         .into_iter()
@@ -118,10 +114,33 @@ async fn ensure_embedded_runtime(
 
     let bytes = response.bytes().await?;
     let runtime_root = runtime_root.to_path_buf();
+    let zip_path = runtime_zip_path(&runtime_root, required_major);
 
-    tauri::async_runtime::spawn_blocking(move || extract_jre_zip(&bytes, &runtime_root))
+    if let Some(parent) = zip_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|source| LauncherError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+    }
+
+    tokio::fs::write(&zip_path, &bytes)
         .await
-        .map_err(|e| LauncherError::Other(format!("Join error extracting JRE: {e}")))??;
+        .map_err(|source| LauncherError::Io {
+            path: zip_path.clone(),
+            source,
+        })?;
+
+    let runtime_root_for_extract = runtime_root.clone();
+    let zip_path_for_extract = zip_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        extract_jre_zip_from_file(&zip_path_for_extract, &runtime_root_for_extract)
+    })
+    .await
+    .map_err(|e| LauncherError::Other(format!("Join error extracting JRE: {e}")))??;
+
+    let _ = tokio::fs::remove_file(&zip_path).await;
 
     if !runtime_is_valid(&java_bin, required_major) {
         let _ = tokio::fs::remove_dir_all(runtime_root).await;
@@ -154,6 +173,24 @@ fn runtime_url(required_major: u32) -> &'static str {
         17 => ADOPTIUM_JRE17_X64_URL,
         _ => ADOPTIUM_JRE21_X64_URL,
     }
+}
+
+fn runtime_zip_path(runtime_root: &Path, required_major: u32) -> PathBuf {
+    let base_dir = runtime_root
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| launcher_base_dir());
+
+    let file_name = if required_major >= 21 {
+        "java21.zip"
+    } else if required_major >= 17 {
+        "java17.zip"
+    } else {
+        "java8.zip"
+    };
+
+    base_dir.join("temp").join(file_name)
 }
 
 fn runtime_track(required_major: u32) -> u32 {
@@ -229,6 +266,14 @@ fn extract_jre_zip(bytes: &[u8], runtime_root: &Path) -> LauncherResult<()> {
     }
 
     Ok(())
+}
+
+fn extract_jre_zip_from_file(zip_path: &Path, runtime_root: &Path) -> LauncherResult<()> {
+    let bytes = std::fs::read(zip_path).map_err(|source| LauncherError::Io {
+        path: zip_path.to_path_buf(),
+        source,
+    })?;
+    extract_jre_zip(&bytes, runtime_root)
 }
 
 pub fn required_java_for_minecraft_version(minecraft_version: &str) -> u32 {
@@ -338,6 +383,17 @@ fn java_exe() -> &'static str {
     } else {
         "java"
     }
+}
+
+fn launcher_base_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| {
+            dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(APP_DIR_NAME)
+        })
 }
 
 #[cfg(test)]
