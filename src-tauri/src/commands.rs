@@ -94,9 +94,9 @@ fn asm_version_supports_java_21(version: &str) -> bool {
 
 fn detect_loader_asm_incompatibility(
     instance: &Instance,
-    bootstrap_java_major: u32,
+    target_java_major: u32,
 ) -> Option<String> {
-    if bootstrap_java_major < 21 {
+    if target_java_major < 21 {
         return None;
     }
 
@@ -122,9 +122,14 @@ fn detect_loader_asm_incompatibility(
 
     let versions = asm_versions.join(", ");
     Some(format!(
-        "El loader seleccionado requiere Java de herramientas diferente al de ejecución. Loader incompatible con Java {bootstrap_java_major} detectado: ASM antiguo en librerías [{versions}]. Actualiza la versión de {:?} para {}.",
+        "El loader seleccionado requiere Java de herramientas diferente al de ejecución. Loader incompatible con Java {target_java_major} detectado: ASM antiguo en librerías [{versions}]. Actualiza la versión de {:?} para {}.",
         instance.loader, instance.minecraft_version,
     ))
+}
+
+fn should_force_loader_upgrade_for_java21(instance: &Instance, target_java_major: u32) -> bool {
+    detect_loader_asm_incompatibility(instance, target_java_major).is_some()
+        && matches!(instance.loader, LoaderType::Forge | LoaderType::NeoForge)
 }
 
 async fn resolve_bootstrap_java_major(
@@ -628,15 +633,15 @@ async fn verify_instance_runtime_readiness(
 
     let bootstrap_java_major =
         resolve_bootstrap_java_major(state, instance, required_major).await?;
-    let loader_java_compat_issue =
-        detect_loader_asm_incompatibility(instance, bootstrap_java_major);
+    let target_java_major = required_major.max(bootstrap_java_major);
+    let loader_java_compat_issue = detect_loader_asm_incompatibility(instance, target_java_major);
     let loader_java_ok = loader_java_compat_issue.is_none();
     log_preflight_check(
         app,
         instance_id,
         loader_java_ok,
         format!(
-            "Compatibilidad loader↔Java validada (bootstrap {:?}, Java {bootstrap_java_major})",
+            "Compatibilidad loader↔Java validada (bootstrap {:?}, Java objetivo {target_java_major}, tooling {bootstrap_java_major})",
             instance.bootstrap_runtime
         ),
     );
@@ -835,6 +840,114 @@ fn user_forced_gamma_only(settings: &LauncherSettings, _instance: &Instance) -> 
         .is_some_and(|path| path.to_ascii_lowercase().contains("java-gamma"))
 }
 
+async fn cleanup_loader_and_runtime_artifacts(
+    state: &crate::core::state::AppState,
+    instance: &mut Instance,
+) -> Result<(), LauncherError> {
+    let libs_dir = state.libraries_dir();
+    for coord in &instance.libraries {
+        let Ok(artifact) = crate::core::maven::MavenArtifact::parse(coord) else {
+            continue;
+        };
+
+        let remove_artifact = artifact.group_id == "org.ow2.asm"
+            || (matches!(instance.loader, LoaderType::NeoForge)
+                && artifact.group_id.starts_with("net.neoforged"))
+            || (matches!(instance.loader, LoaderType::Forge)
+                && artifact.group_id.starts_with("net.minecraftforge"));
+        if !remove_artifact {
+            continue;
+        }
+
+        let artifact_path = libs_dir.join(artifact.local_path());
+        if artifact_path.exists() {
+            let _ = tokio::fs::remove_file(&artifact_path).await;
+        }
+    }
+
+    let loader_cache_root = match instance.loader {
+        LoaderType::NeoForge => libs_dir.join("net").join("neoforged"),
+        LoaderType::Forge => libs_dir.join("net").join("minecraftforge"),
+        _ => libs_dir.join("__no_loader_cache__"),
+    };
+    if loader_cache_root.exists() {
+        let _ = tokio::fs::remove_dir_all(&loader_cache_root).await;
+    }
+
+    let client_jar = instance.path.join("client.jar");
+    if client_jar.exists() {
+        let _ = tokio::fs::remove_file(&client_jar).await;
+    }
+
+    instance.main_class = None;
+    instance.libraries.clear();
+    instance.jvm_args.clear();
+    instance.game_args.clear();
+
+    Ok(())
+}
+
+async fn recommend_latest_loader_version(
+    state: &crate::core::state::AppState,
+    instance: &Instance,
+) -> Result<Option<String>, LauncherError> {
+    let Some(current_version) = instance.loader_version.as_ref() else {
+        return Ok(None);
+    };
+
+    let url = match instance.loader {
+        LoaderType::NeoForge => {
+            "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
+        }
+        LoaderType::Forge => {
+            "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml"
+        }
+        _ => return Ok(None),
+    };
+
+    let xml = state.http_client.get(url).send().await?.text().await?;
+    let metadata: MavenMetadata = quick_xml::de::from_str(&xml)
+        .map_err(|e| LauncherError::LoaderApi(format!("Unable to parse loader metadata: {e}")))?;
+
+    let mut versions: Vec<String> = match instance.loader {
+        LoaderType::NeoForge => metadata
+            .versioning
+            .versions
+            .version
+            .into_iter()
+            .filter(|v| is_neoforge_compatible(v, &instance.minecraft_version))
+            .collect(),
+        LoaderType::Forge => metadata
+            .versioning
+            .versions
+            .version
+            .into_iter()
+            .filter_map(|v| {
+                v.strip_prefix(&format!("{}-", instance.minecraft_version))
+                    .map(str::to_owned)
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    versions.sort_by(|a, b| {
+        version_sort_key(b)
+            .cmp(&version_sort_key(a))
+            .then_with(|| b.cmp(a))
+    });
+    versions.dedup();
+
+    let Some(recommended) = versions.into_iter().next() else {
+        return Ok(None);
+    };
+
+    if &recommended == current_version {
+        return Ok(None);
+    }
+
+    Ok(Some(recommended))
+}
+
 async fn attempt_preflight_repair(
     app: &tauri::AppHandle,
     state: &crate::core::state::AppState,
@@ -906,6 +1019,38 @@ async fn attempt_preflight_repair(
                         delta_runtime.display()
                     ),
                 );
+
+                if should_force_loader_upgrade_for_java21(
+                    instance,
+                    instance.required_java_major.unwrap_or_else(|| {
+                        java::required_java_for_minecraft_version(&instance.minecraft_version)
+                    }),
+                ) {
+                    emit_launch_log(
+                        app,
+                        &instance.id,
+                        "warn",
+                        "[REPAIR] Se detectó loader con ASM antiguo para Java 21. Se purgarán artefactos del loader y se reinstalará limpio.".into(),
+                    );
+
+                    if let Some(recommended_version) =
+                        recommend_latest_loader_version(state, instance).await?
+                    {
+                        emit_launch_log(
+                            app,
+                            &instance.id,
+                            "info",
+                            format!(
+                                "[REPAIR] Actualizando loader {} de {:?} a {}.",
+                                instance.loader, instance.loader_version, recommended_version
+                            ),
+                        );
+                        instance.loader_version = Some(recommended_version);
+                    }
+
+                    cleanup_loader_and_runtime_artifacts(state, instance).await?;
+                    force_full_prepare = true;
+                }
             }
             PreflightFailure::Unknown => {
                 needs_prepare = true;
@@ -1046,6 +1191,16 @@ async fn prepare_instance_for_launch(
         instance.required_java_major = vanilla_result.java_major;
 
         if instance.loader != LoaderType::Vanilla {
+            if vanilla_result.java_major >= 21
+                && matches!(instance.loader, LoaderType::Forge | LoaderType::NeoForge)
+            {
+                if let Some(recommended_version) =
+                    recommend_latest_loader_version(state, instance).await?
+                {
+                    instance.loader_version = Some(recommended_version);
+                }
+            }
+
             if let Some(loader_version) = &instance.loader_version {
                 let installer = loaders::Installer::new(&instance.loader, client.clone());
                 let loader_result = installer
@@ -1567,6 +1722,27 @@ pub async fn create_instance(
         instance.required_java_major = vanilla_result.java_major;
 
         if instance.loader != LoaderType::Vanilla {
+            if vanilla_result.java_major >= 21
+                && matches!(instance.loader, LoaderType::Forge | LoaderType::NeoForge)
+            {
+                if let Some(recommended_version) =
+                    recommend_latest_loader_version(&state, &instance).await?
+                {
+                    emit_create_log(
+                        &app,
+                        &instance.id,
+                        "info",
+                        format!(
+                            "Loader {} actualizado automáticamente de {:?} a {} por compatibilidad con Java 21.",
+                            instance.loader,
+                            instance.loader_version,
+                            recommended_version
+                        ),
+                    );
+                    instance.loader_version = Some(recommended_version);
+                }
+            }
+
             if let Some(ref loader_version) = instance.loader_version {
                 emit_create_progress(&app, &instance.id, 56, "Instalando loader", "running");
                 let installer = loaders::Installer::new(&instance.loader, client.clone());
