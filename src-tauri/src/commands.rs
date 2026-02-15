@@ -502,7 +502,8 @@ fn verify_instance_runtime_readiness(
     // Verificar el binario asignado directamente evita falsos negativos cuando
     // la ruta no coincide exactamente con entradas indexadas/canonizadas.
     let java_info = java::runtime::inspect_java_binary(java_path);
-    let java_major_ok = java_info.is_some_and(|candidate| candidate.major >= required_major);
+    let detected_java_major = java_info.as_ref().map(|candidate| candidate.major);
+    let java_major_ok = detected_java_major.is_some_and(|major| major >= required_major);
     log_preflight_check(
         app,
         instance_id,
@@ -511,7 +512,7 @@ fn verify_instance_runtime_readiness(
             "Java compatible con Minecraft {} (requerida {}, actual {:?})",
             instance.minecraft_version,
             required_major,
-            java_info.as_ref().map(|candidate| candidate.major)
+            detected_java_major
         ),
     );
 
