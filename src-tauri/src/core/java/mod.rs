@@ -1,3 +1,4 @@
+pub mod paths;
 pub mod runtime;
 
 pub use runtime::detect_java_installations;
@@ -10,3 +11,4 @@ pub use runtime::resolve_java_binary;
 pub use runtime::resolve_java_binary_in_dir;
 pub use runtime::JavaInstallation;
 pub use runtime::ManagedRuntimeInfo;
+pub use runtime::RuntimeDiagnostic;

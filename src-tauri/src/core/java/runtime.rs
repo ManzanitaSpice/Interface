@@ -4,18 +4,53 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, warn};
+use uuid::Uuid;
 
 use crate::core::error::{LauncherError, LauncherResult};
 
+use super::paths::{runtime_paths, RuntimePaths};
+
 const ADOPTIUM_API_BASE: &str = "https://api.adoptium.net/v3/assets/latest";
-const APP_DIR_NAME: &str = "InterfaceOficial";
 const RESOLVED_CACHE_FILE: &str = "resolved_java.json";
-const RUNTIME_SCHEMA_VERSION: u32 = 2;
+const RUNTIME_SCHEMA_VERSION: u32 = 3;
+const RUNTIME_LOCK_STALE_SECS: i64 = 60 * 10;
+const RUNTIME_KEEP_PER_MAJOR: usize = 2;
+const RUNTIME_USER_AGENT: &str = "InterfaceOficial-RuntimeManager/1.0";
+
+#[derive(Debug, thiserror::Error)]
+pub enum RuntimeError {
+    #[error("io error at {path:?}: {source}")]
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("http error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("zip error: {0}")]
+    Zip(#[from] zip::result::ZipError),
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("invalid runtime: {0}")]
+    InvalidRuntime(String),
+}
+
+impl From<RuntimeError> for LauncherError {
+    fn from(value: RuntimeError) -> Self {
+        match value {
+            RuntimeError::Io { path, source } => LauncherError::Io { path, source },
+            RuntimeError::Http(source) => LauncherError::Http(source),
+            RuntimeError::Zip(source) => LauncherError::Zip(source),
+            RuntimeError::Json(source) => LauncherError::Json(source),
+            RuntimeError::InvalidRuntime(message) => LauncherError::Other(message),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JavaInstallation {
@@ -45,8 +80,12 @@ struct RuntimeMetadata {
     vendor: String,
     version: String,
     arch: String,
-    java_sha256: String,
+    sha256_zip: String,
+    sha256_java: String,
+    installed_at: String,
+    source_url: String,
     chmod_applied: bool,
+    java_bin_rel: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -98,6 +137,96 @@ struct ResolutionCache {
     by_major: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeDiagnostic {
+    pub app_data_dir: String,
+    pub resource_dir: String,
+    pub temp_dir: String,
+    pub runtimes_root: String,
+    pub indexed_runtimes: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeManager {
+    paths: RuntimePaths,
+    client: reqwest::Client,
+}
+
+impl RuntimeManager {
+    pub fn new(paths: RuntimePaths) -> LauncherResult<Self> {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(120))
+            .user_agent(RUNTIME_USER_AGENT)
+            .build()?;
+        Ok(Self { paths, client })
+    }
+
+    pub fn from_global_paths() -> LauncherResult<Self> {
+        Self::new(runtime_paths()?.clone())
+    }
+
+    pub async fn list_runtimes(&self) -> LauncherResult<Vec<ManagedRuntimeInfo>> {
+        let runtimes_root = self.paths.app_data_dir().join("runtimes");
+        let mut out = Vec::new();
+        let candidates =
+            select::scan_runtime_candidates(&runtimes_root, &platform::platform_arch()).await?;
+        for candidate in candidates {
+            out.push(ManagedRuntimeInfo {
+                identifier: candidate.metadata.identifier,
+                major: candidate.metadata.major,
+                vendor: candidate.metadata.vendor,
+                version: candidate.metadata.version,
+                arch: candidate.metadata.arch,
+                root: candidate.root,
+                java_bin: candidate.java_bin,
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn resolve_java(&self, required_major: u32) -> LauncherResult<PathBuf> {
+        resolve_java_binary_in_dir(self.paths.app_data_dir(), required_major).await
+    }
+
+    pub fn validate_java(&self, path: &Path, required_major: u32) -> bool {
+        runtime_is_valid(path, required_major)
+    }
+
+    pub async fn clear_runtimes(&self) -> LauncherResult<()> {
+        let runtimes_root = self.paths.app_data_dir().join("runtimes");
+        if runtimes_root.exists() {
+            tokio::fs::remove_dir_all(&runtimes_root)
+                .await
+                .map_err(|source| LauncherError::Io {
+                    path: runtimes_root.clone(),
+                    source,
+                })?;
+        }
+        tokio::fs::create_dir_all(&runtimes_root)
+            .await
+            .map_err(|source| LauncherError::Io {
+                path: runtimes_root,
+                source,
+            })
+    }
+
+    pub async fn diagnostics(&self) -> LauncherResult<RuntimeDiagnostic> {
+        let runtimes_root = self.paths.app_data_dir().join("runtimes");
+        let indexed = read_runtime_index(&runtimes_root).await?.runtimes.len();
+        Ok(RuntimeDiagnostic {
+            app_data_dir: self.paths.app_data_dir().to_string_lossy().to_string(),
+            resource_dir: self.paths.resource_dir().to_string_lossy().to_string(),
+            temp_dir: self.paths.temp_dir().to_string_lossy().to_string(),
+            runtimes_root: runtimes_root.to_string_lossy().to_string(),
+            indexed_runtimes: indexed,
+        })
+    }
+
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.client
+    }
+}
+
 pub fn managed_runtime_dir(data_dir: &Path, major: u32) -> PathBuf {
     data_dir
         .join("runtimes")
@@ -138,8 +267,12 @@ pub async fn ensure_embedded_runtime_registered(data_dir: &Path) -> LauncherResu
         },
         version: info.version,
         arch: platform::platform_arch(),
-        java_sha256,
+        sha256_zip: String::new(),
+        sha256_java: java_sha256,
+        installed_at: Utc::now().to_rfc3339(),
+        source_url: "embedded://bundled".to_string(),
         chmod_applied: true,
+        java_bin_rel: None,
     };
 
     let runtimes_root = data_dir.join("runtimes");
@@ -316,12 +449,9 @@ async fn install_runtime(
     );
 
     let runtime_root = runtimes_root.join(&identifier);
-    let temp_root = runtimes_root
-        .join("temp")
-        .join(format!("{}_tmp", identifier));
-    let zip_path = runtimes_root
-        .join("temp")
-        .join(format!("{}.zip", identifier));
+    let staging_id = Uuid::new_v4().to_string();
+    let temp_root = runtimes_root.join("temp").join(format!("{staging_id}_dir"));
+    let zip_path = runtimes_root.join("temp").join(format!("{staging_id}.zip"));
 
     if temp_root.exists() {
         let _ = tokio::fs::remove_dir_all(&temp_root).await;
@@ -358,8 +488,12 @@ async fn install_runtime(
         vendor: spec.vendor,
         version: spec.version,
         arch: spec.arch,
-        java_sha256: String::new(),
+        sha256_zip: spec.sha256.clone(),
+        sha256_java: String::new(),
+        installed_at: Utc::now().to_rfc3339(),
+        source_url: spec.url.clone(),
         chmod_applied: false,
+        java_bin_rel: None,
     };
 
     ensure_java_executable_once(&temp_root, &metadata).await?;
@@ -375,7 +509,11 @@ async fn install_runtime(
         )));
     }
 
-    metadata.java_sha256 = sha256_file(&java_bin)?;
+    metadata.sha256_java = sha256_file(&java_bin)?;
+    metadata.java_bin_rel = java_bin
+        .strip_prefix(&temp_root)
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
     write_runtime_metadata(&temp_root, &metadata).await?;
 
     let backup_root = runtime_root.with_extension("backup");
@@ -404,6 +542,7 @@ async fn install_runtime(
     let _ = tokio::fs::remove_file(&zip_path).await;
     let _ = tokio::fs::remove_dir_all(&backup_root).await;
     update_runtime_index(runtimes_root, &metadata).await?;
+    cleanup_old_runtimes(runtimes_root, required_major, arch).await?;
 
     let final_java = locate_java_binary(&runtime_root);
     if probe::probe_java(&final_java).is_none() {
@@ -456,6 +595,42 @@ async fn update_runtime_index(
         })
 }
 
+async fn read_runtime_index(runtimes_root: &Path) -> LauncherResult<RuntimeIndex> {
+    let index_path = runtimes_root.join("index.json");
+    let bytes = match tokio::fs::read(&index_path).await {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(RuntimeIndex::default()),
+    };
+    Ok(serde_json::from_slice::<RuntimeIndex>(&bytes).unwrap_or_default())
+}
+
+#[instrument(skip(runtimes_root))]
+async fn cleanup_old_runtimes(runtimes_root: &Path, major: u32, arch: &str) -> LauncherResult<()> {
+    let mut index = read_runtime_index(runtimes_root).await?;
+    let mut same_major = index
+        .runtimes
+        .iter()
+        .filter(|rt| rt.major == major && rt.arch == arch)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    same_major.sort_by(|a, b| a.installed_at.cmp(&b.installed_at).reverse());
+    for stale in same_major.into_iter().skip(RUNTIME_KEEP_PER_MAJOR) {
+        let path = runtimes_root.join(&stale.identifier);
+        if path.exists() {
+            let _ = tokio::fs::remove_dir_all(&path).await;
+        }
+        index
+            .runtimes
+            .retain(|rt| rt.identifier != stale.identifier);
+    }
+
+    let index_path = runtimes_root.join("index.json");
+    let payload = serde_json::to_vec_pretty(&index)?;
+    tokio::fs::write(index_path, payload).await?;
+    Ok(())
+}
+
 async fn acquire_runtime_lock(lock_path: &Path) -> LauncherResult<RuntimeLockGuard> {
     let mut attempts = 0_u32;
     loop {
@@ -468,7 +643,11 @@ async fn acquire_runtime_lock(lock_path: &Path) -> LauncherResult<RuntimeLockGua
         {
             Ok(mut file) => {
                 let pid = std::process::id();
-                file.write_all(pid.to_string().as_bytes())
+                let payload = serde_json::json!({
+                    "pid": pid,
+                    "timestamp": Utc::now().timestamp(),
+                });
+                file.write_all(payload.to_string().as_bytes())
                     .await
                     .map_err(|source| LauncherError::Io {
                         path: lock_path.to_path_buf(),
@@ -496,15 +675,26 @@ async fn acquire_runtime_lock(lock_path: &Path) -> LauncherResult<RuntimeLockGua
 }
 
 async fn cleanup_stale_lock(lock_path: &Path) {
-    #[cfg(target_os = "linux")]
+    if let Ok(content) = tokio::fs::read_to_string(lock_path).await
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(&content)
     {
-        if let Ok(content) = tokio::fs::read_to_string(lock_path).await
-            && let Ok(pid) = content.trim().parse::<u32>()
-        {
-            let proc_path = PathBuf::from(format!("/proc/{pid}"));
-            if !proc_path.exists() {
-                let _ = tokio::fs::remove_file(lock_path).await;
-            }
+        let pid = value
+            .get("pid")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_default() as u32;
+        let timestamp = value
+            .get("timestamp")
+            .and_then(|v| v.as_i64())
+            .unwrap_or_default();
+        let expired = Utc::now().timestamp().saturating_sub(timestamp) > RUNTIME_LOCK_STALE_SECS;
+
+        #[cfg(target_os = "linux")]
+        let dead = !PathBuf::from(format!("/proc/{pid}")).exists();
+        #[cfg(not(target_os = "linux"))]
+        let dead = false;
+
+        if expired || dead {
+            let _ = tokio::fs::remove_file(lock_path).await;
         }
     }
 }
@@ -759,9 +949,9 @@ fn resolved_cache_path(data_dir: &Path) -> PathBuf {
 }
 
 fn launcher_base_dir() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(APP_DIR_NAME)
+    runtime_paths()
+        .map(|paths| paths.app_data_dir().to_path_buf())
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn read_resolution_cache(data_dir: &Path, major: u32) -> LauncherResult<Option<PathBuf>> {
@@ -895,9 +1085,7 @@ mod download {
         required_major: u32,
         arch: &str,
     ) -> LauncherResult<DownloadRuntimeSpec> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?;
+        let client = http_client()?;
         let mut last_download_error: Option<LauncherError> = None;
         let mut release: Option<AdoptiumRelease> = None;
 
@@ -957,9 +1145,7 @@ mod download {
         output_path: &Path,
         expected_sha256: &str,
     ) -> LauncherResult<()> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(120))
-            .build()?;
+        let client = http_client()?;
         let response = get_with_retry(&client, url, 3).await?;
         let status = response.status();
         if !status.is_success() {
@@ -997,6 +1183,20 @@ mod download {
             )));
         }
         Ok(())
+    }
+
+    fn http_client() -> LauncherResult<&'static reqwest::Client> {
+        use std::sync::OnceLock;
+        static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+        if let Some(client) = CLIENT.get() {
+            return Ok(client);
+        }
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(120))
+            .user_agent(RUNTIME_USER_AGENT)
+            .build()?;
+        let _ = CLIENT.set(client);
+        Ok(CLIENT.get().expect("http client set"))
     }
 
     async fn get_with_retry(
@@ -1116,7 +1316,7 @@ mod select {
         Ok(candidates.into_iter().next())
     }
 
-    async fn scan_runtime_candidates(
+    pub async fn scan_runtime_candidates(
         runtimes_root: &Path,
         arch: &str,
     ) -> LauncherResult<Vec<RuntimeCandidate>> {
@@ -1157,7 +1357,12 @@ mod select {
                 continue;
             }
 
-            let java_bin = locate_java_binary(&root);
+            let java_bin = metadata
+                .java_bin_rel
+                .as_ref()
+                .map(|relative| root.join(relative))
+                .filter(|p| p.exists())
+                .unwrap_or_else(|| locate_java_binary(&root));
             candidates.push(RuntimeCandidate {
                 metadata,
                 root,

@@ -1,26 +1,42 @@
 # Guía de Java embebido para launcher Rust + Tauri
 
-## Prioridad de Java
+## Contrato de runtime gestionado
 
-1. Java embebido detectado junto al ejecutable.
-2. Si falta o no cumple versión, descarga automática de JRE 17 embebido.
-3. Java del sistema (`JAVA_HOME`, `PATH`, ubicaciones comunes).
-4. Error final si no existe ninguno compatible.
+Cada runtime instalado debe incluir `runtime.json` con:
 
-## Diferencia: Java del sistema vs Java embebido
+- `schema_version`
+- `sha256_zip`
+- `sha256_java`
+- `installed_at`
+- `source_url`
+- `java_bin_rel`
+- `major`, `arch`, `identifier`, `version`
 
-- **Sistema**: depende de lo instalado por el usuario (puede romperse por versión, arquitectura o desinstalación).
-- **Embebido**: runtime controlado por el launcher, consistente y reproducible.
+La validación **no depende del vendor**: solo exige major compatible, arquitectura 64-bit y ejecución exitosa de `java -version`.
 
-## Versiones de Minecraft y Java
+## Layout esperado
 
-- Minecraft moderno (1.17+) requiere Java 17.
-- Versiones nuevas como 1.21+ usan Java 21 para máxima compatibilidad.
-- Launchers profesionales detectan requisito por versión y eligen runtime automáticamente.
+El ejecutable Java puede estar en layouts alternativos:
 
-## Buenas prácticas implementadas
+- `bin/java` (`bin/java.exe` en Windows)
+- `Contents/Home/bin/java` (macOS)
+- detección recursiva como fallback
 
-- Validación real del runtime con `java -version`.
-- Logs explícitos para detección, fallback y errores.
-- Descarga bajo demanda si falta runtime embebido.
-- Estructura modular para separar detección, descarga y lanzamiento.
+## Flujo de instalación
+
+1. Resolver release en Adoptium (fallback `jre` → `jdk`).
+2. Descargar ZIP en streaming con retry exponencial y User-Agent propio.
+3. Extraer en staging temporal (`UUID`).
+4. Aplicar permisos ejecutables solo en Unix.
+5. Escribir metadata versionada.
+6. `rename` atómico al destino final.
+7. Validar runtime final con `java -version`.
+8. Limpiar runtimes viejos por política (límite por major).
+
+## Locks y recuperación
+
+El lock de descarga guarda `pid + timestamp`. Si el proceso murió o el lock expira, se recupera automáticamente.
+
+## Índice incremental
+
+Se utiliza `runtimes/index.json` para evitar escaneo completo de FS en cada arranque.
