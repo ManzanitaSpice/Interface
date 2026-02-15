@@ -203,6 +203,36 @@ pub struct FirstLaunchStatus {
     pub suggested_data_dir: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct JavaVersionReport {
+    pub requested_minecraft_version: String,
+    pub required_java_major: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JavaRuntimeMetadataPayload {
+    pub required_java_major: u32,
+    pub runtime_dir: String,
+    pub managed_runtime: Option<java::ManagedRuntimeInfo>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JavaCheckReport {
+    pub path: String,
+    pub usable: bool,
+    pub details: Option<JavaInstallation>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JavaPathPayload {
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MinecraftVersionPayload {
+    pub minecraft_version: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct InitializeInstallationPayload {
     pub target_dir: String,
@@ -2092,6 +2122,62 @@ pub async fn update_instance_account(
 #[tauri::command]
 pub async fn get_java_installations() -> Result<Vec<JavaInstallation>, LauncherError> {
     Ok(java::detect_java_installations().await)
+}
+
+#[tauri::command]
+pub async fn get_java_metadata(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    payload: MinecraftVersionPayload,
+) -> Result<JavaRuntimeMetadataPayload, LauncherError> {
+    let state = state.lock().await;
+    let required_java_major = java::required_java_for_minecraft_version(&payload.minecraft_version);
+    let runtime_dir = java::managed_runtime_dir(&state.data_dir, required_java_major);
+    let managed_runtime =
+        java::managed_runtime_info_in_dir(&state.data_dir, required_java_major).await?;
+
+    Ok(JavaRuntimeMetadataPayload {
+        required_java_major,
+        runtime_dir: runtime_dir.to_string_lossy().to_string(),
+        managed_runtime,
+    })
+}
+
+#[tauri::command]
+pub async fn get_required_java_version(
+    payload: MinecraftVersionPayload,
+) -> Result<JavaVersionReport, LauncherError> {
+    let required_java_major = java::required_java_for_minecraft_version(&payload.minecraft_version);
+    Ok(JavaVersionReport {
+        requested_minecraft_version: payload.minecraft_version,
+        required_java_major,
+    })
+}
+
+#[tauri::command]
+pub async fn install_managed_java(
+    payload: MinecraftVersionPayload,
+) -> Result<JavaCheckReport, LauncherError> {
+    let required_java_major = java::required_java_for_minecraft_version(&payload.minecraft_version);
+    let java_path = java::resolve_java_binary(required_java_major).await?;
+    let details = java::runtime::inspect_java_binary(&java_path);
+
+    Ok(JavaCheckReport {
+        path: java_path.to_string_lossy().to_string(),
+        usable: details.is_some(),
+        details,
+    })
+}
+
+#[tauri::command]
+pub async fn check_java_binary(payload: JavaPathPayload) -> Result<JavaCheckReport, LauncherError> {
+    let path = std::path::PathBuf::from(&payload.path);
+    let details = java::runtime::inspect_java_binary(&path);
+
+    Ok(JavaCheckReport {
+        path: payload.path,
+        usable: details.is_some(),
+        details,
+    })
 }
 
 #[tauri::command]
