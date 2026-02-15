@@ -29,14 +29,29 @@ pub async fn launch(
         .as_deref()
         .ok_or_else(|| LauncherError::Other("Main class not set on instance".into()))?;
 
+    let required_java_major = instance
+        .required_java_major
+        .unwrap_or_else(|| java::required_java_for_minecraft_version(&instance.minecraft_version));
+
     let java_bin = if let Some(path) = instance.java_path.as_ref() {
         path.clone()
     } else {
-        let java_major = instance.required_java_major.unwrap_or_else(|| {
-            java::required_java_for_minecraft_version(&instance.minecraft_version)
-        });
-        java::resolve_java_binary(java_major).await?
+        java::resolve_java_binary(required_java_major).await?
     };
+
+    let resolved_java_major = java::runtime::inspect_java_binary(&java_bin).map(|info| info.major);
+    info!("[RUNTIME] Usando Java: {:?}", resolved_java_major);
+    info!(
+        "[RUNTIME] Requerido: {} (Minecraft {})",
+        required_java_major, instance.minecraft_version
+    );
+
+    if resolved_java_major.map_or(true, |major| major < required_java_major) {
+        return Err(LauncherError::Other(format!(
+            "Java incompatible para Minecraft {}: requerida {}, detectada {:?}",
+            instance.minecraft_version, required_java_major, resolved_java_major
+        )));
+    }
 
     let natives_dir = instance.natives_dir();
     let game_dir = instance.game_dir();

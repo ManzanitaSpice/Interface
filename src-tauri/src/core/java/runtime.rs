@@ -662,6 +662,21 @@ async fn extract_jre_zip_from_file_async(
 }
 
 pub fn required_java_for_minecraft_version(minecraft_version: &str) -> u32 {
+    let lower = minecraft_version.to_ascii_lowercase();
+    if let Some(week_pos) = lower.find('w') {
+        let year_hint = &lower[..week_pos];
+        if year_hint.len() >= 2 {
+            let year_suffix = &year_hint[year_hint.len() - 2..];
+            if let Ok(snapshot_year) = year_suffix.parse::<u32>() {
+                // 24w14a+ corresponds to 1.20.5 snapshots (Java 21 baseline).
+                if snapshot_year >= 24 {
+                    return 21;
+                }
+                return 17;
+            }
+        }
+    }
+
     let mut parts = minecraft_version.split('.');
     let major = parts
         .next()
@@ -915,7 +930,9 @@ mod tests {
         assert_eq!(required_java_for_minecraft_version("1.20.5"), 21);
         assert_eq!(required_java_for_minecraft_version("1.20.6"), 21);
         assert_eq!(required_java_for_minecraft_version("1.21.1"), 21);
-        assert_eq!(required_java_for_minecraft_version("25w03a"), 17);
+        assert_eq!(required_java_for_minecraft_version("23w51b"), 17);
+        assert_eq!(required_java_for_minecraft_version("24w14a"), 21);
+        assert_eq!(required_java_for_minecraft_version("25w03a"), 21);
     }
 
     #[test]
