@@ -94,9 +94,9 @@ fn asm_version_supports_java_21(version: &str) -> bool {
 
 fn detect_loader_asm_incompatibility(
     instance: &Instance,
-    required_java_major: u32,
+    bootstrap_java_major: u32,
 ) -> Option<String> {
-    if required_java_major < 21 {
+    if bootstrap_java_major < 21 {
         return None;
     }
 
@@ -122,9 +122,33 @@ fn detect_loader_asm_incompatibility(
 
     let versions = asm_versions.join(", ");
     Some(format!(
-        "El loader seleccionado requiere Java de herramientas diferente al de ejecución. Loader incompatible con Java 21 detectado: ASM antiguo en librerías [{versions}]. Actualiza la versión de {:?} para {}.",
+        "El loader seleccionado requiere Java de herramientas diferente al de ejecución. Loader incompatible con Java {bootstrap_java_major} detectado: ASM antiguo en librerías [{versions}]. Actualiza la versión de {:?} para {}.",
         instance.loader, instance.minecraft_version,
     ))
+}
+
+async fn resolve_bootstrap_java_major(
+    state: &crate::core::state::AppState,
+    instance: &Instance,
+    fallback_major: u32,
+) -> Result<u32, LauncherError> {
+    if instance.bootstrap_runtime == RuntimeRole::Gamma {
+        return Ok(fallback_major);
+    }
+
+    let runtime_path = java::resolve_runtime_in_dir(
+        &state.data_dir,
+        RuntimeRole::Delta,
+        RuntimeRole::Delta.expected_major(Some(&instance.minecraft_version)),
+        Some(&instance.minecraft_version),
+    )
+    .await?;
+
+    let detected_major = java::runtime::inspect_java_binary(&runtime_path)
+        .map(|runtime| runtime.major)
+        .unwrap_or_else(|| RuntimeRole::Delta.expected_major(Some(&instance.minecraft_version)));
+
+    Ok(detected_major)
 }
 
 #[derive(Debug, Serialize)]
@@ -513,8 +537,9 @@ fn unresolved_placeholders(args: &[String], known: &HashSet<&'static str>) -> Ve
     unresolved
 }
 
-fn verify_instance_runtime_readiness(
+async fn verify_instance_runtime_readiness(
     app: &tauri::AppHandle,
+    state: &crate::core::state::AppState,
     instance: &Instance,
     libs_dir: &Path,
 ) -> Result<Vec<PreflightFailure>, LauncherError> {
@@ -601,13 +626,19 @@ fn verify_instance_runtime_readiness(
         .required_java_major
         .unwrap_or_else(|| java::required_java_for_minecraft_version(&instance.minecraft_version));
 
-    let loader_java_compat_issue = detect_loader_asm_incompatibility(instance, required_major);
+    let bootstrap_java_major =
+        resolve_bootstrap_java_major(state, instance, required_major).await?;
+    let loader_java_compat_issue =
+        detect_loader_asm_incompatibility(instance, bootstrap_java_major);
     let loader_java_ok = loader_java_compat_issue.is_none();
     log_preflight_check(
         app,
         instance_id,
         loader_java_ok,
-        format!("Compatibilidad loader↔Java validada (requerida Java {required_major})"),
+        format!(
+            "Compatibilidad loader↔Java validada (bootstrap {:?}, Java {bootstrap_java_major})",
+            instance.bootstrap_runtime
+        ),
     );
     if let Some(issue) = loader_java_compat_issue {
         emit_launch_log(app, instance_id, "error", format!("[CHECK] {issue}"));
@@ -1841,7 +1872,8 @@ pub async fn launch_instance(
             "[PREPARACIÓN] Ejecutando checklist preflight (estructura, Java, args, Maven, loader, bootstrap).".into(),
         );
         let mut preflight_failures =
-            verify_instance_runtime_readiness(&app_handle, &instance, &libs_dir)?;
+            verify_instance_runtime_readiness(&app_handle, &state_guard, &instance, &libs_dir)
+                .await?;
         if !preflight_failures.is_empty() {
             if has_loader_java_incompatibility(&preflight_failures)
                 && user_forced_gamma_only(&state_guard.launcher_settings, &instance)
@@ -1871,8 +1903,13 @@ pub async fn launch_instance(
                     &preflight_failures,
                 )
                 .await?;
-                preflight_failures =
-                    verify_instance_runtime_readiness(&app_handle, &instance, &libs_dir)?;
+                preflight_failures = verify_instance_runtime_readiness(
+                    &app_handle,
+                    &state_guard,
+                    &instance,
+                    &libs_dir,
+                )
+                .await?;
             } else {
                 emit_launch_log(
                     &app_handle,
@@ -1897,8 +1934,13 @@ pub async fn launch_instance(
                         &preflight_failures,
                     )
                     .await?;
-                    preflight_failures =
-                        verify_instance_runtime_readiness(&app_handle, &instance, &libs_dir)?;
+                    preflight_failures = verify_instance_runtime_readiness(
+                        &app_handle,
+                        &state_guard,
+                        &instance,
+                        &libs_dir,
+                    )
+                    .await?;
                     if preflight_failures.is_empty() {
                         repaired = true;
                         emit_launch_log(
