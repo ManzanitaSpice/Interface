@@ -1848,6 +1848,7 @@ pub async fn launch_instance(
             let _ = tauri::async_runtime::spawn_blocking(move || {
                 let mut neoforge_hint_emitted = false;
                 let mut corrupted_zip_hint_emitted = false;
+                let mut asm_hint_emitted = false;
                 for line in StdBufReader::new(stderr).lines().map_while(Result::ok) {
                     emit_launch_log(&app_handle, &instance_id, "warn", line.clone());
                     if let Some(diagnostic) = detect_launch_diagnostic(&line) {
@@ -1866,6 +1867,14 @@ pub async fn launch_instance(
                                     false
                                 } else {
                                     corrupted_zip_hint_emitted = true;
+                                    true
+                                }
+                            }
+                            LaunchDiagnostic::LoaderAsmTooOldForJava21 => {
+                                if asm_hint_emitted {
+                                    false
+                                } else {
+                                    asm_hint_emitted = true;
                                     true
                                 }
                             }
