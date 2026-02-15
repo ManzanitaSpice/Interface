@@ -511,6 +511,12 @@ fn verify_instance_runtime_readiness(
         "${user_properties}",
         "${user_type}",
         "${version_type}",
+        "${quickPlayMultiplayer}",
+        "${quickPlaySingleplayer}",
+        "${quickPlayRealms}",
+        "${quickPlayPath}",
+        "${resolution_width}",
+        "${resolution_height}",
     ]);
 
     let unresolved_jvm = unresolved_placeholders(&instance.jvm_args, &known_jvm_placeholders);

@@ -208,7 +208,13 @@ fn sanitize_game_args(
             .replace("${clientid}", &account.client_id)
             .replace("${user_properties}", "{}")
             .replace("${user_type}", &account.user_type)
-            .replace("${version_type}", "release");
+            .replace("${version_type}", "release")
+            .replace("${quickPlayMultiplayer}", "")
+            .replace("${quickPlaySingleplayer}", "")
+            .replace("${quickPlayRealms}", "")
+            .replace("${quickPlayPath}", "")
+            .replace("${resolution_width}", "1280")
+            .replace("${resolution_height}", "720");
 
         // Skip unresolved placeholders to avoid passing malformed values.
         if resolved.contains("${") {
@@ -590,6 +596,12 @@ mod tests {
             "${clientid}".into(),
             "--assetIndex".into(),
             "${assets_index_name}".into(),
+            "--width".into(),
+            "${resolution_width}".into(),
+            "--height".into(),
+            "${resolution_height}".into(),
+            "--quickPlayPath".into(),
+            "${quickPlayPath}".into(),
             "--bad".into(),
             "${unknown_placeholder}".into(),
         ];
@@ -619,6 +631,12 @@ mod tests {
                 "00000000402B5328",
                 "--assetIndex",
                 "17",
+                "--width",
+                "1280",
+                "--height",
+                "720",
+                "--quickPlayPath",
+                "",
             ]
         );
     }
