@@ -350,6 +350,39 @@ fn log_preflight_check(
     );
 }
 
+fn collect_placeholders(arg: &str) -> Vec<String> {
+    let mut placeholders = Vec::new();
+    let mut rest = arg;
+
+    while let Some(start) = rest.find("${") {
+        let after_start = &rest[start + 2..];
+        if let Some(end) = after_start.find('}') {
+            placeholders.push(format!("${{{}}}", &after_start[..end]));
+            rest = &after_start[end + 1..];
+        } else {
+            break;
+        }
+    }
+
+    placeholders
+}
+
+fn unresolved_placeholders(args: &[String], known: &HashSet<&'static str>) -> Vec<String> {
+    let mut unresolved = HashSet::new();
+
+    for arg in args {
+        for token in collect_placeholders(arg) {
+            if !known.contains(token.as_str()) {
+                unresolved.insert(token);
+            }
+        }
+    }
+
+    let mut unresolved: Vec<_> = unresolved.into_iter().collect();
+    unresolved.sort();
+    unresolved
+}
+
 fn verify_instance_runtime_readiness(
     app: &tauri::AppHandle,
     instance: &Instance,
@@ -451,27 +484,59 @@ fn verify_instance_runtime_readiness(
     let java_64_ok = java_info.is_some_and(|candidate| candidate.is_64bit);
     log_preflight_check(app, instance_id, java_64_ok, "Java de 64 bits validada");
 
-    let unresolved_jvm = instance
-        .jvm_args
-        .iter()
-        .filter(|arg| arg.contains("${"))
-        .count();
-    let unresolved_game = instance
-        .game_args
-        .iter()
-        .filter(|arg| arg.contains("${"))
-        .count();
-    let args_ok = unresolved_jvm == 0 && unresolved_game == 0;
+    let known_jvm_placeholders = HashSet::from([
+        "${natives_directory}",
+        "${library_directory}",
+        "${classpath}",
+        "${classpath_separator}",
+        "${game_directory}",
+        "${version_name}",
+        "${version}",
+        "${mc_version}",
+        "${launcher_name}",
+        "${launcher_version}",
+    ]);
+    let known_game_placeholders = HashSet::from([
+        "${auth_player_name}",
+        "${version_name}",
+        "${version}",
+        "${mc_version}",
+        "${game_directory}",
+        "${assets_root}",
+        "${assets_index_name}",
+        "${auth_uuid}",
+        "${auth_access_token}",
+        "${auth_xuid}",
+        "${clientid}",
+        "${user_properties}",
+        "${user_type}",
+        "${version_type}",
+    ]);
+
+    let unresolved_jvm = unresolved_placeholders(&instance.jvm_args, &known_jvm_placeholders);
+    let unresolved_game = unresolved_placeholders(&instance.game_args, &known_game_placeholders);
+    let args_ok = unresolved_jvm.is_empty() && unresolved_game.is_empty();
     log_preflight_check(
         app,
         instance_id,
         args_ok,
         format!(
-            "Argumentos listos (JVM sin placeholders: {}, Game sin placeholders: {})",
-            unresolved_jvm == 0,
-            unresolved_game == 0
+            "Argumentos listos (JVM placeholders soportados: {}, Game placeholders soportados: {})",
+            unresolved_jvm.is_empty(),
+            unresolved_game.is_empty()
         ),
     );
+    if !unresolved_jvm.is_empty() || !unresolved_game.is_empty() {
+        emit_launch_log(
+            app,
+            instance_id,
+            "error",
+            format!(
+                "[CHECK] Placeholders no reemplazados detectados -> JVM: {:?} | Game: {:?}",
+                unresolved_jvm, unresolved_game
+            ),
+        );
+    }
 
     let mut missing_maven_artifacts = 0usize;
     for coord in &instance.libraries {
