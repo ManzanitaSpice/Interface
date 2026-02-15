@@ -29,11 +29,14 @@ pub async fn launch(
         .as_deref()
         .ok_or_else(|| LauncherError::Other("Main class not set on instance".into()))?;
 
-    // Always use embedded managed Java runtime selected by Minecraft version.
-    let java_major = instance
-        .required_java_major
-        .unwrap_or_else(|| java::required_java_for_minecraft_version(&instance.minecraft_version));
-    let java_bin = java::resolve_java_binary(java_major).await?;
+    let java_bin = if let Some(path) = instance.java_path.as_ref() {
+        path.clone()
+    } else {
+        let java_major = instance.required_java_major.unwrap_or_else(|| {
+            java::required_java_for_minecraft_version(&instance.minecraft_version)
+        });
+        java::resolve_java_binary(java_major).await?
+    };
 
     let natives_dir = instance.natives_dir();
     let game_dir = instance.game_dir();

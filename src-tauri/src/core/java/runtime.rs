@@ -99,6 +99,52 @@ pub async fn resolve_java_binary(required_major: u32) -> LauncherResult<PathBuf>
     resolve_java_binary_in_dir(&base_dir, required_major).await
 }
 
+pub async fn ensure_embedded_runtime_registered(data_dir: &Path) -> LauncherResult<()> {
+    let embedded_root = data_dir.join("runtime");
+    let embedded_java = embedded_root.join("bin").join(java_exe());
+    let Some(info) = probe_java(&embedded_java) else {
+        return Ok(());
+    };
+
+    if !info.is_64bit {
+        return Ok(());
+    }
+
+    let runtime_major = runtime_track(info.major);
+    let metadata = RuntimeMetadata {
+        identifier: format!(
+            "java{}-embedded-{}-{}",
+            runtime_major,
+            normalize_version_for_id(&info.version),
+            platform_arch()
+        ),
+        major: runtime_major,
+        vendor: if info.vendor == "unknown" {
+            "Embedded".to_string()
+        } else {
+            info.vendor
+        },
+        version: info.version,
+        arch: platform_arch(),
+    };
+
+    let runtimes_root = data_dir.join("runtimes");
+    tokio::fs::create_dir_all(&runtimes_root)
+        .await
+        .map_err(|source| LauncherError::Io {
+            path: runtimes_root.clone(),
+            source,
+        })?;
+
+    let runtime_root = runtimes_root.join(&metadata.identifier);
+    if !runtime_root.exists() {
+        copy_dir_recursive(&embedded_root, &runtime_root)?;
+    }
+    write_runtime_metadata(&runtime_root, &metadata).await?;
+    update_runtime_index(&runtimes_root, &metadata).await?;
+    Ok(())
+}
+
 pub async fn managed_runtime_info(
     required_major: u32,
 ) -> LauncherResult<Option<ManagedRuntimeInfo>> {
@@ -175,7 +221,7 @@ pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
         return Vec::new();
     };
 
-    entries
+    let mut detected: Vec<JavaInstallation> = entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.is_dir())
@@ -183,7 +229,15 @@ pub fn detect_java_installations_sync() -> Vec<JavaInstallation> {
             let java_bin = runtime_root.join("bin").join(java_exe());
             probe_java(&java_bin)
         })
-        .collect()
+        .collect();
+
+    if let Some(system_java) = probe_java_from_command("java") {
+        detected.push(system_java);
+    }
+
+    detected.sort_by(|a, b| a.path.cmp(&b.path));
+    detected.dedup_by(|a, b| a.path == b.path);
+    detected
 }
 
 async fn install_runtime(
@@ -285,8 +339,11 @@ async fn fetch_runtime_spec(
     arch: &str,
 ) -> LauncherResult<DownloadRuntimeSpec> {
     let api_url = format!(
-        "{}/{}/hotspot?architecture={}&image_type=jre&os=windows&vendor=eclipse",
-        ADOPTIUM_API_BASE, required_major, arch
+        "{}/{}/hotspot?architecture={}&image_type=jre&os={}&vendor=eclipse",
+        ADOPTIUM_API_BASE,
+        required_major,
+        arch,
+        platform_os()
     );
     let response = reqwest::get(&api_url).await?;
     let status = response.status();
@@ -668,6 +725,28 @@ fn probe_java(path: &PathBuf) -> Option<JavaInstallation> {
     })
 }
 
+fn probe_java_from_command(command: &str) -> Option<JavaInstallation> {
+    let output = Command::new(command).arg("-version").output().ok()?;
+    let version_output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let version = parse_version_string(&version_output)?;
+    let major = parse_major_version(&version);
+    let lower_output = version_output.to_ascii_lowercase();
+    let is_64bit = lower_output.contains("64-bit") || lower_output.contains("64 bit");
+    let vendor = parse_vendor(&version_output);
+
+    Some(JavaInstallation {
+        path: PathBuf::from(command),
+        version,
+        major,
+        is_64bit,
+        vendor,
+    })
+}
+
 fn parse_version_string(output: &str) -> Option<String> {
     for line in output.lines() {
         if let Some(start) = line.find('"') {
@@ -746,6 +825,15 @@ fn platform_arch() -> String {
     }
 }
 
+fn platform_os() -> &'static str {
+    match std::env::consts::OS {
+        "windows" => "windows",
+        "linux" => "linux",
+        "macos" => "mac",
+        _ => "windows",
+    }
+}
+
 fn java_exe() -> &'static str {
     if cfg!(windows) {
         "java.exe"
@@ -763,6 +851,40 @@ fn launcher_base_dir() -> PathBuf {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(APP_DIR_NAME)
         })
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> LauncherResult<()> {
+    std::fs::create_dir_all(destination).map_err(|source_err| LauncherError::Io {
+        path: destination.to_path_buf(),
+        source: source_err,
+    })?;
+
+    for entry in std::fs::read_dir(source).map_err(|source_err| LauncherError::Io {
+        path: source.to_path_buf(),
+        source: source_err,
+    })? {
+        let entry = entry.map_err(|source_err| LauncherError::Io {
+            path: source.to_path_buf(),
+            source: source_err,
+        })?;
+        let src_path = entry.path();
+        let dst_path = destination.join(entry.file_name());
+        let file_type = entry.file_type().map_err(|source_err| LauncherError::Io {
+            path: src_path.clone(),
+            source: source_err,
+        })?;
+
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else if file_type.is_file() {
+            std::fs::copy(&src_path, &dst_path).map_err(|source_err| LauncherError::Io {
+                path: dst_path,
+                source: source_err,
+            })?;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

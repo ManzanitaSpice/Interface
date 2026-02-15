@@ -315,34 +315,49 @@ async fn validate_instance_state_before_launch(
     Ok(())
 }
 
-async fn validate_or_resolve_java(instance: &mut Instance) -> Result<(), LauncherError> {
+async fn validate_or_resolve_java(
+    state: &crate::core::state::AppState,
+    instance: &mut Instance,
+) -> Result<(), LauncherError> {
     let required_major = instance
         .required_java_major
         .unwrap_or_else(|| java::required_java_for_minecraft_version(&instance.minecraft_version));
-    let resolved = java::resolve_java_binary(required_major).await?;
 
-    let resolved_info = java::runtime::inspect_java_binary(&resolved).ok_or_else(|| {
-        LauncherError::Other("No se pudo validar el runtime de Java resuelto".into())
-    })?;
+    let is_valid = |candidate: &std::path::PathBuf| {
+        java::runtime::inspect_java_binary(candidate)
+            .is_some_and(|info| info.major >= required_major && info.is_64bit)
+    };
 
-    if resolved_info.major != required_major {
-        return Err(LauncherError::Other(format!(
-            "La Java resuelta ({}) no coincide con la versión requerida {}",
-            resolved_info.version, required_major
-        )));
-    }
-    if !resolved_info.is_64bit {
-        return Err(LauncherError::Other(
-            "La Java resuelta debe ser de 64 bits".into(),
-        ));
-    }
-    if !(resolved_info.vendor.contains("Temurin") || resolved_info.vendor.contains("Adoptium")) {
-        return Err(LauncherError::Other(format!(
-            "Vendor de Java no soportado para runtime administrado: {}",
-            resolved_info.vendor
-        )));
+    if let Some(custom_path) = state.launcher_settings.selected_java_path.as_ref() {
+        if is_valid(custom_path) {
+            instance.java_path = Some(custom_path.clone());
+            return Ok(());
+        }
     }
 
+    match state.launcher_settings.java_runtime {
+        JavaRuntimePreference::System => {
+            let system_java = std::path::PathBuf::from("java");
+            if is_valid(&system_java) {
+                instance.java_path = Some(system_java);
+                return Ok(());
+            }
+            return Err(LauncherError::Other(
+                "Preferencia Java=System configurada pero no se encontró una Java compatible en PATH."
+                    .into(),
+            ));
+        }
+        JavaRuntimePreference::Embedded => {
+            let embedded_java = state.embedded_java_path();
+            if is_valid(&embedded_java) {
+                instance.java_path = Some(embedded_java);
+                return Ok(());
+            }
+        }
+        JavaRuntimePreference::Auto => {}
+    }
+
+    let resolved = java::resolve_java_binary_in_dir(&state.data_dir, required_major).await?;
     instance.java_path = Some(resolved);
     Ok(())
 }
@@ -679,7 +694,7 @@ async fn attempt_preflight_repair(
                     "info",
                     "[REPAIR] Resolviendo runtime de Java administrado compatible.".into(),
                 );
-                validate_or_resolve_java(instance).await?;
+                validate_or_resolve_java(state, instance).await?;
             }
             PreflightFailure::MissingStructure | PreflightFailure::MissingLibraries => {
                 needs_prepare = true;
@@ -807,7 +822,7 @@ async fn prepare_instance_for_launch(
         ));
     }
 
-    validate_or_resolve_java(instance).await?;
+    validate_or_resolve_java(state, instance).await?;
     instance.libraries.sort();
     instance.libraries.dedup();
     Ok(())
@@ -1305,7 +1320,7 @@ pub async fn create_instance(
         instance.libraries.sort();
         instance.libraries.dedup();
 
-        validate_or_resolve_java(&mut instance).await?;
+        validate_or_resolve_java(&state, &mut instance).await?;
         if let Some(java_path) = &instance.java_path {
             emit_create_log(
                 &app,
