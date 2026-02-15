@@ -376,6 +376,7 @@ pub async fn ensure_embedded_runtime_registered(data_dir: &Path) -> LauncherResu
     }
 
     let runtime_major = runtime_track(info.major);
+    let java_version_output = info.version.clone();
     let role = RuntimeRole::Gamma;
     let java_sha256 = sha256_file(&embedded_java)?;
     let metadata = RuntimeMetadata {
@@ -392,7 +393,7 @@ pub async fn ensure_embedded_runtime_registered(data_dir: &Path) -> LauncherResu
         } else {
             info.vendor
         },
-        version: info.version,
+        version: java_version_output.clone(),
         arch: platform::platform_arch(),
         sha256_zip: String::new(),
         sha256_java: java_sha256,
@@ -405,7 +406,7 @@ pub async fn ensure_embedded_runtime_registered(data_dir: &Path) -> LauncherResu
         max_known_bytecode_major: Some(runtime_major + 44),
         validated_at: Some(Utc::now().to_rfc3339()),
         validation: Some(RuntimeValidation {
-            java_version_output: info.version.clone(),
+            java_version_output,
             major_detected: info.major,
             is_64bit: info.is_64bit,
             expected_major: runtime_major,
