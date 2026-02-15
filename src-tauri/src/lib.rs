@@ -43,6 +43,7 @@ pub fn run() {
             commands::get_java_metadata,
             commands::get_required_java_version,
             commands::install_managed_java,
+            commands::get_java_info,
             commands::check_java_binary,
             commands::get_first_launch_status,
             commands::initialize_launcher_installation,

@@ -2357,6 +2357,14 @@ pub async fn install_managed_java(
 }
 
 #[tauri::command]
+pub async fn get_java_info(
+    payload: JavaPathPayload,
+) -> Result<Option<JavaInstallation>, LauncherError> {
+    let path = std::path::PathBuf::from(&payload.path);
+    Ok(java::runtime::inspect_java_binary(&path))
+}
+
+#[tauri::command]
 pub async fn check_java_binary(payload: JavaPathPayload) -> Result<JavaCheckReport, LauncherError> {
     let path = std::path::PathBuf::from(&payload.path);
     let details = java::runtime::inspect_java_binary(&path);
