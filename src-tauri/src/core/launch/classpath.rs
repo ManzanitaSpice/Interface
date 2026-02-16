@@ -102,13 +102,23 @@ pub fn build_classpath(
 
     entries.extend(other_libs);
 
-    // ─── 2. Local libraries (installer-generated) ───
-    let local_jars = collect_local_library_jars(instance);
-    if !local_jars.is_empty() {
-        debug!("Found {} local library JARs", local_jars.len());
-    }
-    for jar in local_jars {
-        entries.push(safe_path_str(&jar));
+    // ─── 2. Local libraries (discovered) ───
+    // Forge/NeoForge classpaths must be explicit: recursive local scans can pull
+    // installer tools (binarypatcher, SpecialSource, neoform zip, etc.) and
+    // crash bootstrap with URL handler conflicts.
+    if allows_discovered_local_jars(instance.loader) {
+        let local_jars = collect_local_library_jars(instance);
+        if !local_jars.is_empty() {
+            debug!("Found {} local library JARs", local_jars.len());
+        }
+        for jar in local_jars {
+            entries.push(safe_path_str(&jar));
+        }
+    } else {
+        debug!(
+            "Skipping discovered local library scan for {:?}; only declared runtime libraries are allowed",
+            instance.loader
+        );
     }
 
     // ─── 3. Version jars ───
@@ -206,6 +216,10 @@ fn collect_local_library_jars(instance: &Instance) -> Vec<PathBuf> {
     }
 
     jars
+}
+
+fn allows_discovered_local_jars(loader: LoaderType) -> bool {
+    !matches!(loader, LoaderType::Forge | LoaderType::NeoForge)
 }
 
 fn collect_required_version_jars(instance: &Instance) -> Vec<PathBuf> {
@@ -490,6 +504,38 @@ mod tests {
         let classpath = build_classpath(&instance, &temp.join("libraries"), &[]).unwrap();
 
         assert!(classpath.contains("installer-generated.jar"));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn build_classpath_skips_discovered_local_jars_for_neoforge() {
+        let temp = std::env::temp_dir().join(format!(
+            "classpath-test-no-discovered-local-jars-neoforge-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+        let instance_dir = temp.join("instance");
+        let local_repo = instance_dir
+            .join("minecraft")
+            .join("libraries")
+            .join("net")
+            .join("neoforged")
+            .join("installertools")
+            .join("binarypatcher")
+            .join("2.1.2");
+        std::fs::create_dir_all(&local_repo).unwrap();
+        std::fs::write(instance_dir.join("client.jar"), b"client").unwrap();
+        std::fs::write(local_repo.join("binarypatcher-2.1.2-fatjar.jar"), b"tool").unwrap();
+
+        let mut instance = test_instance(&instance_dir);
+        instance.loader = LoaderType::NeoForge;
+        instance.loader_version = Some("21.1.219".into());
+
+        let classpath = build_classpath(&instance, &temp.join("libraries"), &[]).unwrap();
+
+        assert!(!classpath.contains("binarypatcher-2.1.2-fatjar.jar"));
+        assert!(classpath.contains("client.jar"));
 
         let _ = std::fs::remove_dir_all(&temp);
     }
