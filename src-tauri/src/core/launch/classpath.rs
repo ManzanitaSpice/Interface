@@ -1,6 +1,8 @@
 // ─── Classpath Builder ───
 // Constructs the dynamic classpath string for launching Minecraft.
 
+use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use tracing::{debug, warn};
@@ -8,6 +10,58 @@ use tracing::{debug, warn};
 use crate::core::error::{LauncherError, LauncherResult};
 use crate::core::instance::{Instance, LoaderType};
 use crate::core::maven::MavenArtifact;
+
+fn parse_numeric_version_parts(raw: &str) -> Vec<u32> {
+    raw.split(|c: char| !c.is_ascii_digit())
+        .filter(|segment| !segment.is_empty())
+        .filter_map(|segment| segment.parse::<u32>().ok())
+        .collect()
+}
+
+fn compare_versions(a: &str, b: &str) -> Ordering {
+    let a_parts = parse_numeric_version_parts(a);
+    let b_parts = parse_numeric_version_parts(b);
+
+    let max_len = a_parts.len().max(b_parts.len());
+    for idx in 0..max_len {
+        let a_val = a_parts.get(idx).copied().unwrap_or(0);
+        let b_val = b_parts.get(idx).copied().unwrap_or(0);
+        match a_val.cmp(&b_val) {
+            Ordering::Equal => continue,
+            non_eq => return non_eq,
+        }
+    }
+
+    // Deterministic tiebreaker for versions with identical numeric parts.
+    a.cmp(b)
+}
+
+fn uses_module_bootstrap(instance: &Instance) -> bool {
+    instance.jvm_args.iter().any(|arg| {
+        let trimmed = arg.trim();
+        trimmed == "--module-path"
+            || trimmed == "-p"
+            || trimmed.starts_with("--module-path=")
+            || trimmed == "--add-modules"
+            || trimmed.starts_with("--add-modules=")
+    })
+}
+
+fn is_bootstraplauncher_main(instance: &Instance) -> bool {
+    instance
+        .main_class
+        .as_deref()
+        .is_some_and(|main| main == "cpw.mods.bootstraplauncher.BootstrapLauncher")
+}
+
+fn should_skip_cpw_mods_bootstrap_on_classpath(instance: &Instance) -> bool {
+    // When launching BootstrapLauncher from the classpath, ModLauncher will load
+    // securejarhandler/modlauncher/jarhandling in a separate MC-BOOTSTRAP layer.
+    // If we also include them on -cp, they can get initialized twice with different
+    // classloaders, causing `java.net.URL.setURLStreamHandlerFactory` to be invoked
+    // more than once -> `java.lang.Error: factory already defined`.
+    is_bootstraplauncher_main(instance) && matches!(instance.loader, LoaderType::Forge | LoaderType::NeoForge)
+}
 
 /// Builds the full classpath string for launching the game.
 ///
@@ -24,6 +78,15 @@ pub fn build_classpath(
 ) -> LauncherResult<String> {
     let separator = get_classpath_separator();
     let mut entries: Vec<String> = Vec::new();
+    let mut non_asm_entries: Vec<String> = Vec::new();
+    let module_bootstrap = uses_module_bootstrap(instance);
+    let skip_cpw_mods_bootstrap = should_skip_cpw_mods_bootstrap_on_classpath(instance);
+
+    // ASM is extremely order-sensitive for Forge/NeoForge bootstrap.
+    // If multiple ASM versions exist, the first one on the classpath wins.
+    // Ensure the newest ASM jars appear first and older duplicates are ignored.
+    // Key: artifactId + classifier (to keep e.g. asm-tree separate).
+    let mut best_asm_by_key: HashMap<String, (String, String)> = HashMap::new();
 
     // 1. All declared libraries (Vanilla + loader)
     for coord in extra_lib_coords {
@@ -32,12 +95,72 @@ pub fn build_classpath(
             continue;
         }
 
+        if let Ok(artifact) = MavenArtifact::parse(trimmed) {
+            // When launching Forge/NeoForge with module-path, putting these on the classpath
+            // can load them twice (module layer + classpath) and crash with:
+            // `java.lang.Error: factory already defined`.
+            if module_bootstrap
+                && artifact.group_id == "cpw.mods"
+                && matches!(
+                    artifact.artifact_id.as_str(),
+                    "securejarhandler" | "modlauncher" | "jarhandling"
+                )
+            {
+                continue;
+            }
+
+            // Even without explicit module-path JVM args, BootstrapLauncher/ModLauncher
+            // will construct its own MC-BOOTSTRAP layer. Keep these off the -cp to
+            // prevent double initialization.
+            if skip_cpw_mods_bootstrap
+                && artifact.group_id == "cpw.mods"
+                && matches!(
+                    artifact.artifact_id.as_str(),
+                    "securejarhandler" | "modlauncher" | "jarhandling"
+                )
+            {
+                continue;
+            }
+
+            if artifact.group_id == "org.ow2.asm" {
+                let classifier = artifact.classifier.clone().unwrap_or_default();
+                let key = format!("{}:{}", artifact.artifact_id, classifier);
+
+                match best_asm_by_key.get(&key) {
+                    None => {
+                        best_asm_by_key.insert(key, (trimmed.to_string(), artifact.version));
+                    }
+                    Some((_, existing_version)) => {
+                        if compare_versions(&artifact.version, existing_version) == Ordering::Greater {
+                            best_asm_by_key.insert(key, (trimmed.to_string(), artifact.version));
+                        }
+                    }
+                }
+
+                continue;
+            }
+        }
+
         if let Some(entry) = resolve_library_entry(instance, libs_dir, trimmed) {
-            entries.push(entry);
+            non_asm_entries.push(entry);
         } else {
             debug!("Library not found on disk (skipping): {}", trimmed);
         }
     }
+
+    // 1.0 Insert best ASM jars first (newest version wins per artifact).
+    let mut asm_candidates: Vec<(String, String)> = best_asm_by_key.into_values().collect();
+    asm_candidates.sort_by(|(_, a_version), (_, b_version)| {
+        compare_versions(b_version, a_version).then_with(|| b_version.cmp(a_version))
+    });
+    for (coord, _version) in asm_candidates {
+        if let Some(entry) = resolve_library_entry(instance, libs_dir, &coord) {
+            entries.push(entry);
+        }
+    }
+
+    // 1.0b Then append the rest of libraries.
+    entries.extend(non_asm_entries);
 
     // 1.1 Fallback: include every local JAR generated by installer-based loaders.
     // Forge/NeoForge installers can materialize additional launch-critical artifacts
@@ -46,8 +169,108 @@ pub fn build_classpath(
     if !local_jars.is_empty() {
         debug!("Found {} local library JARs", local_jars.len());
     }
+
+    // Avoid poisoning the classpath with duplicates (same jar in different roots)
+    // and with older bootstrap artifacts. Duplicate securejarhandler/modlauncher jars
+    // can trigger `java.net.URL.setURLStreamHandlerFactory` twice -> "factory already defined".
+    let mut included_basenames = std::collections::HashSet::<String>::new();
+    for entry in &entries {
+        if let Some(name) = std::path::Path::new(entry)
+            .file_name()
+            .and_then(|n| n.to_str())
+        {
+            let key = if cfg!(target_os = "windows") {
+                name.to_lowercase()
+            } else {
+                name.to_string()
+            };
+            included_basenames.insert(key);
+        }
+    }
+
+    let sensitive_prefixes: [&str; 6] = [
+        "securejarhandler-",
+        "modlauncher-",
+        "jarhandling-",
+        "bootstraplauncher-",
+        "fmlloader-",
+        "fmlcore-",
+    ];
+
+    let mut newest_sensitive: HashMap<String, (PathBuf, String)> = HashMap::new();
+    let mut other_local = Vec::<PathBuf>::new();
+
     for discovered_jar in local_jars {
-        entries.push(safe_path_str(&discovered_jar));
+        let Some(file_name) = discovered_jar.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+
+        let file_key = if cfg!(target_os = "windows") {
+            file_name.to_lowercase()
+        } else {
+            file_name.to_string()
+        };
+
+        if included_basenames.contains(&file_key) {
+            continue;
+        }
+
+        // Do not inject bootstrap artifacts from local jar scanning.
+        // They must not appear on the JVM -cp for BootstrapLauncher runs.
+        if (module_bootstrap || skip_cpw_mods_bootstrap)
+            && (file_key.starts_with("securejarhandler-")
+                || file_key.starts_with("modlauncher-")
+                || file_key.starts_with("jarhandling-"))
+        {
+            continue;
+        }
+
+        // Prefer the newest version for sensitive bootstrap artifacts.
+        let mut captured = false;
+        for prefix in sensitive_prefixes {
+            if let Some(rest) = file_key.strip_prefix(prefix) {
+                if let Some(rest) = rest.strip_suffix(".jar") {
+                    // rest is like "11.0.5" or "2.1.10_7" etc.
+                    // Keep only the newest by numeric compare.
+                    let artifact_name = prefix.trim_end_matches('-').to_string();
+                    let version = rest.to_string();
+                    match newest_sensitive.get(&artifact_name) {
+                        None => {
+                            newest_sensitive.insert(artifact_name, (discovered_jar.clone(), version));
+                        }
+                        Some((_, existing_version)) => {
+                            if compare_versions(&version, existing_version) == Ordering::Greater {
+                                newest_sensitive.insert(
+                                    artifact_name,
+                                    (discovered_jar.clone(), version),
+                                );
+                            }
+                        }
+                    }
+                    captured = true;
+                    break;
+                }
+            }
+        }
+        if captured {
+            continue;
+        }
+
+        other_local.push(discovered_jar);
+    }
+
+    // Insert newest sensitive jars first.
+    let mut newest_sensitive_values: Vec<(PathBuf, String)> = newest_sensitive
+        .into_values()
+        .collect();
+    newest_sensitive_values.sort_by(|(_, a), (_, b)| compare_versions(b, a));
+    for (path, _) in newest_sensitive_values {
+        entries.push(safe_path_str(&path));
+    }
+
+    // Then include other local jars.
+    for path in other_local {
+        entries.push(safe_path_str(&path));
     }
 
     // 1.2 Loader/vanilla version JARs generated under `minecraft/versions`.
@@ -592,6 +815,177 @@ mod tests {
 
         assert!(classpath.contains("1.20.1/1.20.1.jar"));
         assert!(classpath.contains("1.20.1-47.2.0/1.20.1-47.2.0.jar"));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn build_classpath_prioritizes_newest_asm_first() {
+        let temp = std::env::temp_dir().join(format!(
+            "classpath-test-asm-order-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+
+        let instance_dir = temp.join("instance");
+        std::fs::create_dir_all(&instance_dir).unwrap();
+        std::fs::write(instance_dir.join("client.jar"), b"client").unwrap();
+
+        let instance = test_instance(&instance_dir);
+        let libs_dir = temp.join("libraries");
+
+        // Create both ASM 9.3 and 9.8 jars on disk.
+        let asm_old = MavenArtifact::parse("org.ow2.asm:asm:9.3").unwrap();
+        let asm_new = MavenArtifact::parse("org.ow2.asm:asm:9.8").unwrap();
+        let old_path = libs_dir.join(asm_old.local_path());
+        let new_path = libs_dir.join(asm_new.local_path());
+        std::fs::create_dir_all(old_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(new_path.parent().unwrap()).unwrap();
+        std::fs::write(&old_path, b"old").unwrap();
+        std::fs::write(&new_path, b"new").unwrap();
+
+        let classpath = build_classpath(
+            &instance,
+            &libs_dir,
+            &[
+                "org.ow2.asm:asm:9.3".into(),
+                "org.ow2.asm:asm:9.8".into(),
+            ],
+        )
+        .unwrap();
+
+        // We keep only the newest ASM per artifact to prevent old ASM from being selected.
+        assert!(classpath.contains("asm-9.8.jar"));
+        assert!(!classpath.contains("asm-9.3.jar"));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn build_classpath_dedupes_sensitive_bootstrap_jars_to_newest() {
+        let temp = std::env::temp_dir().join(format!(
+            "classpath-test-sensitive-dedupe-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+
+        let instance_dir = temp.join("instance");
+        std::fs::create_dir_all(&instance_dir).unwrap();
+        std::fs::write(instance_dir.join("client.jar"), b"client").unwrap();
+
+        let instance = test_instance(&instance_dir);
+        let libs_dir = temp.join("libraries");
+        std::fs::create_dir_all(&libs_dir).unwrap();
+
+        // Put two versions of the same sensitive artifact in instance-local repo.
+        // They should not both end up on the classpath.
+        let local_repo = instance_dir.join("libraries").join("cpw").join("mods");
+        std::fs::create_dir_all(&local_repo).unwrap();
+        std::fs::write(local_repo.join("securejarhandler-2.1.6.jar"), b"old").unwrap();
+        std::fs::write(local_repo.join("securejarhandler-2.1.8.jar"), b"new").unwrap();
+
+        let classpath = build_classpath(&instance, &libs_dir, &[]).unwrap();
+
+        assert!(classpath.contains("securejarhandler-2.1.8.jar"));
+        assert!(!classpath.contains("securejarhandler-2.1.6.jar"));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn build_classpath_skips_cpw_mods_bootstrap_when_module_path_present() {
+        let temp = std::env::temp_dir().join(format!(
+            "classpath-test-module-skip-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+
+        let instance_dir = temp.join("instance");
+        std::fs::create_dir_all(&instance_dir).unwrap();
+        std::fs::write(instance_dir.join("client.jar"), b"client").unwrap();
+
+        let mut instance = test_instance(&instance_dir);
+        // Simulate Forge/NeoForge modular launch metadata.
+        instance.jvm_args = vec![
+            "--module-path".into(),
+            "${library_directory}".into(),
+            "--add-modules".into(),
+            "ALL-MODULE-PATH".into(),
+        ];
+
+        let libs_dir = temp.join("libraries");
+        std::fs::create_dir_all(&libs_dir).unwrap();
+
+        // Materialize jars so `resolve_library_entry` can find them.
+        let sjh = MavenArtifact::parse("cpw.mods:securejarhandler:2.1.8").unwrap();
+        let ml = MavenArtifact::parse("cpw.mods:modlauncher:11.0.5").unwrap();
+        let jh = MavenArtifact::parse("cpw.mods:jarhandling:0.5.5").unwrap();
+        for art in [&sjh, &ml, &jh] {
+            let p = libs_dir.join(art.local_path());
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"x").unwrap();
+        }
+
+        let classpath = build_classpath(
+            &instance,
+            &libs_dir,
+            &[
+                "cpw.mods:securejarhandler:2.1.8".into(),
+                "cpw.mods:modlauncher:11.0.5".into(),
+                "cpw.mods:jarhandling:0.5.5".into(),
+            ],
+        )
+        .unwrap();
+
+        assert!(!classpath.contains("securejarhandler-2.1.8.jar"));
+        assert!(!classpath.contains("modlauncher-11.0.5.jar"));
+        assert!(!classpath.contains("jarhandling-0.5.5.jar"));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn build_classpath_skips_cpw_mods_bootstrap_when_using_bootstraplauncher_main() {
+        let temp = std::env::temp_dir().join(format!(
+            "classpath-test-bootstraplauncher-skip-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+
+        let instance_dir = temp.join("instance");
+        std::fs::create_dir_all(&instance_dir).unwrap();
+        std::fs::write(instance_dir.join("client.jar"), b"client").unwrap();
+
+        let mut instance = test_instance(&instance_dir);
+        instance.loader = LoaderType::NeoForge;
+        instance.main_class = Some("cpw.mods.bootstraplauncher.BootstrapLauncher".into());
+
+        let libs_dir = temp.join("libraries");
+        std::fs::create_dir_all(&libs_dir).unwrap();
+
+        let sjh = MavenArtifact::parse("cpw.mods:securejarhandler:3.0.8").unwrap();
+        let ml = MavenArtifact::parse("cpw.mods:modlauncher:11.0.5").unwrap();
+        let jh = MavenArtifact::parse("cpw.mods:jarhandling:0.5.5").unwrap();
+        for art in [&sjh, &ml, &jh] {
+            let p = libs_dir.join(art.local_path());
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"x").unwrap();
+        }
+
+        let classpath = build_classpath(
+            &instance,
+            &libs_dir,
+            &[
+                "cpw.mods:securejarhandler:3.0.8".into(),
+                "cpw.mods:modlauncher:11.0.5".into(),
+                "cpw.mods:jarhandling:0.5.5".into(),
+            ],
+        )
+        .unwrap();
+
+        assert!(!classpath.contains("securejarhandler-3.0.8.jar"));
+        assert!(!classpath.contains("modlauncher-11.0.5.jar"));
+        assert!(!classpath.contains("jarhandling-0.5.5.jar"));
 
         let _ = std::fs::remove_dir_all(&temp);
     }

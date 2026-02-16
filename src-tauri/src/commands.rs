@@ -112,11 +112,15 @@ fn detect_loader_asm_incompatibility(
         .map(|artifact| artifact.version)
         .collect();
 
-    let has_old_asm = asm_versions
-        .iter()
-        .any(|version| !asm_version_supports_java_21(version));
+    if asm_versions.is_empty() {
+        return None;
+    }
 
-    if !has_old_asm {
+    let has_valid_asm = asm_versions
+        .iter()
+        .any(|version| asm_version_supports_java_21(version));
+
+    if has_valid_asm {
         return None;
     }
 
@@ -2045,6 +2049,25 @@ pub async fn launch_instance(
         emit_launch_log(&app_handle, &id, "info", "[FASE] bootstrap".into());
 
         let libs_dir = state_guard.libraries_dir();
+
+        // [SELF-HEALING] Revertir estado "requires_delta" si los checks de ASM ahora pasan (debido a actualizaciones o correcciones de lógica).
+        if instance.loader_requires_delta {
+            let required_major = instance.required_java_major.unwrap_or_else(|| {
+                crate::core::java::required_java_for_minecraft_version(&instance.minecraft_version)
+            });
+            if detect_loader_asm_incompatibility(&instance, required_major).is_none() {
+                emit_launch_log(
+                    &app_handle,
+                    &id,
+                    "info",
+                    "[REPAIR] Detectada configuración legacy innecesaria (ASM compatible encontrado). Revirtiendo a Gamma runtime.".into(),
+                );
+                instance.loader_requires_delta = false;
+                instance.bootstrap_runtime = crate::core::java::RuntimeRole::Gamma;
+                state_guard.instance_manager.save(&instance).await?;
+            }
+        }
+
         emit_launch_log(
             &app_handle,
             &id,
@@ -2184,6 +2207,34 @@ pub async fn launch_instance(
             "running",
         );
         emit_launch_log(&app_handle, &id, "info", "[FASE] launch del juego".into());
+
+        // Diagnóstico: imprimir el comando final (classpath + jvm args) para detectar
+        // duplicados de bootstrap (securejarhandler/modlauncher) y mezcla module-path/-cp.
+        // Esto va a la UI (no solo a tracing) para facilitar soporte.
+        emit_launch_log(
+            &app_handle,
+            &id,
+            "info",
+            format!(
+                "[DIAG] JVM args (raw): {}",
+                instance.jvm_args.join(" ")
+            ),
+        );
+        emit_launch_log(
+            &app_handle,
+            &id,
+            "info",
+            format!("[DIAG] Main class: {}", instance.main_class.as_deref().unwrap_or("<none>")),
+        );
+        emit_launch_log(
+            &app_handle,
+            &id,
+            "info",
+            format!("[DIAG] Classpath len={}", classpath.len()),
+        );
+        // Evitar un spam gigante en UI; aún así, el contenido completo es útil para depurar.
+        // Se imprime completo, pero si esto resulta demasiado verboso podemos recortarlo luego.
+        emit_launch_log(&app_handle, &id, "info", format!("[DIAG] Classpath: {}", classpath));
 
         let child = match launch::launch(&instance, &classpath, &libs_dir).await {
             Ok(child) => child,
