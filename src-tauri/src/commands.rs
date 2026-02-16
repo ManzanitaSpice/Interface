@@ -591,7 +591,7 @@ async fn verify_instance_runtime_readiness(
         format!("Carpeta assets disponible: {}", assets_dir.display()),
     );
 
-    let client_jar = instance.path.join("client.jar");
+    let client_jar = instance.client_jar_path();
     let client_jar_ok = client_jar.is_file();
     let client_jar_corrupted = client_jar_ok
         && fs::metadata(&client_jar)
@@ -889,7 +889,7 @@ async fn cleanup_loader_and_runtime_artifacts(
         let _ = tokio::fs::remove_dir_all(&loader_cache_root).await;
     }
 
-    let client_jar = instance.path.join("client.jar");
+    let client_jar = instance.client_jar_path();
     if client_jar.exists() {
         let _ = tokio::fs::remove_file(&client_jar).await;
     }
@@ -999,7 +999,7 @@ async fn attempt_preflight_repair(
                 needs_prepare = true;
             }
             PreflightFailure::CorruptedFiles => {
-                let client_jar = instance.path.join("client.jar");
+                let client_jar = instance.client_jar_path();
                 if client_jar.exists() {
                     let _ = tokio::fs::remove_file(&client_jar).await;
                 }
@@ -1155,6 +1155,14 @@ async fn prepare_instance_for_launch(
     state: &crate::core::state::AppState,
     instance: &mut Instance,
 ) -> Result<(), LauncherError> {
+    let runtime_root = instance.runtime_root_dir();
+    tokio::fs::create_dir_all(&runtime_root)
+        .await
+        .map_err(|source| LauncherError::Io {
+            path: runtime_root.clone(),
+            source,
+        })?;
+
     let game_dir = instance.game_dir();
     tokio::fs::create_dir_all(&game_dir)
         .await
@@ -1179,7 +1187,7 @@ async fn prepare_instance_for_launch(
 
     let needs_install = instance.main_class.is_none()
         || instance.required_java_major.is_none()
-        || !instance.path.join("client.jar").exists()
+        || !instance.client_jar_path().exists()
         || instance.libraries.iter().any(|coord| {
             crate::core::maven::MavenArtifact::parse(coord)
                 .map(|artifact| !libs_dir.join(artifact.local_path()).exists())
@@ -1193,7 +1201,7 @@ async fn prepare_instance_for_launch(
             .install(loaders::InstallContext {
                 minecraft_version: &instance.minecraft_version,
                 loader_version: "",
-                instance_dir: &instance.path,
+                instance_dir: &runtime_root,
                 libs_dir: &libs_dir,
                 downloader: state.downloader.as_ref(),
                 http_client: &client,
@@ -1224,7 +1232,7 @@ async fn prepare_instance_for_launch(
                     .install(loaders::InstallContext {
                         minecraft_version: &instance.minecraft_version,
                         loader_version,
-                        instance_dir: &instance.path,
+                        instance_dir: &runtime_root,
                         libs_dir: &libs_dir,
                         downloader: state.downloader.as_ref(),
                         http_client: &client,
@@ -1695,6 +1703,14 @@ pub async fn create_instance(
         "Instancia creada en disco, iniciando instalación base...".into(),
     );
 
+    let runtime_root = instance.runtime_root_dir();
+    tokio::fs::create_dir_all(&runtime_root)
+        .await
+        .map_err(|source| LauncherError::Io {
+            path: runtime_root.clone(),
+            source,
+        })?;
+
     let libs_dir = state.libraries_dir();
     let client = state.http_client.clone();
     let vanilla_installer = loaders::Installer::new(&LoaderType::Vanilla, client.clone());
@@ -1716,7 +1732,7 @@ pub async fn create_instance(
             .install(loaders::InstallContext {
                 minecraft_version: &instance.minecraft_version,
                 loader_version: "",
-                instance_dir: &instance.path,
+                instance_dir: &runtime_root,
                 libs_dir: &libs_dir,
                 downloader: state.downloader.as_ref(),
                 http_client: &client,
@@ -1769,7 +1785,7 @@ pub async fn create_instance(
                     .install(loaders::InstallContext {
                         minecraft_version: &instance.minecraft_version,
                         loader_version,
-                        instance_dir: &instance.path,
+                        instance_dir: &runtime_root,
                         libs_dir: &libs_dir,
                         downloader: state.downloader.as_ref(),
                         http_client: &client,

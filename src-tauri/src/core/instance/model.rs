@@ -102,6 +102,8 @@ fn default_game_runtime() -> RuntimeRole {
 }
 
 impl Instance {
+    const NEOFORGE_TESTING_DIR: &'static str = "testing-neoforge";
+
     /// Create a new instance with initial state.
     pub fn new(
         name: String,
@@ -141,26 +143,48 @@ impl Instance {
 
     /// Path to the instance's `minecraft/` game working directory.
     pub fn game_dir(&self) -> PathBuf {
-        self.path.join("minecraft")
+        self.runtime_root_dir().join("minecraft")
     }
 
     /// Path to the `mods/` directory.
     pub fn mods_dir(&self) -> PathBuf {
-        self.path.join("mods")
+        self.runtime_root_dir().join("mods")
     }
 
     /// Path to the `config/` directory.
     pub fn config_dir(&self) -> PathBuf {
-        self.path.join("config")
+        self.runtime_root_dir().join("config")
+    }
+
+    /// Path to runtime logs directory.
+    pub fn logs_dir(&self) -> PathBuf {
+        self.runtime_root_dir().join("logs")
     }
 
     /// Path to the `natives` folder (extracted per launch session).
     pub fn natives_dir(&self) -> PathBuf {
-        self.path.join("natives")
+        self.runtime_root_dir().join("natives")
+    }
+
+    /// Path to the downloaded `client.jar` used at launch time.
+    pub fn client_jar_path(&self) -> PathBuf {
+        self.runtime_root_dir().join("client.jar")
     }
 
     /// Path to this instance's config file.
     pub fn config_path(&self) -> PathBuf {
         self.path.join("instance.json")
+    }
+
+    /// Root directory for runtime artifacts.
+    ///
+    /// NeoForge uses a dedicated sandbox folder during the testing phase so it
+    /// does not interfere with the global instance runtime structure.
+    pub fn runtime_root_dir(&self) -> PathBuf {
+        if self.loader == LoaderType::NeoForge {
+            self.path.join(Self::NEOFORGE_TESTING_DIR)
+        } else {
+            self.path.clone()
+        }
     }
 }

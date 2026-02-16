@@ -34,11 +34,11 @@ impl InstanceManager {
         }
 
         // Create directory structure eagerly to reduce first-launch failures.
-        let minecraft_dir = instance.path.join("minecraft");
+        let minecraft_dir = instance.game_dir();
         let assets_dir = minecraft_dir.join("assets");
-        let mods_dir = instance.path.join("mods");
-        let config_dir = instance.path.join("config");
-        let logs_dir = instance.path.join("logs");
+        let mods_dir = instance.mods_dir();
+        let config_dir = instance.config_dir();
+        let logs_dir = instance.logs_dir();
 
         tokio::try_join!(
             create_dir_safe(&minecraft_dir),
@@ -58,8 +58,9 @@ impl InstanceManager {
     }
 
     pub async fn verify_structure(&self, instance: &Instance) -> LauncherResult<()> {
+        let runtime_root = instance.runtime_root_dir();
         for subdir in ["minecraft", "minecraft/assets", "mods", "config", "logs"] {
-            let path = instance.path.join(subdir);
+            let path = runtime_root.join(subdir);
             let metadata =
                 tokio::fs::metadata(&path)
                     .await

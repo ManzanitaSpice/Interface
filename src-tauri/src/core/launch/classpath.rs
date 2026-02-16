@@ -108,7 +108,7 @@ pub fn build_classpath(
     }
 
     // ─── 3. Client jar ───
-    let client = instance.path.join("client.jar");
+    let client = instance.client_jar_path();
     if client.exists() {
         entries.push(safe_path_str(&client));
     } else {
@@ -637,10 +637,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp);
         let instance_dir = temp.join("instance");
         std::fs::create_dir_all(&instance_dir).unwrap();
-        std::fs::write(instance_dir.join("client.jar"), b"client").unwrap();
-
         let mut instance = test_instance(&instance_dir);
         instance.loader = LoaderType::NeoForge;
+        std::fs::create_dir_all(instance.runtime_root_dir()).unwrap();
+        std::fs::write(instance.client_jar_path(), b"client").unwrap();
         instance.loader_version = Some("20.4.80".into());
         instance.minecraft_version = "1.20.4".into();
 
@@ -857,10 +857,10 @@ mod tests {
 
         let instance_dir = temp.join("instance");
         std::fs::create_dir_all(&instance_dir).unwrap();
-        std::fs::write(instance_dir.join("client.jar"), b"client").unwrap();
-
         let mut instance = test_instance(&instance_dir);
         instance.loader = LoaderType::NeoForge;
+        std::fs::create_dir_all(instance.runtime_root_dir()).unwrap();
+        std::fs::write(instance.client_jar_path(), b"client").unwrap();
         instance.main_class = Some("cpw.mods.bootstraplauncher.BootstrapLauncher".into());
 
         let libs_dir = temp.join("libraries");
@@ -902,10 +902,10 @@ mod tests {
 
         let instance_dir = temp.join("instance");
         std::fs::create_dir_all(&instance_dir).unwrap();
-        std::fs::write(instance_dir.join("client.jar"), b"client").unwrap();
-
         let mut instance = test_instance(&instance_dir);
         instance.loader = LoaderType::NeoForge;
+        std::fs::create_dir_all(instance.runtime_root_dir()).unwrap();
+        std::fs::write(instance.client_jar_path(), b"client").unwrap();
 
         let libs_dir = temp.join("libraries");
         std::fs::create_dir_all(&libs_dir).unwrap();
