@@ -1,6 +1,8 @@
 // ─── Classpath Builder ───
 // FIXED for Forge / NeoForge modern loaders.
 
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use tracing::{debug, warn};
@@ -61,30 +63,6 @@ fn should_skip_cpw_mods_bootstrap_on_classpath(instance: &Instance) -> bool {
     is_bootstraplauncher_main(instance) && matches!(instance.loader, LoaderType::Forge | LoaderType::NeoForge)
 }
 
-fn parse_numeric_version_parts(raw: &str) -> Vec<u32> {
-    raw.split(|c: char| !c.is_ascii_digit())
-        .filter(|s| !s.is_empty())
-        .filter_map(|s| s.parse::<u32>().ok())
-        .collect()
-}
-
-fn compare_versions(a: &str, b: &str) -> Ordering {
-    let a_parts = parse_numeric_version_parts(a);
-    let b_parts = parse_numeric_version_parts(b);
-
-    let max_len = a_parts.len().max(b_parts.len());
-    for i in 0..max_len {
-        let av = a_parts.get(i).copied().unwrap_or(0);
-        let bv = b_parts.get(i).copied().unwrap_or(0);
-        match av.cmp(&bv) {
-            Ordering::Equal => continue,
-            ord => return ord,
-        }
-    }
-
-    a.cmp(b)
-}
-
 /// Builds the full classpath string.
 pub fn build_classpath(
     instance: &Instance,
@@ -103,7 +81,6 @@ pub fn build_classpath(
     // Key: artifactId + classifier (to keep e.g. asm-tree separate).
     let mut best_asm_by_key: HashMap<String, (String, String)> = HashMap::new();
 
-    let mut best_asm: HashMap<String, (String, String)> = HashMap::new();
     let mut other_libs = Vec::new();
 
     // ─── 1. Declared libraries ───
@@ -178,7 +155,7 @@ pub fn build_classpath(
     }
 
     // Newest ASM first
-    let mut asm: Vec<_> = best_asm.into_values().collect();
+    let mut asm: Vec<_> = best_asm_by_key.into_values().collect();
     asm.sort_by(|(_, a), (_, b)| compare_versions(b, a));
 
     for (coord, _) in asm {
