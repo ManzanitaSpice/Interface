@@ -102,31 +102,12 @@ pub fn build_classpath(
         }
     }
 
-    // ─── 2. Local libraries (discovered) ───
-    // Forge/NeoForge classpaths must be explicit: recursive local scans can pull
-    // installer tools (binarypatcher, SpecialSource, neoform zip, etc.) and
-    // crash bootstrap with URL handler conflicts.
-    if allows_discovered_local_jars(&instance.loader) {
-        let local_jars = collect_local_library_jars(instance);
-        if !local_jars.is_empty() {
-            debug!("Found {} local library JARs", local_jars.len());
-        }
-        for jar in local_jars {
-            entries.push(safe_path_str(&jar));
-        }
-    } else {
-        debug!(
-            "Skipping discovered local library scan for {:?}; only declared runtime libraries are allowed",
-            instance.loader
-        );
-    }
-
-    // ─── 3. Version jars ───
+    // ─── 2. Version jars ───
     for jar in collect_required_version_jars(instance) {
         entries.push(safe_path_str(&jar));
     }
 
-    // ─── 4. Client jar ───
+    // ─── 3. Client jar ───
     let client = instance.path.join("client.jar");
     if client.exists() {
         entries.push(safe_path_str(&client));
@@ -139,6 +120,15 @@ pub fn build_classpath(
 
         if global.exists() {
             entries.push(safe_path_str(&global));
+        }
+    }
+
+    // ─── 4. Fabric/Quilt mods ───
+    // Keep this strict and explicit: only direct mods/*.jar entries.
+    // Never recurse through libraries/ for runtime discovery.
+    if matches!(instance.loader, LoaderType::Fabric | LoaderType::Quilt) {
+        for mod_jar in collect_mod_jars(instance) {
+            entries.push(safe_path_str(&mod_jar));
         }
     }
 
@@ -164,6 +154,9 @@ fn resolve_library_entry(instance: &Instance, libs_dir: &Path, raw: &str) -> Opt
     let p = Path::new(raw);
 
     if p.is_absolute() && p.exists() {
+        if !is_jar_path(p) {
+            return None;
+        }
         return Some(safe_path_str(p));
     }
 
@@ -175,6 +168,9 @@ fn resolve_library_entry(instance: &Instance, libs_dir: &Path, raw: &str) -> Opt
 
     for c in candidates {
         if c.exists() {
+            if !is_jar_path(&c) {
+                continue;
+            }
             return Some(safe_path_str(&c));
         }
     }
@@ -187,6 +183,12 @@ fn resolve_library_entry(instance: &Instance, libs_dir: &Path, raw: &str) -> Opt
     }
 
     None
+}
+
+fn is_jar_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("jar"))
 }
 
 fn should_skip_runtime_library(loader: &LoaderType, raw: &str) -> bool {
@@ -207,37 +209,21 @@ fn should_skip_runtime_library(loader: &LoaderType, raw: &str) -> bool {
             && (name == "AutoRenamingTool" || name == "ForgeAutoRenamingTool"))
 }
 
-fn collect_local_library_jars(instance: &Instance) -> Vec<PathBuf> {
-    let mut jars = Vec::new();
-
-    for root in [
-        instance.path.join("libraries"),
-        instance.game_dir().join("libraries"),
-    ] {
-        if !root.exists() {
-            continue;
-        }
-
-        let mut stack = vec![root];
-        while let Some(dir) = stack.pop() {
-            if let Ok(read) = std::fs::read_dir(&dir) {
-                for e in read.flatten() {
-                    let p = e.path();
-                    if p.is_dir() {
-                        stack.push(p);
-                    } else if p.extension().map(|e| e == "jar").unwrap_or(false) {
-                        jars.push(p);
-                    }
-                }
-            }
-        }
+fn collect_mod_jars(instance: &Instance) -> Vec<PathBuf> {
+    let mods_dir = instance.mods_dir();
+    if !mods_dir.exists() {
+        return Vec::new();
     }
 
-    jars
-}
+    let Ok(entries) = std::fs::read_dir(mods_dir) else {
+        return Vec::new();
+    };
 
-fn allows_discovered_local_jars(loader: &LoaderType) -> bool {
-    !matches!(loader, LoaderType::Forge | LoaderType::NeoForge)
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && is_jar_path(path))
+        .collect()
 }
 
 fn collect_required_version_jars(instance: &Instance) -> Vec<PathBuf> {
@@ -506,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn build_classpath_collects_discovered_local_jars_even_without_declared_coordinate() {
+    fn build_classpath_does_not_collect_undeclared_local_libraries() {
         let temp = std::env::temp_dir().join(format!(
             "classpath-test-discovered-local-jars-{}",
             std::process::id()
@@ -521,13 +507,14 @@ mod tests {
         let instance = test_instance(&instance_dir);
         let classpath = build_classpath(&instance, &temp.join("libraries"), &[]).unwrap();
 
-        assert!(classpath.contains("installer-generated.jar"));
+        assert!(!classpath.contains("installer-generated.jar"));
+        assert!(classpath.contains("client.jar"));
 
         let _ = std::fs::remove_dir_all(&temp);
     }
 
     #[test]
-    fn build_classpath_skips_discovered_local_jars_for_neoforge() {
+    fn build_classpath_skips_undeclared_local_jars_for_neoforge() {
         let temp = std::env::temp_dir().join(format!(
             "classpath-test-no-discovered-local-jars-neoforge-{}",
             std::process::id()
@@ -749,7 +736,7 @@ mod tests {
     }
 
     #[test]
-    fn build_classpath_dedupes_sensitive_bootstrap_jars_to_newest() {
+    fn build_classpath_keeps_only_declared_sensitive_bootstrap_jars() {
         let temp = std::env::temp_dir().join(format!(
             "classpath-test-sensitive-dedupe-{}",
             std::process::id()
@@ -771,7 +758,12 @@ mod tests {
         std::fs::write(local_repo.join("securejarhandler-2.1.6.jar"), b"old").unwrap();
         std::fs::write(local_repo.join("securejarhandler-2.1.8.jar"), b"new").unwrap();
 
-        let classpath = build_classpath(&instance, &libs_dir, &[]).unwrap();
+        let classpath = build_classpath(
+            &instance,
+            &libs_dir,
+            &["cpw.mods:securejarhandler:2.1.8".into()],
+        )
+        .unwrap();
 
         assert!(classpath.contains("securejarhandler-2.1.8.jar"));
         assert!(!classpath.contains("securejarhandler-2.1.6.jar"));
@@ -825,6 +817,32 @@ mod tests {
         assert!(classpath.contains("securejarhandler-2.1.8.jar"));
         assert!(classpath.contains("modlauncher-11.0.5.jar"));
         assert!(classpath.contains("jarhandling-0.5.5.jar"));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn build_classpath_includes_mods_for_fabric_loader() {
+        let temp =
+            std::env::temp_dir().join(format!("classpath-test-fabric-mods-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+
+        let instance_dir = temp.join("instance");
+        std::fs::create_dir_all(&instance_dir).unwrap();
+        std::fs::write(instance_dir.join("client.jar"), b"client").unwrap();
+
+        let mut instance = test_instance(&instance_dir);
+        instance.loader = LoaderType::Fabric;
+
+        let mods_dir = instance.mods_dir();
+        std::fs::create_dir_all(&mods_dir).unwrap();
+        std::fs::write(mods_dir.join("example-mod.jar"), b"mod").unwrap();
+        std::fs::write(mods_dir.join("README.txt"), b"not-a-mod").unwrap();
+
+        let classpath = build_classpath(&instance, &temp.join("libraries"), &[]).unwrap();
+
+        assert!(classpath.contains("example-mod.jar"));
+        assert!(!classpath.contains("README.txt"));
 
         let _ = std::fs::remove_dir_all(&temp);
     }
