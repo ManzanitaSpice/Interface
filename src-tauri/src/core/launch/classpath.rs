@@ -44,15 +44,12 @@ pub fn build_classpath(
 ) -> LauncherResult<String> {
     let sep = get_classpath_separator();
     let mut entries: Vec<String> = Vec::new();
-    let mut non_asm_entries: Vec<String> = Vec::new();
 
     // ASM is extremely order-sensitive for Forge/NeoForge bootstrap.
     // If multiple ASM versions exist, the first one on the classpath wins.
     // Ensure the newest ASM jars appear first and older duplicates are ignored.
     // Key: artifactId + classifier (to keep e.g. asm-tree separate).
     let mut best_asm_by_key: HashMap<String, (String, String)> = HashMap::new();
-
-    let mut other_libs = Vec::new();
 
     // ─── 1. Declared libraries ───
     for raw in extra_lib_coords {
@@ -100,13 +97,11 @@ pub fn build_classpath(
         }
     }
 
-    entries.extend(other_libs);
-
     // ─── 2. Local libraries (discovered) ───
     // Forge/NeoForge classpaths must be explicit: recursive local scans can pull
     // installer tools (binarypatcher, SpecialSource, neoform zip, etc.) and
     // crash bootstrap with URL handler conflicts.
-    if allows_discovered_local_jars(instance.loader) {
+    if allows_discovered_local_jars(&instance.loader) {
         let local_jars = collect_local_library_jars(instance);
         if !local_jars.is_empty() {
             debug!("Found {} local library JARs", local_jars.len());
@@ -218,7 +213,7 @@ fn collect_local_library_jars(instance: &Instance) -> Vec<PathBuf> {
     jars
 }
 
-fn allows_discovered_local_jars(loader: LoaderType) -> bool {
+fn allows_discovered_local_jars(loader: &LoaderType) -> bool {
     !matches!(loader, LoaderType::Forge | LoaderType::NeoForge)
 }
 
@@ -228,7 +223,7 @@ fn collect_required_version_jars(instance: &Instance) -> Vec<PathBuf> {
     let mut ids = vec![instance.minecraft_version.clone()];
 
     if let Some(loader_version) = &instance.loader_version {
-        match instance.loader {
+        match &instance.loader {
             LoaderType::Forge => {
                 ids.push(format!("{}-{}", instance.minecraft_version, loader_version));
             }
