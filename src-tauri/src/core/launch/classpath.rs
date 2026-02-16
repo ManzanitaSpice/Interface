@@ -309,6 +309,7 @@ pub fn build_classpath(
 
     entries.retain(|entry| !entry.trim().is_empty());
     dedup_preserving_order(&mut entries);
+    prioritize_bootstrap_entries(&mut entries);
     if entries.is_empty() {
         return Err(LauncherError::Other(
             "Classpath is empty after filtering invalid entries".into(),
@@ -462,6 +463,54 @@ fn dedup_preserving_order(entries: &mut Vec<String>) {
         };
         seen.insert(key)
     });
+}
+
+/// ModLauncher-based stacks (Forge/NeoForge) are sensitive to classpath order.
+/// Ensure bootstrap artifacts are loaded first before the rest of the runtime jars.
+fn prioritize_bootstrap_entries(entries: &mut Vec<String>) {
+    fn score(entry: &str) -> usize {
+        let lower = entry.to_ascii_lowercase();
+        if lower.contains("bootstraplauncher") {
+            0
+        } else if lower.contains("modlauncher") {
+            1
+        } else if lower.contains("securejarhandler") {
+            2
+        } else {
+            10
+        }
+    }
+
+    let mut indexed: Vec<(usize, usize, String)> = entries
+        .drain(..)
+        .enumerate()
+        .map(|(idx, entry)| (score(&entry), idx, entry))
+        .collect();
+
+    indexed.sort_by_key(|(priority, idx, _)| (*priority, *idx));
+    entries.extend(indexed.into_iter().map(|(_, _, entry)| entry));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prioritize_bootstrap_entries;
+
+    #[test]
+    fn bootstrapping_jars_are_moved_to_the_front_in_required_order() {
+        let mut entries = vec![
+            "/tmp/other-lib.jar".to_string(),
+            "/tmp/modlauncher-10.0.jar".to_string(),
+            "/tmp/securejarhandler-3.0.jar".to_string(),
+            "/tmp/bootstraplauncher-2.0.jar".to_string(),
+            "/tmp/another-lib.jar".to_string(),
+        ];
+
+        prioritize_bootstrap_entries(&mut entries);
+
+        assert_eq!(entries[0], "/tmp/bootstraplauncher-2.0.jar");
+        assert_eq!(entries[1], "/tmp/modlauncher-10.0.jar");
+        assert_eq!(entries[2], "/tmp/securejarhandler-3.0.jar");
+    }
 }
 
 /// Extract native libraries from JARs that contain `.dll`, `.so`, or `.dylib`.
