@@ -58,6 +58,11 @@ pub fn build_classpath(
             continue;
         }
 
+        if should_skip_runtime_library(&instance.loader, trimmed) {
+            debug!("Skipping installer-only runtime library: {}", trimmed);
+            continue;
+        }
+
         if let Ok(artifact) = MavenArtifact::parse(trimmed) {
             if artifact.group_id == "org.ow2.asm" {
                 let classifier = artifact.classifier.clone().unwrap_or_default();
@@ -182,6 +187,24 @@ fn resolve_library_entry(instance: &Instance, libs_dir: &Path, raw: &str) -> Opt
     }
 
     None
+}
+
+fn should_skip_runtime_library(loader: &LoaderType, raw: &str) -> bool {
+    if !matches!(loader, LoaderType::Forge | LoaderType::NeoForge) {
+        return false;
+    }
+
+    let Ok(artifact) = MavenArtifact::parse(raw) else {
+        return false;
+    };
+
+    let group = artifact.group_id.as_str();
+    let name = artifact.artifact_id.as_str();
+
+    (group == "net.neoforged.installertools")
+        || (group == "net.minecraftforge" && name == "binarypatcher")
+        || (group == "net.neoforged"
+            && (name == "AutoRenamingTool" || name == "ForgeAutoRenamingTool"))
 }
 
 fn collect_local_library_jars(instance: &Instance) -> Vec<PathBuf> {
@@ -848,6 +871,50 @@ mod tests {
         assert!(classpath.contains("securejarhandler-3.0.8.jar"));
         assert!(classpath.contains("modlauncher-11.0.5.jar"));
         assert!(classpath.contains("jarhandling-0.5.5.jar"));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+    #[test]
+    fn build_classpath_skips_neoforge_installer_tooling_from_runtime() {
+        let temp = std::env::temp_dir().join(format!(
+            "classpath-test-skip-neoforge-tooling-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+
+        let instance_dir = temp.join("instance");
+        std::fs::create_dir_all(&instance_dir).unwrap();
+        std::fs::write(instance_dir.join("client.jar"), b"client").unwrap();
+
+        let mut instance = test_instance(&instance_dir);
+        instance.loader = LoaderType::NeoForge;
+
+        let libs_dir = temp.join("libraries");
+        std::fs::create_dir_all(&libs_dir).unwrap();
+
+        let runtime = MavenArtifact::parse("cpw.mods:modlauncher:11.0.5").unwrap();
+        let tooling =
+            MavenArtifact::parse("net.neoforged.installertools:binarypatcher:2.1.2:fatjar")
+                .unwrap();
+
+        for art in [&runtime, &tooling] {
+            let p = libs_dir.join(art.local_path());
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"x").unwrap();
+        }
+
+        let classpath = build_classpath(
+            &instance,
+            &libs_dir,
+            &[
+                "cpw.mods:modlauncher:11.0.5".into(),
+                "net.neoforged.installertools:binarypatcher:2.1.2:fatjar".into(),
+            ],
+        )
+        .unwrap();
+
+        assert!(classpath.contains("modlauncher-11.0.5.jar"));
+        assert!(!classpath.contains("binarypatcher-2.1.2-fatjar.jar"));
 
         let _ = std::fs::remove_dir_all(&temp);
     }

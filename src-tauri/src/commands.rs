@@ -37,6 +37,7 @@ enum LaunchDiagnostic {
     NeoForgeEarlyDisplayStillEnabled,
     CorruptedLibraryArchive,
     LoaderAsmTooOldForJava21,
+    UrlFactoryAlreadyDefined,
 }
 
 fn detect_launch_diagnostic(line: &str) -> Option<LaunchDiagnostic> {
@@ -58,6 +59,13 @@ fn detect_launch_diagnostic(line: &str) -> Option<LaunchDiagnostic> {
         return Some(LaunchDiagnostic::LoaderAsmTooOldForJava21);
     }
 
+    if line.contains("factory already defined")
+        || line.contains("URL.setURLStreamHandlerFactory")
+        || line.contains("cpw.mods.cl.ModuleClassLoader")
+    {
+        return Some(LaunchDiagnostic::UrlFactoryAlreadyDefined);
+    }
+
     None
 }
 
@@ -74,6 +82,9 @@ fn diagnostic_message(diagnostic: LaunchDiagnostic) -> &'static str {
         }
         LaunchDiagnostic::LoaderAsmTooOldForJava21 => {
             "[DIAGNÓSTICO] El loader usa ASM antiguo y no soporta bytecode Java 21 (major 65). Actualiza Forge/NeoForge de esta línea de Minecraft a una build más reciente (ASM 9.7+)."
+        }
+        LaunchDiagnostic::UrlFactoryAlreadyDefined => {
+            "[DIAGNÓSTICO] Bootstrap abortó con 'factory already defined'. Normalmente indica classpath contaminado con jars de installer tooling (binarypatcher/jarsplitter/AutoRenamingTool). Se filtraron automáticamente para NeoForge/Forge; reinicia la instancia para reconstruir launch args limpios."
         }
     }
 }
@@ -2215,16 +2226,16 @@ pub async fn launch_instance(
             &app_handle,
             &id,
             "info",
-            format!(
-                "[DIAG] JVM args (raw): {}",
-                instance.jvm_args.join(" ")
-            ),
+            format!("[DIAG] JVM args (raw): {}", instance.jvm_args.join(" ")),
         );
         emit_launch_log(
             &app_handle,
             &id,
             "info",
-            format!("[DIAG] Main class: {}", instance.main_class.as_deref().unwrap_or("<none>")),
+            format!(
+                "[DIAG] Main class: {}",
+                instance.main_class.as_deref().unwrap_or("<none>")
+            ),
         );
         emit_launch_log(
             &app_handle,
@@ -2234,7 +2245,12 @@ pub async fn launch_instance(
         );
         // Evitar un spam gigante en UI; aún así, el contenido completo es útil para depurar.
         // Se imprime completo, pero si esto resulta demasiado verboso podemos recortarlo luego.
-        emit_launch_log(&app_handle, &id, "info", format!("[DIAG] Classpath: {}", classpath));
+        emit_launch_log(
+            &app_handle,
+            &id,
+            "info",
+            format!("[DIAG] Classpath: {}", classpath),
+        );
 
         let child = match launch::launch(&instance, &classpath, &libs_dir).await {
             Ok(child) => child,
@@ -2385,15 +2401,24 @@ pub async fn launch_instance(
                         "Minecraft finalizó con error",
                         "error",
                     );
+                    let exit_code = status.code();
                     emit_launch_log(
                         &app_handle_for_wait,
                         &id,
                         "error",
-                        match status.code() {
+                        match exit_code {
                             Some(code) => format!("[ERROR] El proceso finalizó con código {code}"),
                             None => "[ERROR] El proceso finalizó sin código de salida (terminación externa).".into(),
                         },
                     );
+                    if exit_code == Some(1) {
+                        emit_launch_log(
+                            &app_handle_for_wait,
+                            &id,
+                            "error",
+                            "[ERROR] Código 1 suele ser fallo de bootstrap/clase principal. Revisa líneas [DIAGNÓSTICO] previas (classpath, securejarhandler/modlauncher, URLStreamHandlerFactory).".into(),
+                        );
+                    }
                     error!(
                         "Minecraft process for {} exited abnormally with status: {:?}",
                         id, status

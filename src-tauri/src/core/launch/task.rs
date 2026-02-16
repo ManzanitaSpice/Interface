@@ -113,6 +113,11 @@ pub async fn launch(
         classpath,
     );
     ensure_loader_jvm_workarounds(instance, &mut effective_jvm_args);
+    info!(
+        "Sanitized JVM args count={} args={:?}",
+        effective_jvm_args.len(),
+        effective_jvm_args
+    );
 
     for arg in effective_jvm_args {
         cmd.arg(arg);

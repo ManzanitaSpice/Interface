@@ -256,10 +256,9 @@ impl LoaderInstaller for NeoForgeInstaller {
                 )));
             }
 
-            for cp_coord in &processor.classpath {
-                libraries.insert(cp_coord.clone());
-            }
-            libraries.insert(processor.jar.clone());
+            // `processor.classpath` y `processor.jar` se usan solo durante instalación.
+            // Añadirlos a librerías runtime contamina el classpath final con tooling
+            // (binarypatcher, jarsplitter, etc.) y puede romper el bootstrap.
         }
 
         let mut extra_jvm_args = Vec::new();
