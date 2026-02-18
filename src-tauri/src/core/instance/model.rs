@@ -102,8 +102,6 @@ fn default_game_runtime() -> RuntimeRole {
 }
 
 impl Instance {
-    const NEOFORGE_TESTING_DIR: &'static str = "testing-neoforge";
-
     /// Create a new instance with initial state.
     pub fn new(
         name: String,
@@ -178,13 +176,8 @@ impl Instance {
 
     /// Root directory for runtime artifacts.
     ///
-    /// NeoForge uses a dedicated sandbox folder during the testing phase so it
-    /// does not interfere with the global instance runtime structure.
+    /// All loaders use the same canonical instance root.
     pub fn runtime_root_dir(&self) -> PathBuf {
-        if self.loader == LoaderType::NeoForge {
-            self.path.join(Self::NEOFORGE_TESTING_DIR)
-        } else {
-            self.path.clone()
-        }
+        self.path.clone()
     }
 }

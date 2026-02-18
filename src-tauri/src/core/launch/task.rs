@@ -193,6 +193,15 @@ fn sanitize_jvm_args(
             continue;
         }
 
+        // Forge/NeoForge metadata can include module-path switches intended for
+        // specific bootstrap wrappers. Keeping those here can cause JPMS
+        // split-package/export conflicts (e.g. duplicated ASM providers).
+        // We run everything on a single classpath to keep bootstrap deterministic.
+        if arg == "-p" || arg == "--module-path" {
+            i += 2;
+            continue;
+        }
+
         let resolved = arg
             .replace("${natives_directory}", &natives)
             .replace("${library_directory}", &library_dir)
@@ -207,6 +216,21 @@ fn sanitize_jvm_args(
 
         if resolved.starts_with("-Djava.home=") {
             info!("Dropping JVM override argument: {}", resolved);
+            i += 1;
+            continue;
+        }
+
+        if resolved == "--module-path" || resolved == "-p" {
+            i += 2;
+            continue;
+        }
+
+        if resolved.starts_with("--module-path=")
+            || resolved.starts_with("-p=")
+            || resolved.starts_with("-p")
+                && resolved.len() > 2
+                && !resolved[2..].starts_with('-')
+        {
             i += 1;
             continue;
         }
@@ -654,6 +678,38 @@ mod tests {
         assert_eq!(sanitized.len(), 2);
         assert_eq!(sanitized[0], "-XX:+UseG1GC");
         assert_eq!(sanitized[1], "-Djava.library.path=/tmp/natives");
+    }
+
+    #[test]
+    fn sanitize_jvm_args_drops_module_path_arguments() {
+        let natives = std::path::PathBuf::from("/tmp/natives");
+        let args = vec![
+            "--module-path".to_string(),
+            "/tmp/modules".to_string(),
+            "--module-path=/tmp/modules2".to_string(),
+            "-p/tmp/modules3".to_string(),
+            "-Dfoo=bar".to_string(),
+        ];
+
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.21.1".into(),
+            crate::core::instance::LoaderType::NeoForge,
+            Some("21.1.127".into()),
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+
+        let sanitized = sanitize_jvm_args(
+            &instance,
+            &args,
+            &natives,
+            std::path::Path::new("/tmp/libraries"),
+            "/tmp/classpath.jar",
+        );
+
+        assert_eq!(sanitized, vec!["-Dfoo=bar"]);
     }
 
     #[test]
