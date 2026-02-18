@@ -443,10 +443,7 @@ fn resolve_installed_neoforge_version_path(ctx: &InstallContext<'_>) -> PathBuf 
     let versions_dir = ctx.instance_dir.join("minecraft").join("versions");
     let candidates = [
         // Modern NeoForge uses a version id like: "<mc>-neoforge-<loader>".
-        format!(
-            "{}-neoforge-{}",
-            ctx.minecraft_version, ctx.loader_version
-        ),
+        format!("{}-neoforge-{}", ctx.minecraft_version, ctx.loader_version),
         // Some setups keep only the "neoforge-<loader>" variant.
         format!("neoforge-{}", ctx.loader_version),
         // Legacy / fallback patterns.
