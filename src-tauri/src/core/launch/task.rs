@@ -328,6 +328,16 @@ fn ensure_required_fml_game_args(instance: &Instance, mut args: Vec<String>) -> 
         return args;
     }
 
+    // NeoForge uses ModLauncher launch targets. Without this, BootstrapLauncher
+    // will commonly fall back to Vanilla-like client startup.
+    if matches!(instance.loader, crate::core::instance::LoaderType::NeoForge)
+        && !contains_flag_any_form(&args, "--launchTarget")
+    {
+        // Prepend to ensure it appears before other game args.
+        args.insert(0, "neoforgeclient".into());
+        args.insert(0, "--launchTarget".into());
+    }
+
     if !contains_flag(&args, "--fml.mcVersion") {
         args.push("--fml.mcVersion".into());
         args.push(instance.minecraft_version.clone());
@@ -361,6 +371,11 @@ fn ensure_required_fml_game_args(instance: &Instance, mut args: Vec<String>) -> 
 
 fn contains_flag(args: &[String], flag: &str) -> bool {
     args.iter().any(|arg| arg == flag)
+}
+
+fn contains_flag_any_form(args: &[String], flag: &str) -> bool {
+    let prefix = format!("{}=", flag);
+    args.iter().any(|arg| arg == flag || arg.starts_with(&prefix))
 }
 
 fn sanitize_numeric_window_args(args: Vec<String>) -> Vec<String> {
@@ -740,7 +755,17 @@ mod tests {
             &instance.account,
         );
 
-        assert_eq!(sanitized, vec!["--fml.mcVersion", "1.20.1"]);
+        // The missing forge version value should be dropped, and then re-injected
+        // from the instance loader version as a required Forge argument.
+        assert_eq!(
+            sanitized,
+            vec![
+                "--fml.mcVersion",
+                "1.20.1",
+                "--fml.forgeVersion",
+                "47.2.0"
+            ]
+        );
     }
 
     #[test]
@@ -772,7 +797,24 @@ mod tests {
             &instance.account,
         );
 
-        assert_eq!(sanitized, vec!["--height", "720"]);
+        // `--width` is dropped because it has no valid numeric value.
+        // `--height 480` and `--height 720` are both valid numeric pairs; we keep them.
+        // Required NeoForge args are injected after sanitization.
+        assert_eq!(
+            sanitized,
+            vec![
+                "--launchTarget",
+                "neoforgeclient",
+                "--height",
+                "480",
+                "--height",
+                "720",
+                "--fml.mcVersion",
+                "1.20.1",
+                "--fml.neoForgeVersion",
+                "20.4.1-beta"
+            ]
+        );
     }
 
     #[test]
@@ -799,6 +841,8 @@ mod tests {
         assert_eq!(
             sanitized,
             vec![
+                "--launchTarget",
+                "neoforgeclient",
                 "--fml.mcVersion",
                 "1.20.1",
                 "--fml.neoForgeVersion",
@@ -838,6 +882,50 @@ mod tests {
         assert_eq!(
             sanitized,
             vec![
+                "--launchTarget",
+                "neoforgeclient",
+                "--fml.mcVersion",
+                "1.20.1",
+                "--fml.neoForgeVersion",
+                "47.1.79"
+            ]
+        );
+    }
+
+    #[test]
+    fn sanitize_game_args_does_not_duplicate_existing_launch_target() {
+        let mut instance = Instance::new(
+            "test".into(),
+            "1.20.1".into(),
+            crate::core::instance::LoaderType::NeoForge,
+            Some("47.1.79".into()),
+            2048,
+            std::path::Path::new("/tmp"),
+        );
+        instance.path = std::path::PathBuf::from("/tmp/test-instance");
+        instance.account = LaunchAccountProfile::offline("Alex").sanitized();
+
+        let args = vec![
+            "--launchTarget".into(),
+            "neoforgeclient".into(),
+            "--fml.mcVersion".into(),
+            "${mc_version}".into(),
+        ];
+
+        let sanitized = sanitize_game_args(
+            &instance,
+            &args,
+            std::path::Path::new("/tmp/game"),
+            std::path::Path::new("/tmp/assets"),
+            &instance.account,
+        );
+
+        // Keep the provided launch target and still inject missing required flags.
+        assert_eq!(
+            sanitized,
+            vec![
+                "--launchTarget",
+                "neoforgeclient",
                 "--fml.mcVersion",
                 "1.20.1",
                 "--fml.neoForgeVersion",

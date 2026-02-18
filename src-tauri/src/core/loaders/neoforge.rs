@@ -82,31 +82,74 @@ impl LoaderInstaller for NeoForgeInstaller {
             ctx.loader_version, ctx.minecraft_version
         );
 
-        // NeoForge 1.21+ uses `neoforge` as the artifact name
-        // Coordinate: net.neoforged:neoforge:<ctx.loader_version>:installer
-        let installer_name = format!("neoforge-{}-installer.jar", ctx.loader_version);
-        let installer_path = ctx.instance_dir.join(&installer_name);
-        let installer_url = format!(
-            "{}/net/neoforged/neoforge/{}/{}",
-            NEOFORGE_MAVEN, ctx.loader_version, installer_name
-        );
+        // NeoForge installer naming differs by era:
+        // - Modern (MC 1.21+): net.neoforged:neoforge:<ver>:installer  => neoforge-<ver>-installer.jar
+        // - Legacy (MC 1.20.1): net.neoforged:forge:<mc>-<ver>:installer => forge-<mc>-<ver>-installer.jar
+        // Some configs provide ctx.loader_version without the mc prefix (e.g. "47.1.82").
+        let installer_path = ctx
+            .instance_dir
+            .join(format!("neoforge-{}-installer.jar", ctx.loader_version));
 
-        if let Err(primary_err) =
-            download_with_archive_validation(ctx.downloader, &installer_url, &installer_path).await
-        {
-            // Legacy NeoForge for MC 1.20.1 was published under net.neoforged:forge
-            let legacy_name = format!("forge-{}-installer.jar", ctx.loader_version);
-            let legacy_url = format!(
-                "{}/net/neoforged/forge/{}/{}",
-                NEOFORGE_MAVEN, ctx.loader_version, legacy_name
-            );
-            info!(
-                "Primary NeoForge route failed, trying legacy route: {}",
-                legacy_url
-            );
-            download_with_archive_validation(ctx.downloader, &legacy_url, &installer_path)
-                .await
-                .map_err(|_| primary_err)?;
+        let mc_prefixed = format!("{}-{}", ctx.minecraft_version, ctx.loader_version);
+        let candidates = [
+            // Modern
+            (
+                format!("neoforge-{}-installer.jar", ctx.loader_version),
+                format!(
+                    "{}/net/neoforged/neoforge/{}/neoforge-{}-installer.jar",
+                    NEOFORGE_MAVEN, ctx.loader_version, ctx.loader_version
+                ),
+            ),
+            // Legacy (no mc prefix)
+            (
+                format!("forge-{}-installer.jar", ctx.loader_version),
+                format!(
+                    "{}/net/neoforged/forge/{}/forge-{}-installer.jar",
+                    NEOFORGE_MAVEN, ctx.loader_version, ctx.loader_version
+                ),
+            ),
+            // Legacy (mc-prefixed version id)
+            (
+                format!("forge-{}-installer.jar", mc_prefixed),
+                format!(
+                    "{}/net/neoforged/forge/{}/forge-{}-installer.jar",
+                    NEOFORGE_MAVEN, mc_prefixed, mc_prefixed
+                ),
+            ),
+            // Rare: neoforge artifact but mc-prefixed version id
+            (
+                format!("neoforge-{}-installer.jar", mc_prefixed),
+                format!(
+                    "{}/net/neoforged/neoforge/{}/neoforge-{}-installer.jar",
+                    NEOFORGE_MAVEN, mc_prefixed, mc_prefixed
+                ),
+            ),
+        ];
+
+        let mut last_err: Option<LauncherError> = None;
+        let mut downloaded = false;
+
+        for (name, url) in candidates {
+            info!("Trying NeoForge installer: {}", url);
+            let dest = ctx.instance_dir.join(&name);
+            match download_with_archive_validation(ctx.downloader, &url, &dest).await {
+                Ok(()) => {
+                    // Normalize to installer_path for the rest of the pipeline.
+                    if dest != installer_path {
+                        let _ = tokio::fs::remove_file(&installer_path).await;
+                        let _ = tokio::fs::rename(&dest, &installer_path).await;
+                    }
+                    downloaded = true;
+                    break;
+                }
+                Err(e) => last_err = Some(e),
+            }
+        }
+
+        if !downloaded {
+            return Err(last_err.unwrap_or_else(|| {
+                LauncherError::Loader("No valid NeoForge installer URL found".into())
+            }));
         }
 
         // Extract install_profile.json and version.json
@@ -290,6 +333,14 @@ impl LoaderInstaller for NeoForgeInstaller {
             }
         }
 
+        // If we couldn't resolve a loader main class (or inherited Vanilla), force the
+        // modern NeoForge bootstrap entrypoint so ModLauncher targets are honored.
+        if resolved_main_class.trim().is_empty()
+            || resolved_main_class.as_str() == "net.minecraft.client.main.Main"
+        {
+            resolved_main_class = "cpw.mods.bootstraplauncher.BootstrapLauncher".to_string();
+        }
+
         for lib in &libraries {
             let Ok(artifact) = MavenArtifact::parse(lib) else {
                 continue;
@@ -391,6 +442,14 @@ fn is_valid_archive(path: &Path) -> bool {
 fn resolve_installed_neoforge_version_path(ctx: &InstallContext<'_>) -> PathBuf {
     let versions_dir = ctx.instance_dir.join("minecraft").join("versions");
     let candidates = [
+        // Modern NeoForge uses a version id like: "<mc>-neoforge-<loader>".
+        format!(
+            "{}-neoforge-{}",
+            ctx.minecraft_version, ctx.loader_version
+        ),
+        // Some setups keep only the "neoforge-<loader>" variant.
+        format!("neoforge-{}", ctx.loader_version),
+        // Legacy / fallback patterns.
         format!("{}-{}", ctx.minecraft_version, ctx.loader_version),
         ctx.loader_version.to_string(),
     ];
