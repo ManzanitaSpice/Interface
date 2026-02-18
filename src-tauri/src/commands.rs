@@ -1185,11 +1185,12 @@ async fn prepare_instance_for_launch(
             source,
         })?;
 
-    let has_invalid_loader_main_class = matches!(instance.loader, LoaderType::Forge | LoaderType::NeoForge)
-        && instance
-            .main_class
-            .as_deref()
-            .is_some_and(|mc| mc == "net.minecraft.client.main.Main");
+    let has_invalid_loader_main_class =
+        matches!(instance.loader, LoaderType::Forge | LoaderType::NeoForge)
+            && instance
+                .main_class
+                .as_deref()
+                .is_some_and(|mc| mc == "net.minecraft.client.main.Main");
 
     let needs_install = instance.main_class.is_none()
         || instance.required_java_major.is_none()

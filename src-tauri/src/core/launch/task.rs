@@ -1,6 +1,8 @@
 // ─── Launch Task ───
 // Spawns the Minecraft game process with the correct arguments.
 
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 #[cfg(target_os = "windows")]
@@ -14,6 +16,70 @@ use crate::core::instance::Instance;
 use crate::core::java;
 
 use super::classpath::safe_path_str;
+
+#[derive(Debug, Clone)]
+pub struct LaunchConfig {
+    pub java_bin: PathBuf,
+    pub main_class: String,
+    pub classpath: String,
+    pub jvm_args: Vec<String>,
+    pub game_args: Vec<String>,
+    pub game_dir: PathBuf,
+    pub natives_dir: PathBuf,
+    pub libraries_dir: PathBuf,
+    pub launcher_name: String,
+    pub launcher_version: String,
+}
+
+pub fn build_minecraft_command(config: &LaunchConfig) -> LauncherResult<std::process::Command> {
+    if !config.java_bin.exists() {
+        return Err(LauncherError::Other(format!(
+            "Java embebido no encontrado en {:?}",
+            config.java_bin
+        )));
+    }
+
+    if config.main_class.trim().is_empty() {
+        return Err(LauncherError::Other(
+            "Main class vacía: no se puede construir el comando".into(),
+        ));
+    }
+
+    if config.classpath.trim().is_empty() {
+        return Err(LauncherError::Other(
+            "Classpath vacío: se cancela el arranque para evitar 'java -cp' inválido".into(),
+        ));
+    }
+
+    let java_program = safe_command_path(&config.java_bin);
+    let mut cmd = std::process::Command::new(java_program);
+
+    let java_home = config
+        .java_bin
+        .parent()
+        .and_then(|bin| bin.parent())
+        .unwrap_or(&config.game_dir);
+    cmd.env("JAVA_HOME", safe_path_str(java_home));
+
+    for arg in &config.jvm_args {
+        cmd.arg(arg);
+    }
+
+    cmd.arg("-cp").arg(&config.classpath);
+    cmd.arg(&config.main_class);
+
+    for arg in &config.game_args {
+        cmd.arg(arg);
+    }
+
+    cmd.current_dir(&config.game_dir);
+    configure_native_library_env(&mut cmd, &config.natives_dir);
+    configure_platform_spawn(&mut cmd);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    Ok(cmd)
+}
 
 /// Launch the game as a child process.
 ///
@@ -80,28 +146,17 @@ pub async fn launch(
         info!("JAVA EXECUTABLE: {}", executable);
     }
 
-    let mut cmd = std::process::Command::new(&java_bin);
-    let java_home = java_bin
-        .parent()
-        .and_then(|bin| bin.parent())
-        .unwrap_or(&game_dir);
-    cmd.env("JAVA_HOME", java_home);
-
     // ── JVM Arguments ──
     let xmx_mb = instance.max_memory_mb.max(1024);
     let xms_mb = (xmx_mb / 2).max(512);
-    cmd.arg(format!("-Xmx{}M", xmx_mb));
-    cmd.arg(format!("-Xms{}M", xms_mb));
-    cmd.arg(format!(
-        "-Djava.library.path={}",
-        safe_path_str(&natives_dir)
-    ));
-    cmd.arg(format!(
-        "-DlibraryDirectory={}",
-        safe_path_str(libraries_dir)
-    ));
-    cmd.arg("-Dminecraft.launcher.brand=InterfaceOficial");
-    cmd.arg("-Dminecraft.launcher.version=0.1.0");
+    let mut jvm_args = vec![
+        format!("-Xmx{}M", xmx_mb),
+        format!("-Xms{}M", xms_mb),
+        format!("-Djava.library.path={}", safe_path_str(&natives_dir)),
+        format!("-DlibraryDirectory={}", safe_path_str(libraries_dir)),
+        "-Dminecraft.launcher.brand=InterfaceOficial".into(),
+        "-Dminecraft.launcher.version=0.1.0".into(),
+    ];
 
     // Extra JVM args from instance config or loader (normalized to avoid
     // dangling "-cp" without value and unresolved placeholders).
@@ -119,22 +174,10 @@ pub async fn launch(
         effective_jvm_args
     );
 
-    for arg in effective_jvm_args {
-        cmd.arg(arg);
-    }
+    jvm_args.extend(effective_jvm_args);
 
-    // Classpath
-    if classpath.trim().is_empty() {
-        return Err(LauncherError::Other(
-            "Classpath vacío: se cancela el arranque para evitar 'java -cp' inválido".into(),
-        ));
-    }
     debug!("Classpath len={} value={:?}", classpath.len(), classpath);
     info!("Classpath: {}", classpath);
-    cmd.arg("-cp").arg(classpath);
-
-    // Main class
-    cmd.arg(main_class);
 
     // ── Game Arguments ──
     let final_game_args = sanitize_game_args(
@@ -145,15 +188,20 @@ pub async fn launch(
         &instance.account,
     );
 
-    for arg in final_game_args {
-        cmd.arg(arg);
-    }
+    let launch_config = LaunchConfig {
+        java_bin: java_bin.clone(),
+        main_class: main_class.to_string(),
+        classpath: classpath.to_string(),
+        jvm_args,
+        game_args: final_game_args,
+        game_dir: game_dir.clone(),
+        natives_dir: natives_dir.clone(),
+        libraries_dir: libraries_dir.to_path_buf(),
+        launcher_name: "InterfaceOficial".into(),
+        launcher_version: "0.1.0".into(),
+    };
 
-    cmd.current_dir(&game_dir);
-    configure_native_library_env(&mut cmd, &natives_dir);
-    configure_platform_spawn(&mut cmd);
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
+    let mut cmd = build_minecraft_command(&launch_config)?;
 
     log_runtime_java_version(&java_bin, &game_dir);
     info!("Launching Minecraft with Java: {:?}", java_bin);
@@ -167,6 +215,82 @@ pub async fn launch(
     Ok(child)
 }
 
+fn safe_command_path(path: &Path) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let normalized = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let text = normalized.to_string_lossy().to_string();
+        if text.starts_with(r"\\?\") {
+            return normalized;
+        }
+
+        return PathBuf::from(format!(r"\\?\{}", text));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_path_buf()
+    }
+}
+
+fn build_placeholder_map(
+    instance: &Instance,
+    natives_dir: &Path,
+    libraries_dir: &Path,
+    classpath: &str,
+    game_dir: &Path,
+    assets_dir: &Path,
+    account: &LaunchAccountProfile,
+) -> HashMap<&'static str, String> {
+    let mut map = HashMap::new();
+    let launch_version_name = launch_version_name(instance);
+    let loader_version = instance.loader_version.as_deref().unwrap_or("");
+
+    map.insert("${natives_directory}", safe_path_str(natives_dir));
+    map.insert("${library_directory}", safe_path_str(libraries_dir));
+    map.insert("${classpath}", classpath.to_string());
+    map.insert(
+        "${classpath_separator}",
+        super::classpath::get_classpath_separator().to_string(),
+    );
+    map.insert("${game_directory}", safe_path_str(game_dir));
+    map.insert("${version_name}", launch_version_name);
+    map.insert("${version}", loader_version.to_string());
+    map.insert("${mc_version}", instance.minecraft_version.clone());
+    map.insert("${launcher_name}", "InterfaceOficial".to_string());
+    map.insert("${launcher_version}", "0.1.0".to_string());
+    map.insert("${auth_player_name}", account.username.clone());
+    map.insert("${assets_root}", safe_path_str(assets_dir));
+    map.insert(
+        "${assets_index_name}",
+        instance
+            .asset_index
+            .clone()
+            .unwrap_or_else(|| "legacy".to_string()),
+    );
+    map.insert("${auth_uuid}", account.uuid.clone());
+    map.insert("${auth_access_token}", account.access_token.clone());
+    map.insert("${auth_xuid}", account.xuid.clone());
+    map.insert("${clientid}", account.client_id.clone());
+    map.insert("${user_properties}", "{}".to_string());
+    map.insert("${user_type}", account.user_type.clone());
+    map.insert("${version_type}", "release".to_string());
+    map.insert("${quickPlayMultiplayer}", "".to_string());
+    map.insert("${quickPlaySingleplayer}", "".to_string());
+    map.insert("${quickPlayRealms}", "".to_string());
+    map.insert("${quickPlayPath}", "".to_string());
+    map.insert("${resolution_width}", "1280".to_string());
+    map.insert("${resolution_height}", "720".to_string());
+
+    map
+}
+
+fn apply_placeholders(raw: &str, placeholders: &HashMap<&'static str, String>) -> String {
+    placeholders
+        .iter()
+        .fold(raw.to_string(), |acc, (k, v)| acc.replace(k, v))
+}
+
 fn sanitize_jvm_args(
     instance: &Instance,
     raw_args: &[String],
@@ -176,12 +300,16 @@ fn sanitize_jvm_args(
 ) -> Vec<String> {
     let mut sanitized = Vec::new();
     let mut i = 0;
-    let natives = safe_path_str(natives_dir);
-    let game_dir = safe_path_str(&instance.game_dir());
-    let library_dir = safe_path_str(libraries_dir);
-    let classpath_separator = super::classpath::get_classpath_separator();
-    let launch_version_name = launch_version_name(instance);
-    let loader_version = instance.loader_version.as_deref().unwrap_or("");
+    let assets_dir = instance.game_dir().join("assets");
+    let placeholders = build_placeholder_map(
+        instance,
+        natives_dir,
+        libraries_dir,
+        classpath,
+        &instance.game_dir(),
+        &assets_dir,
+        &instance.account,
+    );
 
     while i < raw_args.len() {
         let arg = &raw_args[i];
@@ -202,17 +330,7 @@ fn sanitize_jvm_args(
             continue;
         }
 
-        let resolved = arg
-            .replace("${natives_directory}", &natives)
-            .replace("${library_directory}", &library_dir)
-            .replace("${classpath}", classpath)
-            .replace("${classpath_separator}", classpath_separator)
-            .replace("${game_directory}", &game_dir)
-            .replace("${version_name}", &launch_version_name)
-            .replace("${version}", loader_version)
-            .replace("${mc_version}", &instance.minecraft_version)
-            .replace("${launcher_name}", "InterfaceOficial")
-            .replace("${launcher_version}", "0.1.0");
+        let resolved = apply_placeholders(arg, &placeholders);
 
         if resolved.starts_with("-Djava.home=") {
             info!("Dropping JVM override argument: {}", resolved);
@@ -227,9 +345,7 @@ fn sanitize_jvm_args(
 
         if resolved.starts_with("--module-path=")
             || resolved.starts_with("-p=")
-            || resolved.starts_with("-p")
-                && resolved.len() > 2
-                && !resolved[2..].starts_with('-')
+            || resolved.starts_with("-p") && resolved.len() > 2 && !resolved[2..].starts_with('-')
         {
             i += 1;
             continue;
@@ -258,39 +374,21 @@ fn sanitize_game_args(
     account: &LaunchAccountProfile,
 ) -> Vec<String> {
     let mut sanitized = Vec::new();
-    let game_dir = safe_path_str(game_dir);
-    let assets_dir = safe_path_str(assets_dir);
-    let launch_version_name = launch_version_name(instance);
-    let loader_version = instance.loader_version.as_deref().unwrap_or("");
+    let placeholders = build_placeholder_map(
+        instance,
+        &instance.natives_dir(),
+        &instance.game_dir().join("libraries"),
+        "",
+        game_dir,
+        assets_dir,
+        account,
+    );
 
     let mut i = 0;
     while i < raw_args.len() {
         let arg = &raw_args[i];
 
-        let resolved = arg
-            .replace("${auth_player_name}", &account.username)
-            .replace("${version_name}", &launch_version_name)
-            .replace("${version}", loader_version)
-            .replace("${mc_version}", &instance.minecraft_version)
-            .replace("${game_directory}", &game_dir)
-            .replace("${assets_root}", &assets_dir)
-            .replace(
-                "${assets_index_name}",
-                instance.asset_index.as_deref().unwrap_or("legacy"),
-            )
-            .replace("${auth_uuid}", &account.uuid)
-            .replace("${auth_access_token}", &account.access_token)
-            .replace("${auth_xuid}", &account.xuid)
-            .replace("${clientid}", &account.client_id)
-            .replace("${user_properties}", "{}")
-            .replace("${user_type}", &account.user_type)
-            .replace("${version_type}", "release")
-            .replace("${quickPlayMultiplayer}", "")
-            .replace("${quickPlaySingleplayer}", "")
-            .replace("${quickPlayRealms}", "")
-            .replace("${quickPlayPath}", "")
-            .replace("${resolution_width}", "1280")
-            .replace("${resolution_height}", "720");
+        let resolved = apply_placeholders(arg, &placeholders);
 
         // Skip unresolved placeholders to avoid passing malformed values.
         if resolved.contains("${") {
@@ -399,7 +497,8 @@ fn contains_flag(args: &[String], flag: &str) -> bool {
 
 fn contains_flag_any_form(args: &[String], flag: &str) -> bool {
     let prefix = format!("{}=", flag);
-    args.iter().any(|arg| arg == flag || arg.starts_with(&prefix))
+    args.iter()
+        .any(|arg| arg == flag || arg.starts_with(&prefix))
 }
 
 fn sanitize_numeric_window_args(args: Vec<String>) -> Vec<String> {
@@ -815,12 +914,7 @@ mod tests {
         // from the instance loader version as a required Forge argument.
         assert_eq!(
             sanitized,
-            vec![
-                "--fml.mcVersion",
-                "1.20.1",
-                "--fml.forgeVersion",
-                "47.2.0"
-            ]
+            vec!["--fml.mcVersion", "1.20.1", "--fml.forgeVersion", "47.2.0"]
         );
     }
 

@@ -50,6 +50,7 @@ pub fn build_classpath(
     // Ensure the newest ASM jars appear first and older duplicates are ignored.
     // Key: artifactId + classifier (to keep e.g. asm-tree separate).
     let mut best_asm_by_key: HashMap<String, (String, String)> = HashMap::new();
+    let should_filter_asm = should_filter_asm_for_loader(&instance.loader, extra_lib_coords);
 
     // ─── 1. Declared libraries ───
     for raw in extra_lib_coords {
@@ -65,6 +66,14 @@ pub fn build_classpath(
 
         if let Ok(artifact) = MavenArtifact::parse(trimmed) {
             if artifact.group_id == "org.ow2.asm" {
+                if should_filter_asm {
+                    debug!(
+                        "Skipping ASM dependency due to Forge/NeoForge fat/all tooling jar: {}",
+                        trimmed
+                    );
+                    continue;
+                }
+
                 let classifier = artifact.classifier.clone().unwrap_or_default();
                 let key = format!("{}:{}", artifact.artifact_id, classifier);
 
@@ -207,6 +216,27 @@ fn should_skip_runtime_library(loader: &LoaderType, raw: &str) -> bool {
         || (group == "net.minecraftforge" && name == "binarypatcher")
         || (group == "net.neoforged"
             && (name == "AutoRenamingTool" || name == "ForgeAutoRenamingTool"))
+}
+
+fn should_filter_asm_for_loader(loader: &LoaderType, libs: &[String]) -> bool {
+    if !matches!(loader, LoaderType::Forge | LoaderType::NeoForge) {
+        return false;
+    }
+
+    libs.iter().any(|raw| {
+        let Ok(artifact) = MavenArtifact::parse(raw) else {
+            return false;
+        };
+
+        let classifier = artifact.classifier.as_deref().unwrap_or("");
+        let is_fat_classifier = matches!(classifier, "all" | "fat" | "fatjar");
+        let id_lower = artifact.artifact_id.to_ascii_lowercase();
+        let is_fat_tool = id_lower.contains("forgerenamingtool")
+            || id_lower.contains("autorenamingtool")
+            || id_lower.ends_with("-all");
+
+        is_fat_classifier || is_fat_tool
+    })
 }
 
 fn collect_mod_jars(instance: &Instance) -> Vec<PathBuf> {
@@ -933,6 +963,53 @@ mod tests {
 
         assert!(classpath.contains("modlauncher-11.0.5.jar"));
         assert!(!classpath.contains("binarypatcher-2.1.2-fatjar.jar"));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn build_classpath_filters_asm_when_forge_all_jar_is_present() {
+        let temp = std::env::temp_dir().join(format!(
+            "classpath-test-filter-asm-with-all-jar-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+
+        let instance_dir = temp.join("instance");
+        std::fs::create_dir_all(&instance_dir).unwrap();
+        let mut instance = test_instance(&instance_dir);
+        instance.loader = LoaderType::NeoForge;
+        std::fs::create_dir_all(instance.runtime_root_dir()).unwrap();
+        std::fs::write(instance.client_jar_path(), b"client").unwrap();
+
+        let libs_dir = temp.join("libraries");
+        std::fs::create_dir_all(&libs_dir).unwrap();
+
+        let modlauncher = MavenArtifact::parse("cpw.mods:modlauncher:11.0.5").unwrap();
+        let asm_tree = MavenArtifact::parse("org.ow2.asm:asm-tree:9.7").unwrap();
+        let forge_tool =
+            MavenArtifact::parse("net.neoforged:ForgeAutoRenamingTool:1.0.0:all").unwrap();
+
+        for art in [&modlauncher, &asm_tree, &forge_tool] {
+            let p = libs_dir.join(art.local_path());
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"x").unwrap();
+        }
+
+        let classpath = build_classpath(
+            &instance,
+            &libs_dir,
+            &[
+                "cpw.mods:modlauncher:11.0.5".into(),
+                "org.ow2.asm:asm-tree:9.7".into(),
+                "net.neoforged:ForgeAutoRenamingTool:1.0.0:all".into(),
+            ],
+        )
+        .unwrap();
+
+        assert!(classpath.contains("modlauncher-11.0.5.jar"));
+        assert!(classpath.contains("ForgeAutoRenamingTool-1.0.0-all.jar"));
+        assert!(!classpath.contains("asm-tree-9.7.jar"));
 
         let _ = std::fs::remove_dir_all(&temp);
     }
