@@ -1,0 +1,221 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg-0);
+  color: var(--text-main);
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: radial-gradient(circle at top, #252525 0%, var(--bg-0) 40%, #000000 100%);
+}
+
+.topbar-primary,
+.topbar-secondary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--bg-2);
+}
+
+.topbar-primary {
+  justify-content: space-between;
+  background: var(--bg-1);
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.topbar-left-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand { font-weight: 700; margin-left: 4px; }
+.topbar-info { color: var(--text-muted); font-size: 0.92rem; }
+
+.topbar-secondary {
+  background: rgba(26, 26, 26, 0.9);
+  position: sticky;
+  top: 58px;
+  z-index: 20;
+  flex-wrap: wrap;
+}
+
+.topbar-primary button,
+.topbar-secondary button,
+.instance-right-panel button,
+.edit-left-sidebar button,
+.edit-right-sidebar button,
+.create-left-sidebar button,
+.create-right-sidebar button,
+.instances-compact-toolbar button {
+  border: 1px solid #374159;
+  background: #1c2434;
+  color: #e8ecf8;
+  border-radius: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+}
+
+button.active { background: #3564ff; border-color: #5f84ff; }
+
+.content-wrap { padding: 16px 24px 24px; }
+
+.full-section-page {
+  min-height: calc(100vh - 126px);
+  border: 1px solid #2a3140;
+  border-radius: 16px;
+  padding: 24px;
+  background: rgba(16, 21, 33, 0.75);
+}
+
+.section-header h1 { margin: 0 0 8px; }
+.section-header p { margin: 0 0 16px; color: #a9b3c8; }
+
+.instances-compact-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #2d374b;
+  background: #121b2c;
+  margin-bottom: 14px;
+}
+
+.instances-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.instances-workspace.with-panel {
+  grid-template-columns: minmax(0, 1fr) 280px;
+}
+
+.instance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+.instance-card {
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid #2d374b;
+  overflow: visible;
+  background: #161d2c;
+  cursor: pointer;
+}
+.instance-card.active { border-color: #6c8fff; box-shadow: 0 0 0 1px #6c8fff; }
+
+.instance-cover {
+  height: 138px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(120deg, #3a62c7, #5b2f9f);
+  font-weight: 700;
+}
+
+.instance-meta {
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.instance-meta h3 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.instance-extra-tooltip {
+  position: relative;
+  border: 1px solid #374159;
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 0.84rem;
+}
+
+.tooltip-bubble {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  min-width: 230px;
+  max-width: 300px;
+  white-space: pre-line;
+  border: 1px solid #3b4458;
+  border-radius: 10px;
+  background: #0c1220;
+  color: #dce4f7;
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease;
+  transition-delay: 0.8s;
+  z-index: 5;
+}
+
+.instance-extra-tooltip:hover .tooltip-bubble,
+.instance-extra-tooltip:focus-within .tooltip-bubble {
+  opacity: 1;
+  visibility: visible;
+}
+
+.instance-right-panel {
+  border: 1px solid #2a3242;
+  background: #121a2a;
+  border-radius: 14px;
+  padding: 18px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  max-height: 100%;
+}
+
+.edit-layout,
+.create-layout {
+  min-height: calc(100vh - 58px);
+  display: grid;
+  grid-template-columns: 250px 1fr 260px;
+}
+
+.edit-left-sidebar,
+.edit-right-sidebar,
+.create-left-sidebar,
+.create-right-sidebar {
+  border-right: 1px solid #2a3140;
+  background: #111827;
+  padding: 16px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.edit-right-sidebar,
+.create-right-sidebar { border-right: 0; border-left: 1px solid #2a3140; }
+
+.edit-main-content,
+.create-main-content {
+  padding: 24px;
+}
+
+.execution-log {
+  border: 1px solid #2a3140;
+  border-radius: 10px;
+  background: #090d16;
+  padding: 14px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  color: #a7d3a0;
+}

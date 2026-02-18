@@ -1,0 +1,58 @@
+button {
+  border: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  color: var(--text-main);
+  border-radius: 10px;
+  padding: 7px 11px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  letter-spacing: 0.01em;
+  box-shadow: var(--shadow-soft);
+  transition: transform 0.2s ease, border-color 0.24s ease, box-shadow 0.24s ease, background-color 0.24s ease;
+}
+
+button:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--bg-3), var(--bg-2));
+  border-color: var(--accent);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--line-soft);
+  transform: translateY(-1px);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.4);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+button.active {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, rgba(77, 120, 200, 0.15), rgba(77, 120, 200, 0.05));
+  box-shadow: 0 0 0 1px var(--line-soft), 0 12px 22px rgba(4, 8, 18, 0.4);
+}
+
+.arrow-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.delete-modal-actions .danger {
+  border-color: #d95c6c;
+  background: #d95c6c;
+}
+
+.delete-modal-actions .warning {
+  border-color: #f1c46b;
+  background: #f1c46b;
+  color: #111;
+}

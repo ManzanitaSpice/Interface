@@ -1,0 +1,36 @@
+[package]
+name = "interface"
+version = "0.1.0"
+description = "InterfaceOficial - Professional Minecraft Launcher"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "interface_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha1 = "0.10"
+sha2 = "0.10"
+md-5 = "0.10"
+hex = "0.4"
+quick-xml = { version = "0.37", features = ["serialize"] }
+futures-util = "0.3"
+async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zip = "2"
+dirs = "6"
+sysinfo = "0.31"

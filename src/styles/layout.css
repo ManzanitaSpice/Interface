@@ -1,0 +1,121 @@
+.app-root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.global-topbar {
+  height: 48px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  background: linear-gradient(90deg, var(--bg-1), var(--bg-2));
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.brand-zone {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar-nav-arrows {
+  display: flex;
+  gap: 6px;
+  margin-left: 10px;
+}
+
+.brand-logo-placeholder {
+  width: 20px;
+  height: 20px;
+  border: 1px dashed #72767d;
+  border-radius: 4px;
+}
+
+.brand-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.app-layout {
+  display: flex;
+  width: 100%;
+  height: calc(100% - 48px);
+}
+
+.sidebar {
+  width: 220px;
+  background-color: #2b2d31;
+  border-right: 1px solid #3b3d45;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 10px;
+}
+
+.sidebar.instance-sidebar-only {
+  background: #26282d;
+}
+
+.instance-sidebar-tools {
+  margin-top: 18px;
+  border-top: 1px solid #3b3d45;
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.instance-sidebar-tools.visible {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 0;
+}
+
+.instance-sidebar-tools h4 {
+  margin: 0 0 4px;
+  color: #f2f3f5;
+  font-size: 0.92rem;
+}
+
+.sidebar-header {
+  margin-bottom: 20px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: #fff;
+}
+
+.content-area {
+  flex: 1;
+  padding: 22px;
+  overflow-y: auto;
+  background: #1e1f22;
+}
+
+.home-toolbar {
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.home-toolbar p {
+  margin-top: -4px;
+  color: #b5bac1;
+}
+
+.home-toolbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 220px;
+}
+
+
+.content-area.instance-detail-open { padding: 18px 22px; }

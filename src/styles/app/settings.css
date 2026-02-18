@@ -1,0 +1,114 @@
+.execution-log {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: rgba(18, 18, 18, 0.9);
+  padding: 14px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  color: var(--success);
+  height: calc(100vh - 120px);
+  min-height: 420px;
+  overflow: auto;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+@media (max-height: 800px) {
+  .execution-log {
+    min-height: 320px;
+    height: calc(100vh - 96px);
+  }
+}
+
+.execution-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.execution-error {
+  color: var(--danger);
+}
+
+.instance-settings-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.instance-settings-header {
+  display: grid;
+  gap: 10px;
+}
+
+.instance-settings-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.instance-settings-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.instance-settings-tabs button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+}
+
+.settings-block-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.settings-card {
+  border: 1px solid rgba(124, 168, 245, 0.34);
+  border-radius: 14px;
+  background: linear-gradient(170deg, rgba(16, 29, 50, 0.86), rgba(10, 18, 32, 0.95));
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  box-shadow: var(--shadow-soft);
+}
+
+.settings-card h4 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.settings-card p {
+  margin: 0;
+  color: #b0c8ef;
+  font-size: 0.82rem;
+}
+
+.settings-java-layout {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-inline-field {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+}
+
+.settings-inline-field input,
+.settings-card textarea {
+  width: 100%;
+  font-size: 0.8rem;
+}
+
+.settings-card textarea {
+  resize: vertical;
+}
+
+.settings-card input[type="range"] {
+  width: 100%;
+}
+
+.settings-placeholder {
+  min-height: 120px;
+  align-content: center;
+}
